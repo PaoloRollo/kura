@@ -24,6 +24,7 @@ import { addresses, publicClient } from "@/lib/chain";
 import { money } from "@/lib/format";
 import type { StepResult } from "@/lib/tx";
 import { useSendTx } from "@/lib/tx";
+import { AddressName } from "@/components/address-name";
 import { indexerCollectors } from "@/lib/collectors";
 import { cardPageUrl } from "@/lib/meta";
 import { handleForAddress } from "@/lib/owner";
@@ -485,7 +486,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
                 <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3">
                   <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-2"><QrCodeIcon className="size-5" /></span>
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate font-mono text-[13px] text-text" title={owner}>{ownerName ?? owner}</span>
+                    <AddressName address={owner} knownName={ownerName} avatar={false} copyable={false} maxWidthClassName="max-w-full" />
                     <span className="text-[11px] text-text-2">{shortAddress(owner)} · {ownerSource === "qr" ? "scanned just now" : "typed handle"}</span>
                   </span>
                   <CheckCircle2Icon aria-label="owner set" className="size-5 shrink-0 text-good" />
