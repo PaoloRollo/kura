@@ -126,6 +126,10 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         uint256 tickSpacingQ96,
         uint128 reserveUsdc
     );
+    event AuctionSettled(
+        uint256 indexed id, address indexed shardToken, uint256 clearingPriceQ96, uint256 raisedUsdc, uint256 feeUsdc, bool graduated
+    );
+    event FeeAccrued(uint256 indexed id, FeeKind kind, uint256 amountUsdc);
 
     error OnlyVendor();
     error FeeTooHigh();
@@ -138,6 +142,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     error InvalidShardCount();
     error InvalidForSale();
     error InvalidPricing();
+    error AuctionNotOver();
 
     modifier onlyVendor() {
         if (msg.sender != vendor) revert OnlyVendor();
@@ -332,6 +337,50 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
             revert InvalidPricing();
         }
         // duration range is enforced by AuctionSteps.linear
+    }
+
+    // ---------------------------------------------------------------- settle
+
+    /// @notice Finalise an ended auction: sweep unsold shards back to the owner, and when the auction graduated, sweep
+    /// the USDC raised, pay the vendor fee and forward the rest to the owner. Anyone may call.
+    /// @dev The settled flag and the Sharded state are written before any external call; graduation and the clearing
+    /// price are only known once sweepUnsoldTokens has checkpointed the auction, so they are recorded after it.
+    function settle(uint256 id) external {
+        Card storage c = _cards[id];
+        if (c.state != State.Auctioning) revert WrongState(id, c.state);
+        if (block.number < c.endBlock) revert AuctionNotOver();
+
+        ICCAAuction auction = ICCAAuction(c.auction);
+        IERC20 token = IERC20(c.shardToken);
+        Sharding storage s = _shardings[c.shardToken];
+        address owner_ = c.beneficialOwner;
+
+        s.settled = true;
+        c.state = State.Sharded;
+
+        auction.sweepUnsoldTokens();
+        uint256 unsold = token.balanceOf(address(this));
+        if (unsold > 0) token.safeTransfer(owner_, unsold);
+
+        bool graduated = auction.isGraduated();
+        uint256 clearingQ96 = auction.clearingPrice();
+        s.graduated = graduated;
+        s.clearingPriceQ96 = clearingQ96;
+
+        uint256 raised;
+        uint256 fee;
+        if (graduated) {
+            uint256 before = usdc.balanceOf(address(this));
+            auction.sweepCurrency();
+            raised = usdc.balanceOf(address(this)) - before;
+            fee = raised * feeBps / 10_000;
+            if (fee > 0) usdc.safeTransfer(payout, fee);
+            if (raised > fee) usdc.safeTransfer(owner_, raised - fee);
+        }
+
+        names.setState(id, "sharded", c.shardToken, c.auction, PriceMath.q96ToUsdcPerShard(clearingQ96));
+        emit AuctionSettled(id, c.shardToken, clearingQ96, raised, fee, graduated);
+        if (fee > 0) emit FeeAccrued(id, FeeKind.Sale, fee);
     }
 
     // ---------------------------------------------------------------- internals
