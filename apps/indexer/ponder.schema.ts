@@ -195,6 +195,9 @@ export const collectors = onchainTable("collectors", (t) => ({
   node: t.hex().notNull(),
   blockNumber: t.bigint().notNull(),
   registeredAt: t.integer().notNull(),
+}), (table) => ({
+  // CollectorResolver records are only accepted for the collector's own node; handlers look the collector up by resolver.
+  resolverIdx: index().on(table.resolver),
 }));
 
 export const bidderBindings = onchainTable("bidder_bindings", (t) => ({

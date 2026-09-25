@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensTokenPrefix, labelHashOf, nameKindOf, sameEnsToken } from "../src/lib/ens";
+import { acceptCollectorRecord, ensTokenPrefix, labelHashOf, nameKindOf, sameEnsToken } from "../src/lib/ens";
 
 describe("sameEnsToken", () => {
   const base = 0xabcdefn << 32n;
@@ -38,5 +38,23 @@ describe("nameKindOf", () => {
     expect(nameKindOf("appraiser")).toBe("agent");
     expect(nameKindOf("black-lotus-lea-1")).toBe("card");
     expect(nameKindOf("paolo")).toBe("collector");
+  });
+});
+
+describe("acceptCollectorRecord", () => {
+  const resolver = "0x1111111111111111111111111111111111111111";
+  const own = "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1fa59a8";
+  const card = "0xfbebcbfa6be5c9879e5c28ecc314958deed1f8a37c73e45611d7db31643f2365";
+  const collector = { resolver, node: own } as const;
+  it("accepts a record for the collector's own node, ignoring address case", () => {
+    expect(acceptCollectorRecord(collector, "0x1111111111111111111111111111111111111111", own)).toBe(true);
+    expect(acceptCollectorRecord({ resolver: "0xABCDEF0000000000000000000000000000000000", node: own }, "0xabcdef0000000000000000000000000000000000", own.toUpperCase().replace("0X", "0x") as `0x${string}`)).toBe(true);
+  });
+  it("rejects a spoofed record for another node on the collector's resolver", () => {
+    expect(acceptCollectorRecord(collector, resolver, card)).toBe(false);
+  });
+  it("rejects an unknown resolver", () => {
+    expect(acceptCollectorRecord(undefined, resolver, own)).toBe(false);
+    expect(acceptCollectorRecord(collector, "0x2222222222222222222222222222222222222222", own)).toBe(false);
   });
 });

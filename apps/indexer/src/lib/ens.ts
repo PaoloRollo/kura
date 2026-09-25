@@ -21,3 +21,15 @@ export const ensTokenPrefix = (id: bigint): string => `0x${(id >> 32n).toString(
  */
 export const nameKindOf = (label: string): "card" | "collector" | "agent" =>
   label === "appraiser" ? "agent" : label.includes("-") ? "card" : "collector";
+
+/**
+ * A collector resolver grants its collector root roles, so they can write records for ANY node on it. Only accept a
+ * CollectorResolver record when the emitting resolver belongs to a known collector and the node is that collector's
+ * own; anything else would let a collector overwrite card rows in ens_records.
+ */
+export const acceptCollectorRecord = (
+  collector: { resolver: Hex; node: Hex } | undefined,
+  logAddress: Hex,
+  node: Hex,
+): boolean =>
+  !!collector && collector.resolver.toLowerCase() === logAddress.toLowerCase() && collector.node.toLowerCase() === node.toLowerCase();

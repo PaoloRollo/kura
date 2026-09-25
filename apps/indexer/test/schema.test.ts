@@ -3,6 +3,14 @@ import * as schema from "../ponder.schema";
 
 const cols = (table: object) => Object.keys(table);
 
+// drizzle-orm is not a direct dependency, so read index definitions through drizzle's table symbols.
+const indexedColumns = (table: object): string[][] => {
+  const t = table as Record<symbol, unknown>;
+  const build = t[Symbol.for("drizzle:ExtraConfigBuilder")] as ((c: unknown) => Record<string, { config: { columns: { name: string }[] } }>) | undefined;
+  if (!build) return [];
+  return Object.values(build(t[Symbol.for("drizzle:ExtraConfigColumns")])).map((i) => i.config.columns.map((c) => c.name));
+};
+
 describe("schema", () => {
   it("persists bid state only as status", () => {
     expect(cols(schema.bids)).toContain("status");
@@ -14,5 +22,9 @@ describe("schema", () => {
     expect(cols(schema.ensNames)).toEqual(expect.arrayContaining(["updatedBlock", "updatedAt"]));
     expect(cols(schema.collectors)).toEqual(expect.arrayContaining(["blockNumber", "registeredAt"]));
     expect(cols(schema.bidderBindings)).toEqual(expect.arrayContaining(["blockNumber", "boundAt"]));
+  });
+  it("lets collector resolver records be scoped by resolver and node", () => {
+    expect(cols(schema.collectors)).toEqual(expect.arrayContaining(["resolver", "node"]));
+    expect(indexedColumns(schema.collectors)).toContainEqual(["resolver"]);
   });
 });

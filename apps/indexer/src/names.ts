@@ -1,8 +1,8 @@
-import { like } from "ponder";
+import { eq, like } from "ponder";
 import { type Context, ponder } from "ponder:registry";
 import { collectors, ensNames, ensRecords } from "ponder:schema";
 import { recordActivity } from "./lib/activity";
-import { ensTokenPrefix, labelHashOf, nameKindOf, sameEnsToken } from "./lib/ens";
+import { acceptCollectorRecord, ensTokenPrefix, labelHashOf, nameKindOf, sameEnsToken } from "./lib/ens";
 
 type Hex = `0x${string}`;
 type BlockLike = { block: { number: bigint; timestamp: bigint } };
@@ -57,6 +57,10 @@ ponder.on("CardNames:CollectorNamed", async ({ event, context }) => {
   }).onConflictDoUpdate({ kind: "collector", owner: collector, resolver, node, ...stamp(event) });
   await context.db.insert(collectors).values({ address: collector, label, resolver, node, blockNumber: event.block.number, registeredAt: ts })
     .onConflictDoUpdate({ label, resolver, node, blockNumber: event.block.number });
+  // The resolver's initialize() emits AddrChanged before this event, when the resolver is not yet a known collector
+  // resolver, so the CollectorResolver guard drops it. Write the collector's own addr record here instead.
+  const addrRecord = { value: collector.toLowerCase(), setBy: collector, resolver, ...stamp(event) };
+  await context.db.insert(ensRecords).values({ node, key: "addr", ...addrRecord }).onConflictDoUpdate(addrRecord);
   await recordActivity(context, event, { kind: "named", actor: collector, meta: { label, handle: true } });
 });
 
@@ -86,7 +90,11 @@ ponder.on("EnsRegistry:LabelUnregistered", async ({ event, context }) => {
   const { tokenId } = event.args;
   const candidates = await context.db.sql.select().from(ensNames).where(like(ensNames.labelHash, `${ensTokenPrefix(tokenId)}%`));
   const row = candidates.find((r) => sameEnsToken(BigInt(r.labelHash), tokenId));
-  if (!row) throw new Error(`LabelUnregistered: no ens_names row for tokenId ${tokenId}`);
+  // External registry event: a missing revokedAt is better than halting the indexer. CardNameRevoked still throws.
+  if (!row) {
+    console.warn(`LabelUnregistered: no ens_names row for tokenId ${tokenId}, skipping`);
+    return;
+  }
   await context.db.update(ensNames, { label: row.label }).set({ revokedAt: Number(event.block.timestamp), ...stamp(event) });
 });
 
@@ -108,9 +116,21 @@ ponder.on("EnsResolver:TextChanged", async ({ event, context }) => {
 ponder.on("EnsResolver:AddrChanged", async ({ event, context }) => {
   await upsertRecord(context, event, event.args.node, "addr", event.args.a.toLowerCase());
 });
+// Collectors hold root roles on their own resolver and could write any node there (for example a card's addr), so
+// only records for the collector's own node on the collector's own resolver are kept. The shared EnsResolver is
+// Kura-controlled (only the vendor and appraiser hold scoped roles) and is not filtered.
+async function isOwnCollectorRecord(context: Context, resolver: Hex, node: Hex): Promise<boolean> {
+  const [collector] = await context.db.sql.select().from(collectors).where(eq(collectors.resolver, resolver.toLowerCase() as Hex)).limit(1);
+  if (acceptCollectorRecord(collector, resolver, node)) return true;
+  console.debug(`CollectorResolver ${resolver}: ignoring record for node ${node} (not the collector's own node)`);
+  return false;
+}
+
 ponder.on("CollectorResolver:TextChanged", async ({ event, context }) => {
+  if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
   await upsertRecord(context, event, event.args.node, event.args.key, event.args.value);
 });
 ponder.on("CollectorResolver:AddrChanged", async ({ event, context }) => {
+  if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
   await upsertRecord(context, event, event.args.node, "addr", event.args.a.toLowerCase());
 });
