@@ -10,7 +10,7 @@ describe("abi", () => {
     }
   });
   it("exposes the vault functions the app calls", () => {
-    for (const fn of ["mint", "shardAndAuction", "settle", "redeem", "claimPayout", "confirmRelease", "cards", "shardings", "vendor", "feeBps"]) {
+    for (const fn of ["mint", "shardAndAuction", "settle", "redeem", "claimPayout", "confirmRelease", "cards", "shardings", "vendor", "feeBps"] as const) {
       expect(getAbiItem({ abi: abi.cardVault, name: fn }), fn).toBeDefined();
     }
     expect(toFunctionSelector(getAbiItem({ abi: abi.permit2, name: "approve" })!)).toBe("0x87517c45");
