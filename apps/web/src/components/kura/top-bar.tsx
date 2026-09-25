@@ -49,7 +49,7 @@ export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right,
             {nav.map((item) => {
               const active = isActive(pathname, item.href, exactHrefs.includes(item.href));
               return item.soon ? (
-                <span key={item.href} aria-disabled title="Coming soon" className="cursor-default text-[14px] text-text-2/60">
+                <span key={item.href} aria-disabled title="Coming soon" className="cursor-default text-[14px] text-text-2">
                   {item.label}
                 </span>
               ) : (

@@ -10,3 +10,5 @@ export { AuctionCard, type AuctionCardProps } from "./auction-card";
 export { CardArt } from "./card-art";
 export { KuraToast, notify, type KuraToastProps } from "./toast";
 export { Logo } from "./logo";
+export { TopBar, TabBar, BarChip, type NavItem } from "./top-bar";
+export { Segmented, type SegmentedOption } from "./segmented";

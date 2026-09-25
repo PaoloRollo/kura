@@ -49,8 +49,8 @@ export function QrScanner({ onAddress }: { onAddress: (address: `0x${string}`) =
 
   return (
     <div className="space-y-2">
-      <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full rounded-lg bg-black object-cover" />
-      <p className="text-sm text-muted-foreground">{status}</p>
+      <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full rounded-xl border border-border bg-bg object-cover" />
+      <p className="text-[12px] text-text-2">{status}</p>
     </div>
   );
 }
