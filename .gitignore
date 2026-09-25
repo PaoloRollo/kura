@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.next/
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+contracts/deployments/*.pending.json
+apps/indexer/.ponder/
+apps/indexer/generated/*.db
+.worktrees/
+.superpowers/
+.DS_Store
