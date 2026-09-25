@@ -73,6 +73,11 @@ export async function verifyWorld(params: { rpId: string; action: Action; subjec
   if ((items[0].signal_hash ?? "").toLowerCase() !== expected) {
     throw new HttpError("SIGNAL_MISMATCH", "proof was not generated for this wallet", 400);
   }
+  // Legacy (v3) nullifiers live apart from v4 ones, so accepting both would let one human bind two bidder wallets.
+  // The client's allow_legacy_proofs is UX only; this is the gate. Read at call time so it can be toggled.
+  if (params.action === "bid" && params.idkitResponse.protocol_version === "3.0" && process.env.WORLD_BID_ALLOW_LEGACY !== "true") {
+    throw new HttpError("WRONG_CREDENTIAL", "bidding requires a World ID 4.0 proof", 400);
+  }
   const credential = credentialOf(params.idkitResponse);
   if (!credential || !acceptedCredentials(params.action).includes(credential)) {
     const got = credential ?? items[0].issuer_schema_id ?? items[0].identifier ?? "unknown";

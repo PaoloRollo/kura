@@ -43,6 +43,7 @@ describe("POST /api/worldid/verify", () => {
     process.env.SIGNER_PRIVATE_KEY = "0x" + "a1".repeat(32);
     process.env.WORLD_ENV = "staging";
     process.env.WORLD_RP_ID = "rp_test";
+    delete process.env.WORLD_BID_ALLOW_LEGACY;
     setUserForTests({ did: "did:privy:alice", wallet: alice });
   });
 
@@ -107,11 +108,29 @@ describe("POST /api/worldid/verify", () => {
     expect(json.ticket.subject).toBe(bob);
     expect(json.credential).toBe("passport");
   });
+  it("refuses legacy v3 proofs for bid unless WORLD_BID_ALLOW_LEGACY is on", async () => {
+    const fetchSpy = worldOk("0x0c");
+    setWorldFetchForTests(fetchSpy);
+    delete process.env.WORLD_BID_ALLOW_LEGACY;
+    let res = await post({ action: "bid", idkitResponse: legacyResponse(alice, "orb") });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("WRONG_CREDENTIAL");
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    process.env.WORLD_BID_ALLOW_LEGACY = "true";
+    try {
+      res = await post({ action: "bid", idkitResponse: legacyResponse(alice, "orb") });
+      expect(res.status).toBe(200);
+      expect((await res.json()).credential).toBe("proofOfHuman");
+    } finally {
+      delete process.env.WORLD_BID_ALLOW_LEGACY;
+    }
+  });
+
   it("maps legacy v3 credentials through an allowlist", async () => {
     setWorldFetchForTests(worldOk("0x0c"));
-    let res = await post({ action: "bid", idkitResponse: legacyResponse(alice, "orb") });
-    expect(res.status).toBe(200);
-    expect((await res.json()).credential).toBe("proofOfHuman");
+    process.env.WORLD_BID_ALLOW_LEGACY = "true";
+    let res: Response;
 
     res = await post({ action: "bid", idkitResponse: legacyResponse(alice, "device") });
     expect(res.status).toBe(400);
@@ -120,6 +139,8 @@ describe("POST /api/worldid/verify", () => {
     res = await post({ action: "bid", idkitResponse: { ...legacyResponse(alice, "orb"), responses: [{ ...legacyResponse(alice, "orb").responses[0], identifier: undefined }] } });
     expect((await res.json()).error.code).toBe("WRONG_CREDENTIAL");
 
+    delete process.env.WORLD_BID_ALLOW_LEGACY;
+    // Release keeps accepting legacy proofs without the flag.
     setUserForTests({ did: "did:privy:vendor", wallet: await vendorWallet() });
     res = await post({ action: "release", subject: bob, idkitResponse: legacyResponse(bob, "document", "release") });
     expect(res.status).toBe(200);

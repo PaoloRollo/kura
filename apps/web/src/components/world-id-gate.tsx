@@ -55,6 +55,8 @@ export function WorldIdGate(props: { action: "bid" | "release"; signal: `0x${str
     if (!next) setRp(null);
   }
 
+  // Bids need v4 proofs (legacy nullifiers could bind a second wallet); the server enforces this, the flag only avoids a doomed prompt.
+  const allowLegacy = props.action === "release" || env.NEXT_PUBLIC_WORLD_BID_ALLOW_LEGACY === "true";
   const preset = props.action === "release" ? passport({ signal: props.signal }) : proofOfHuman({ signal: props.signal });
 
   return (
@@ -69,7 +71,7 @@ export function WorldIdGate(props: { action: "bid" | "release"; signal: `0x${str
           app_id={env.NEXT_PUBLIC_WORLD_APP_ID as `app_${string}`}
           action={props.action}
           rp_context={rpContext}
-          allow_legacy_proofs={true}
+          allow_legacy_proofs={allowLegacy}
           environment={env.NEXT_PUBLIC_WORLD_ENV}
           preset={preset}
           handleVerify={async (result) => {
