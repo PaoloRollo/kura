@@ -66,6 +66,31 @@ export function StepperDemo() {
           retryLabel="Verify and retry"
         />
       </div>
+      <div className="w-[346px] rounded-2xl border border-border bg-surface p-5">
+        <TxProgress
+          title="Placing your bid"
+          rows={[
+            { id: "a", label: LABELS[0], status: "done", hash: HASH_A },
+            { id: "b", label: LABELS[1], status: "confirming", hash: HASH_B },
+            { id: "c", label: LABELS[2], status: "pending" },
+            { id: "i", label: "Indexing", status: "pending" },
+          ]}
+          failure={{ title: "Still confirming", body: "The transaction was sent but hasn't been mined yet. Check again in a moment; it won't be sent twice.", hash: HASH_B, confirming: true }}
+          retryLabel="Check again"
+        />
+      </div>
+      <div className="w-[346px] rounded-2xl border border-border bg-surface p-5">
+        <TxProgress
+          title="Placing your bid"
+          rows={[
+            { id: "a", label: LABELS[0], status: "done", hash: HASH_A },
+            { id: "b", label: LABELS[1], status: "done", hash: HASH_B },
+            { id: "c", label: LABELS[2], status: "done", hash: HASH_C },
+            { id: "i", label: "Indexing", status: "skipped" },
+          ]}
+          lagging
+        />
+      </div>
       <div className="flex w-[346px] flex-col gap-2 rounded-2xl border border-border bg-surface p-5">
         <p className="text-[12px] text-text-2">Live: the bid reverts once, then the retry goes through. Below md it opens as a bottom sheet.</p>
         <TxStepper

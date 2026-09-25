@@ -8,18 +8,24 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { explorerTx } from "@/lib/chain";
 import { shortHash } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { runSteps, waitForIndexer, type Revert, type Step, type StepResult, type StepStatus } from "@/lib/tx-core";
+import { getReceipt } from "@/lib/tx";
+import { runSteps, syncAfterTx, type Revert, type Step, type StepResult, type StepStatus } from "@/lib/tx-core";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Presentational panel (hnuVb, g5bcZ)
 
 export type TxRow = { id: string; label: string; status: StepStatus; hash?: string };
-export type TxFailure = { title: string; body?: string; reverted?: string; hash?: string };
+/**
+ * The error card. `reverted` is the decoded error ("Expired()"); `hash` is set once the transaction was broadcast.
+ * `confirming`: broadcast but not mined yet, so the card offers to check again instead of re-sending.
+ */
+export type TxFailure = { title: string; body?: string; reverted?: string; hash?: string; confirming?: boolean };
 
 function RowIcon({ status }: { status: StepStatus }) {
   const base = "flex size-6 shrink-0 items-center justify-center rounded-full [&_svg]:size-3.5";
   if (status === "done") return <span className={cn(base, "bg-good text-white")}><CheckIcon strokeWidth={3} /></span>;
   if (status === "running") return <span className={cn(base, "border-[1.5px] border-shu text-shu")}><Loader2Icon className="animate-spin" /></span>;
+  if (status === "confirming") return <span className={cn(base, "border-[1.5px] border-kin text-kin")}><Loader2Icon className="animate-spin" /></span>;
   if (status === "failed") return <span className={cn(base, "border-[1.5px] border-shu bg-shu-soft text-shu")}><XIcon strokeWidth={2.5} /></span>;
   return <span className={cn(base, "bg-surface-2 text-text-2 [&_svg]:size-3")}><CircleIcon strokeWidth={2} /></span>;
 }
@@ -32,11 +38,16 @@ export function TxProgress({
   onCancel,
   onRetry,
   retrying,
+  lagging,
+  onDismiss,
   className,
 }: {
   title: string;
   rows: TxRow[];
   failure?: TxFailure | null;
+  /** The transactions went through but the indexer has not caught up; shown until dismissed. */
+  lagging?: boolean;
+  onDismiss?: () => void;
   retryLabel?: string;
   onCancel?: () => void;
   onRetry?: () => void;
@@ -59,6 +70,16 @@ export function TxProgress({
               {r.label}
               {r.status === "skipped" && <span className="text-text-2"> · skipped</span>}
             </span>
+            {r.hash && r.status === "confirming" && (
+              <a
+                href={explorerTx(r.hash)}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 font-mono text-[12px] text-kin hover:underline"
+              >
+                Still confirming · {shortHash(r.hash)}
+              </a>
+            )}
             {r.hash && r.status === "done" && (
               <a
                 href={explorerTx(r.hash)}
@@ -77,9 +98,9 @@ export function TxProgress({
           <div role="alert" className="flex flex-col gap-1.5 rounded-xl border border-shu/30 bg-shu-soft p-3.5">
             <div className="text-[13px] font-semibold text-text">{failure.title}</div>
             {failure.body && <p className="text-[13px] text-text-2">{failure.body}</p>}
-            {failure.reverted && (
+            {(failure.reverted || failure.hash) && (
               <p className="mt-1 font-mono text-[11px] break-all text-text-2">
-                Reverted: {failure.reverted}
+                {failure.confirming ? "Still confirming" : failure.reverted ? `Reverted: ${failure.reverted}` : "Reverted"}
                 {failure.hash && <> · <a href={explorerTx(failure.hash)} target="_blank" rel="noreferrer" className="hover:underline">{shortHash(failure.hash)}</a></>}
               </p>
             )}
@@ -88,6 +109,13 @@ export function TxProgress({
             <Button variant="secondary" size="md" className="flex-1" onClick={onCancel}>Cancel</Button>
             <Button variant="primary" size="md" className="flex-1" onClick={onRetry} disabled={retrying}>{retryLabel}</Button>
           </div>
+        </>
+      ) : lagging ? (
+        <>
+          <p className="rounded-lg bg-surface-2 px-3.5 py-3 text-[12px] text-text-2">
+            Your transactions went through. The indexer is behind, so this page refreshes on its own once it catches up.
+          </p>
+          <Button variant="secondary" size="md" onClick={onDismiss}>Dismiss</Button>
         </>
       ) : (
         <p className="flex items-center gap-2.5 rounded-lg bg-surface-2 px-3.5 py-3 text-[12px] text-text-2">
@@ -103,7 +131,7 @@ export function TxProgress({
 // Stepper
 
 const INDEXING = "indexing";
-type Phase = "idle" | "running" | "indexing" | "failed";
+type Phase = "idle" | "running" | "indexing" | "failed" | "lagging";
 
 const desktopQuery = "(min-width: 768px)";
 function useIsDesktop() {
@@ -118,8 +146,10 @@ function useIsDesktop() {
   );
 }
 
-function defaultDescribe(_e: unknown, revert: Revert): { title: string; body?: string } {
-  if (revert.name) return { title: "The contract refused this transaction", body: "Nothing was charged for the failed step. You can try again." };
+/** The default error card copy. "Nothing was sent" only when nothing was broadcast (no hash). */
+export function describeTxError(_e: unknown, revert: Revert): { title: string; body?: string } {
+  if (revert.hash) return { title: "The transaction reverted", body: "It was mined but the contract rejected it. You can try again." };
+  if (revert.name) return { title: "The contract refused this transaction", body: "Nothing was sent or charged. You can try again." };
   if (/reject|denied|cancel/i.test(revert.message)) return { title: "Request cancelled", body: "The transaction was not sent." };
   return { title: "Something went wrong", body: revert.message };
 }
@@ -161,7 +191,7 @@ export function TxStepper({
   retryLabel = "Retry",
   onRetry,
   onCancel,
-  describeError = defaultDescribe,
+  describeError = describeTxError,
   className,
 }: TxStepperProps) {
   const queryClient = useQueryClient();
@@ -177,41 +207,62 @@ export function TxStepper({
     setFailure(null);
     setIndexStatus("pending");
     setPhase("running");
-    const out = await runSteps(steps, { onStatus: setResults, previous: previous.current });
+    const out = await runSteps(steps, { onStatus: setResults, previous: previous.current, getReceipt });
     previous.current = out;
+    const confirming = out.find((r) => r.status === "confirming");
+    if (confirming) {
+      setFailure({
+        title: "Still confirming",
+        body: "The transaction was sent but hasn't been mined yet. Check again in a moment; it won't be sent twice.",
+        hash: confirming.hash,
+        confirming: true,
+      });
+      setPhase("failed");
+      return;
+    }
     const failed = out.find((r) => r.status === "failed");
     if (failed) {
       const revert = failed.revert ?? { name: null, args: [], message: failed.error ?? "failed" };
       const human = describeError(failed.cause, revert);
       const name = revert.inner?.name ?? revert.name;
       setIndexStatus("skipped");
-      setFailure({ ...human, reverted: name ? `${name}()` : undefined, hash: failed.hash });
+      setFailure({ ...human, reverted: name ? `${name}()` : undefined, hash: failed.hash ?? revert.hash });
       setPhase("failed");
       notify({ title: failedTitle, body: human.title, tone: "shu", icon: <XIcon /> });
       onError?.(out, revert);
       return;
     }
+    const invalidate = () => queryClient.invalidateQueries();
     const last = [...out].reverse().find((r) => r.status === "done" && r.blockNumber !== undefined);
+    let indexed = true;
     if (last?.blockNumber !== undefined) {
       setPhase("indexing");
       setIndexStatus("running");
-      const ok = await waitForIndexer(last.blockNumber).catch(() => false);
-      setIndexStatus(ok ? "done" : "skipped");
+      ({ indexed } = await syncAfterTx(last.blockNumber, { invalidate }));
+      setIndexStatus(indexed ? "done" : "skipped");
     } else {
       setIndexStatus("skipped");
+      await invalidate();
     }
-    await queryClient.invalidateQueries();
     notify({ title: "Transaction confirmed", body: steps.at(-1)?.label, tone: "good", icon: <CheckIcon /> });
     previous.current = [];
+    if (indexed) reset();
+    else setPhase("lagging"); // keep the skipped Indexing row up until the user dismisses it
+    onDone?.(out);
+  }
+
+  function reset() {
     setPhase("idle");
     setResults([]);
-    onDone?.(out);
+    setFailure(null);
+    setIndexStatus("pending");
   }
 
   async function retry() {
     setRetrying(true);
     try {
-      await onRetry?.();
+      // "Check again" on a transaction still confirming only looks the hash up; nothing needs re-verifying.
+      if (!failure?.confirming) await onRetry?.();
     } catch (e) {
       setRetrying(false);
       setFailure((f) => (f ? { ...f, body: e instanceof Error ? e.message : String(e) } : f));
@@ -222,10 +273,9 @@ export function TxStepper({
   }
 
   function cancel() {
-    previous.current = [];
-    setPhase("idle");
-    setResults([]);
-    setFailure(null);
+    // A transaction still confirming stays remembered, so the next run looks its hash up instead of sending again.
+    if (!failure?.confirming) previous.current = [];
+    reset();
     onCancel?.();
   }
 
@@ -236,10 +286,12 @@ export function TxStepper({
   const active = phase !== "idle";
   const panel = (
     <TxProgress
-      title={phase === "failed" ? failedTitle : title}
+      title={phase === "failed" && !failure?.confirming ? failedTitle : title}
       rows={rows}
       failure={phase === "failed" ? failure : null}
-      retryLabel={retryLabel}
+      retryLabel={failure?.confirming ? "Check again" : retryLabel}
+      lagging={phase === "lagging"}
+      onDismiss={reset}
       onCancel={cancel}
       onRetry={retry}
       retrying={retrying}
@@ -256,13 +308,13 @@ export function TxStepper({
         </Button>
       )}
       {!isDesktop && (
-        <Sheet open={active} onOpenChange={(open) => { if (!open && phase === "failed") cancel(); }}>
+        <Sheet open={active} onOpenChange={(open) => { if (!open && phase === "failed") cancel(); else if (!open && phase === "lagging") reset(); }}>
           <SheetContent
             side="bottom"
             showCloseButton={false}
             className="rounded-t-2xl border-border bg-surface px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
-            onInteractOutside={(e) => { if (phase !== "failed") e.preventDefault(); }}
-            onEscapeKeyDown={(e) => { if (phase !== "failed") e.preventDefault(); }}
+            onInteractOutside={(e) => { if (phase !== "failed" && phase !== "lagging") e.preventDefault(); }}
+            onEscapeKeyDown={(e) => { if (phase !== "failed" && phase !== "lagging") e.preventDefault(); }}
           >
             <span aria-hidden className="mx-auto h-1 w-9 rounded-full bg-border" />
             <SheetTitle className="sr-only">{phase === "failed" ? failedTitle : title}</SheetTitle>
