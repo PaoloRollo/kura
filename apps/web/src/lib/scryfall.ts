@@ -186,12 +186,16 @@ export class Scryfall {
     return row.raw as ScryfallCard;
   }
 
+  // The cache is best-effort here: a database outage must not take card lookups (and token metadata) down with it.
   async getById(id: string): Promise<Candidate | null> {
-    const cached = await this.cacheGet(id);
+    const cached = await this.cacheGet(id).catch((e) => {
+      console.warn("scryfall cache read failed", e instanceof Error ? e.message : e);
+      return null;
+    });
     if (cached) return this.toCandidate(cached);
     const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(id)}`);
     if (!card) return null;
-    await this.cachePut(card);
+    await this.cachePut(card).catch((e) => console.warn("scryfall cache write failed", e instanceof Error ? e.message : e));
     return this.toCandidate(card);
   }
 

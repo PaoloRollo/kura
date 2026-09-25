@@ -156,4 +156,17 @@ describe("Scryfall", () => {
     expect(c?.name).toBe("Black Lotus");
     expect(calls).toHaveLength(1);
   });
+  it("still resolves an id when the cache database is unavailable", async () => {
+    const db = getDb();
+    const select = vi.spyOn(db, "select").mockImplementation(() => { throw new Error("relation does not exist"); });
+    const insert = vi.spyOn(db, "insert").mockImplementation(() => { throw new Error("relation does not exist"); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fn } = fakeFetch(() => ({ status: 200, body: lotus }));
+    const p = new Scryfall({ fetchImpl: fn }).getById(lotus.id);
+    await vi.runAllTimersAsync();
+    expect((await p)?.name).toBe("Black Lotus");
+    select.mockRestore();
+    insert.mockRestore();
+    warn.mockRestore();
+  });
 });

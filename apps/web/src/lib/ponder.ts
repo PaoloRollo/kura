@@ -12,3 +12,5 @@ declare module "@ponder/react" {
     schema: typeof schema;
   }
 }
+
+export { t, type Row } from "@/lib/ponder-bridge";
