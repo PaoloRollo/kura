@@ -10,6 +10,9 @@ import {TicketVerifier} from "./TicketVerifier.sol";
 import {Tickets} from "./libraries/Tickets.sol";
 import {PriceMath} from "./libraries/PriceMath.sol";
 import {ICardNames} from "./interfaces/ICardNames.sol";
+import {AuctionSteps} from "./libraries/AuctionSteps.sol";
+import {ShardToken} from "./ShardToken.sol";
+import {ICCAFactory, ICCAAuction, AuctionParameters} from "./interfaces/ICCA.sol";
 
 /// @notice Kura vault: one ERC-721 per physical card held by the vendor. Owns sharding, auctions, buyouts and release.
 contract CardVault is ERC721, TicketVerifier, Ownable {
@@ -111,6 +114,18 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     event CardMinted(uint256 indexed id, address indexed to, string scryfallId, string label, string condition, string language);
     event VendorUpdated(address vendor);
     event FeeUpdated(uint16 feeBps, address payout);
+    event CardSharded(
+        uint256 indexed id,
+        address indexed shardToken,
+        address indexed auction,
+        uint16 totalShards,
+        uint16 forSale,
+        uint64 startBlock,
+        uint64 endBlock,
+        uint256 floorPriceQ96,
+        uint256 tickSpacingQ96,
+        uint128 reserveUsdc
+    );
 
     error OnlyVendor();
     error FeeTooHigh();
@@ -120,6 +135,9 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     error InvalidLanguage();
     error WrongState(uint256 cardId, State actual);
     error NotCardOwner();
+    error InvalidShardCount();
+    error InvalidForSale();
+    error InvalidPricing();
 
     modifier onlyVendor() {
         if (msg.sender != vendor) revert OnlyVendor();
@@ -142,12 +160,14 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
 
     // ---------------------------------------------------------------- admin
 
+    /// @notice Replace the vendor allowed to mint cards. Owner only.
     function setVendor(address v) external onlyOwner {
         if (v == address(0)) revert ZeroAddress();
         vendor = v;
         emit VendorUpdated(v);
     }
 
+    /// @notice Set the protocol fee in basis points and its payout address. Owner only.
     function setFee(uint16 bps, address p) external onlyOwner {
         if (bps > MAX_FEE_BPS) revert FeeTooHigh();
         if (p == address(0)) revert ZeroAddress();
@@ -156,15 +176,18 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         emit FeeUpdated(bps, p);
     }
 
+    /// @notice Rotate the off-chain ticket and appraisal signer. Owner only.
     function setSigner(address s) external onlyOwner {
         _setSigner(s);
     }
 
+    /// @notice Point the vault at a new ENS card-names registrar. Owner only.
     function setNames(address n) external onlyOwner {
         if (n == address(0)) revert ZeroAddress();
         names = ICardNames(n);
     }
 
+    /// @notice Update the token metadata base URI and the site URI used in ENS records. Owner only.
     function setURIs(string calldata baseURI_, string calldata siteURI_) external onlyOwner {
         _baseTokenURI = baseURI_;
         siteURI = siteURI_;
@@ -172,10 +195,12 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
 
     // ---------------------------------------------------------------- views
 
+    /// @notice Full record of card `id`.
     function cards(uint256 id) external view returns (Card memory) {
         return _cards[id];
     }
 
+    /// @notice Sharding record keyed by its shard token.
     function shardings(address shardToken) external view returns (Sharding memory) {
         return _shardings[shardToken];
     }
@@ -218,6 +243,92 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         );
 
         emit CardMinted(id, m.to, m.scryfallId, label, m.condition, m.language);
+    }
+
+    // ---------------------------------------------------------------- sharding
+
+    /// @notice Escrow the card, mint its shards and open a Uniswap CCA for `p.forSale` of them. Card owner only.
+    function shardAndAuction(uint256 id, ShardParams calldata p) external returns (address shardToken, address auction) {
+        Card storage c = _cards[id];
+        if (c.state != State.Whole) revert WrongState(id, c.state);
+        if (ownerOf(id) != msg.sender) revert NotCardOwner();
+        _validateShardParams(p);
+
+        c.beneficialOwner = msg.sender;
+        _transfer(msg.sender, address(this), id);
+
+        AuctionParameters memory params = _auctionParams(p);
+        {
+            ShardToken token = new ShardToken(string.concat("Shard ", c.label), "SHARD", address(this));
+            shardToken = address(token);
+
+            uint256 saleUnits = uint256(p.forSale) * PriceMath.SHARD;
+            auction = ICCAFactory(ccaFactory).create(shardToken, saleUnits, abi.encode(params), keccak256(abi.encode(id, shardToken)));
+
+            token.mint(auction, saleUnits);
+            uint256 keptUnits = (uint256(p.totalShards) - p.forSale) * PriceMath.SHARD;
+            if (keptUnits > 0) token.mint(msg.sender, keptUnits);
+            ICCAAuction(auction).onTokensReceived();
+        }
+
+        c.state = State.Auctioning;
+        c.shardToken = shardToken;
+        c.auction = auction;
+        c.endBlock = params.endBlock;
+        _shardings[shardToken] = Sharding({
+            cardId: id,
+            totalShards: p.totalShards,
+            forSale: p.forSale,
+            clearingPriceQ96: 0,
+            graduated: false,
+            settled: false,
+            buyoutPerShard: 0,
+            payoutPool: 0,
+            redeemer: address(0)
+        });
+
+        names.setState(id, "auctioning", shardToken, auction, 0);
+        emit CardSharded(
+            id,
+            shardToken,
+            auction,
+            p.totalShards,
+            p.forSale,
+            params.startBlock,
+            params.endBlock,
+            params.floorPrice,
+            params.tickSpacing,
+            p.reserveUsdc
+        );
+    }
+
+    /// @dev Builds the CCA configuration for `p`, starting now. Split out of shardAndAuction to stay within the stack limit.
+    function _auctionParams(ShardParams calldata p) internal view returns (AuctionParameters memory) {
+        uint256 tickQ96 = PriceMath.usdcPerShardToQ96(p.tickUsdcPerShard);
+        uint64 start = uint64(block.number);
+        uint64 end = start + p.durationBlocks;
+        return AuctionParameters({
+            currency: address(usdc),
+            tokensRecipient: address(this),
+            fundsRecipient: address(this),
+            startBlock: start,
+            endBlock: end,
+            claimBlock: end,
+            tickSpacing: tickQ96,
+            validationHook: hook,
+            floorPrice: tickQ96 * (p.floorUsdcPerShard / p.tickUsdcPerShard), // exact tick multiple
+            requiredCurrencyRaised: p.reserveUsdc,
+            auctionStepsData: AuctionSteps.linear(p.durationBlocks)
+        });
+    }
+
+    function _validateShardParams(ShardParams calldata p) internal pure {
+        if (p.totalShards < MIN_SHARDS || p.totalShards > MAX_SHARDS || p.totalShards % SHARD_STEP != 0) revert InvalidShardCount();
+        if (p.forSale == 0 || p.forSale > p.totalShards) revert InvalidForSale();
+        if (p.tickUsdcPerShard == 0 || p.floorUsdcPerShard < p.tickUsdcPerShard || p.floorUsdcPerShard % p.tickUsdcPerShard != 0) {
+            revert InvalidPricing();
+        }
+        // duration range is enforced by AuctionSteps.linear
     }
 
     // ---------------------------------------------------------------- internals
