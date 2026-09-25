@@ -13,6 +13,7 @@ contract Seed is Script {
         string memory dir = vm.envOr("KURA_DEPLOYMENTS_DIR", string("deployments"));
         string memory dep = vm.readFile(string.concat(dir, "/sepolia.json"));
         CardVault vault = CardVault(vm.parseJsonAddress(dep, ".cardVault"));
+        require(vm.addr(vendorPk) == vault.vendor(), "VENDOR_PRIVATE_KEY does not match the vault vendor");
 
         vm.startBroadcast(vendorPk);
         uint256 id = vault.mint(

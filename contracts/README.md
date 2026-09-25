@@ -28,6 +28,7 @@ age) and writes its JSON to the git-ignored `deployments/tmp/`.
 
 1. Copy `.env.example` to `.env` and fill it in. The deployer must be a plain EOA (or one whose EIP-7702 delegate
    accepts ERC-1155): the `.eth` name and the `appraiser` subname are minted to it as ERC-1155 tokens.
+   The deployer and the vendor both need Sepolia ETH for gas (the vendor sends the seed mint).
 2. `forge script script/SetupEns.s.sol:SetupEnsCommit --rpc-url sepolia --broadcast`
 3. Wait for the printed commitment age, then
    `forge script script/SetupEns.s.sol:SetupEnsRegister --rpc-url sepolia --broadcast`
@@ -39,6 +40,13 @@ Addresses are written to `deployments/sepolia.json` and re-exported by `packages
 ENSv2 addresses default to `ensdomains/contracts-v2` at commit `48b3e2d` (`contracts/deployments/sepolia/*.json`) and
 can be overridden with the `ENS_*` variables. The registrar is paid in that deployment's MockUSDC, which anyone can
 mint; `SetupEnsCommit` mints the fee if the deployer holds too little.
+The registrar also accepts Circle USDC: set `ENS_FEE_TOKEN=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` to pay with it
+instead, in which case the deployer must already hold the fee (Circle USDC cannot be minted by the script).
+
+`SetupEnsRegister` must run between the registrar's minimum commitment age (60 s) and its maximum (24 h) after
+`SetupEnsCommit`. If the 24 h window lapses, rerun both phases with a new `VAULT_ENS_LABEL`: the registry and resolver
+CREATE2 salts are derived from the label, so rerunning the commit with the same label would collide with the proxies
+already deployed.
 
 ## Uniswap integration
 

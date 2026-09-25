@@ -67,7 +67,8 @@ contract ScriptsForkTest is Test {
         bytes32 parentNode = vm.parseJsonBytes32(dep, ".ensParentNode");
 
         // <label>.eth registered to the deployer with the vault's registry as subregistry
-        IETHRegistryView eth = IETHRegistryView(0x67b728a792e789a8978b30cF1b3b641f19354b43);
+        IETHRegistryView eth =
+            IETHRegistryView(vm.envOr("ENS_ETH_REGISTRY", address(0x67b728a792e789a8978b30cF1b3b641f19354b43)));
         assertEq(eth.findOwner(LABEL), deployer, "eth owner");
         assertEq(eth.getSubregistry(LABEL), address(registry), "subregistry");
         assertEq(parentNode, DnsName.node(DnsName.ETH_NODE, LABEL));

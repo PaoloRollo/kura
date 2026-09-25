@@ -57,6 +57,7 @@ contract SetupEnsCommit is EnsEnv {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
+        require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
         string memory label = vm.envString("VAULT_ENS_LABEL");
         IETHRegistrar registrar = IETHRegistrar(ethRegistrar());
         require(
@@ -109,6 +110,7 @@ contract SetupEnsRegister is EnsEnv {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
+        require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
         address signer = vm.envAddress("SIGNER_ADDRESS");
         string memory pending = vm.readFile(string.concat(deploymentsDir(), "/sepolia.ens.pending.json"));
         string memory label = vm.parseJsonString(pending, ".label");

@@ -29,6 +29,7 @@ contract Deploy is EnsEnv {
         Ctx memory c;
         c.pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         c.deployer = vm.addr(c.pk);
+        require(c.deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
         c.signer = vm.envAddress("SIGNER_ADDRESS");
         c.vendor = vm.envAddress("VENDOR_ADDRESS");
 
