@@ -59,6 +59,8 @@ export const activeAuctions = onchainTable("active_auctions", (t) => ({
   cardId: t.bigint().notNull(),
   shardToken: t.hex().notNull(),
   endBlock: t.bigint().notNull(),
+  blockNumber: t.bigint().notNull(),
+  timestamp: t.integer().notNull(),
 }));
 
 export const shardBalances = onchainTable("shard_balances", (t) => ({
@@ -91,12 +93,11 @@ export const bids = onchainTable("bids", (t) => ({
   amountUsdc: t.bigint().notNull(),
   submittedBlock: t.bigint().notNull(),
   submittedAt: t.integer().notNull(),
-  // "open" -> "exited" -> "claimed"; a zero-fill exited bid stays "exited" (final).
+  // Only persisted bid state: "open" -> "exited" -> "claimed"; a zero-fill exited bid stays "exited" (final).
+  // Consumers derive exited/claimed booleans from it at read time.
   status: bidStatus("status").notNull(),
-  exited: t.boolean().notNull(),
   tokensFilled: t.bigint(),
   currencyRefunded: t.bigint(),
-  claimed: t.boolean().notNull(),
   updatedBlock: t.bigint().notNull(),
   updatedAt: t.integer().notNull(),
 }), (table) => ({ auctionIdx: index().on(table.auction), ownerIdx: index().on(table.owner) }));
@@ -123,7 +124,7 @@ export const checkpoints = onchainTable("checkpoints", (t) => ({
 }), (table) => ({ auctionIdx: index().on(table.auction) }));
 
 export const feeEvents = onchainTable("fee_events", (t) => ({
-  id: t.text().primaryKey(),
+  id: t.text().primaryKey(), // logId(txHash, logIndex)
   cardId: t.bigint().notNull(),
   kind: feeKind("kind").notNull(),
   amountUsdc: t.bigint().notNull(),
@@ -132,7 +133,7 @@ export const feeEvents = onchainTable("fee_events", (t) => ({
 }));
 
 export const payoutClaims = onchainTable("payout_claims", (t) => ({
-  id: t.text().primaryKey(),
+  id: t.text().primaryKey(), // logId(txHash, logIndex)
   cardId: t.bigint().notNull(),
   shardToken: t.hex().notNull(),
   holder: t.hex().notNull(),
@@ -143,7 +144,7 @@ export const payoutClaims = onchainTable("payout_claims", (t) => ({
 }));
 
 export const activities = onchainTable("activities", (t) => ({
-  id: t.text().primaryKey(),
+  id: t.text().primaryKey(), // logId(txHash, logIndex)
   kind: activityKind("kind").notNull(),
   cardId: t.bigint(),
   actor: t.hex().notNull(),
@@ -169,6 +170,7 @@ export const ensNames = onchainTable("ens_names", (t) => ({
   registeredAt: t.integer().notNull(),
   revokedAt: t.integer(),
   updatedBlock: t.bigint().notNull(),
+  updatedAt: t.integer().notNull(),
 }));
 
 export const ensRecords = onchainTable("ens_records", (t) => ({
@@ -186,11 +188,13 @@ export const collectors = onchainTable("collectors", (t) => ({
   label: t.text().notNull(),
   resolver: t.hex().notNull(),
   node: t.hex().notNull(),
+  blockNumber: t.bigint().notNull(),
   registeredAt: t.integer().notNull(),
 }));
 
 export const bidderBindings = onchainTable("bidder_bindings", (t) => ({
   nullifier: t.bigint().primaryKey(),
   wallet: t.hex().notNull(),
+  blockNumber: t.bigint().notNull(),
   boundAt: t.integer().notNull(),
 }));
