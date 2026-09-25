@@ -2,10 +2,12 @@
 
 import { PrivyProvider } from "@privy-io/react-auth";
 import { WagmiProvider, createConfig } from "@privy-io/wagmi";
+import { PonderProvider } from "@ponder/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http } from "wagmi";
 import { sepolia } from "viem/chains";
 import { publicEnv } from "@/env";
+import { ponderClient } from "@/lib/ponder";
 
 const env = publicEnv();
 const queryClient = new QueryClient();
@@ -27,7 +29,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }}
     >
       <QueryClientProvider client={queryClient}>
-        <WagmiProvider config={wagmiConfig}>{children}</WagmiProvider>
+        <WagmiProvider config={wagmiConfig}>
+          <PonderProvider client={ponderClient}>{children}</PonderProvider>
+        </WagmiProvider>
       </QueryClientProvider>
     </PrivyProvider>
   );
