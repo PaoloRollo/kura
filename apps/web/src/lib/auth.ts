@@ -1,3 +1,4 @@
+import "server-only";
 import { PrivyClient } from "@privy-io/node";
 import type { Address } from "viem";
 import { serverEnv } from "@/env";
@@ -24,6 +25,12 @@ function privy(): PrivyClient {
   return client;
 }
 
+let testUser: KuraUser | null = null;
+/** Route tests set a fake user; only honoured when NODE_ENV === "test". */
+export function setUserForTests(user: KuraUser | null) {
+  testUser = user;
+}
+
 const defaultDeps: Deps = {
   // Verifies the identity token's signature and returns the user with linked accounts.
   getUser: async (idToken) => (await privy().users().get({ id_token: idToken })) as unknown as PrivyUserLike,
@@ -38,6 +45,7 @@ function readIdToken(req: Request): string | null {
 }
 
 export async function requireUser(req: Request, deps: Deps = defaultDeps): Promise<KuraUser> {
+  if (process.env.NODE_ENV === "test" && testUser) return testUser;
   const token = readIdToken(req);
   if (!token) throw new AuthError("UNAUTHENTICATED", "missing identity token");
   let user: PrivyUserLike;
