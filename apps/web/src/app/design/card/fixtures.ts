@@ -153,7 +153,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     rec("condition", "NM", 3 * 3600),
     rec("language", "en", 7 * 86_400 + 600),
     rec("vault.state", vaultState, 60),
-    ...(whole ? [] : [rec("vault.clearing_usdc", auctioning ? "0" : "1712000000", auctioning ? 60 : 22 * 60)]),
+    ...(whole || auctioning ? [] : [rec("vault.clearing_usdc", "1712000000", 22 * 60)]),
     rec("appraisal.usd", "25000.00", 2 * 86_400),
     rec("avatar", "https://cards.scryfall.io/normal/front/b/0/b0faa7f2-b547-42c4-a810-839da50dadfe.jpg", 7 * 86_400 + 600),
     rec("description", "Black Lotus, Limited Edition Alpha", 7 * 86_400 + 600),

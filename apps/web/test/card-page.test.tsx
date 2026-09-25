@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: undefined }) }));
 
@@ -82,6 +82,32 @@ describe("CardPageView", () => {
   it("shows a whole card's holders as one owner", () => {
     renderCard("whole", { tab: "holders" });
     expect(screen.getByText("Not sharded, one owner")).toBeTruthy();
+  });
+
+  it("paginates the activity feed and filters it", () => {
+    renderCard("sharded", { tab: "activity" });
+    expect(screen.getByText("Showing 1–10 of 20 events")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Page 2" }));
+    expect(screen.getByText("Showing 11–20 of 20 events")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "25" } });
+    expect(screen.getByText("Showing 1–20 of 20 events")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Bids" }));
+    expect(screen.getByRole("button", { name: "Bids" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Showing 1–6 of 6 events")).toBeTruthy();
+    expect(screen.queryByText("Minted")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Transfers" }));
+    expect(screen.getByText("0.5 shards")).toBeTruthy();
+  });
+
+  it("shows the latest six events on the Overview", () => {
+    renderCard("sharded");
+    expect(screen.getAllByRole("listitem").filter((li) => li.textContent?.match(/(Bid|Claimed|Exited|Settled|Transfer|ENS record) ·/)).length).toBe(6);
+  });
+
+  it("explains an empty activity feed", () => {
+    renderCard("empty", { tab: "activity" });
+    expect(screen.getByText("No activity yet")).toBeTruthy();
+    expect(screen.getByText("Showing 0–0 of 0 events")).toBeTruthy();
   });
 
   it("says when a card does not exist", () => {

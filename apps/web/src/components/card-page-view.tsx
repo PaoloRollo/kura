@@ -3,6 +3,7 @@
 import type * as React from "react";
 
 import Link from "next/link";
+import { ActivityFeed, ActivityList } from "@/components/activity-feed";
 import { CardArtColumn, CardHeader, CompactHeader, ShardedBy, type Identity } from "@/components/card-header";
 import { AuctionSummary, OwnedByPanel, OwnerPanel, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
@@ -11,6 +12,7 @@ import { IndexerLoading } from "@/components/sync-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CardData } from "@/hooks/use-card";
 import { addresses } from "@/lib/chain";
+import { buildFeed } from "@/lib/activity-feed";
 import { CARD_TABS, agoLong, holdersView, type CardTab } from "@/lib/card-view";
 import { metaCardName, metaTrait } from "@/lib/meta";
 import { cn } from "@/lib/utils";
@@ -81,12 +83,10 @@ export type CardPageViewProps = {
   block: bigint | null;
   tab: CardTab;
   tabHref: (t: CardTab) => string;
-  /** The activity list (Overview: the latest rows; Activity tab: the full feed). */
-  activity?: { overview: React.ReactNode; tab: React.ReactNode };
 };
 
 /** The card page (HisVE, Ps4OJ, oezcX, gmKpU, mWV0E, yV8eD) for a loaded card. */
-export function CardPageView({ c, me, now, block, tab, tabHref, activity }: CardPageViewProps) {
+export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewProps) {
   const card = c.card!;
   const identity = identityOf(c);
   const holders = holdersView({ balances: c.holders, sharding: c.sharding, shardings: c.allShardings, transfers: c.transfers, vault: addresses.cardVault });
@@ -94,6 +94,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, activity }: Card
   const isOwner = card.state === "whole" && !!me && card.ownerOf.toLowerCase() === me.toLowerCase();
   const shards = c.sharding && card.state !== "whole" ? c.sharding.totalShards : null;
   const revoked = released || !!c.ensName?.revokedAt;
+  const feed = buildFeed({ activities: c.activities, transfers: c.transfers, records: c.ensRecords, ctx: { shardings: c.allShardings, ensName: card.ensName, parties: addresses } });
 
   if (tab !== "overview") {
     return (
@@ -101,7 +102,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, activity }: Card
         <CompactHeader card={card} identity={identity} shards={shards} />
         <CardTabs tab={tab} href={tabHref} />
         {tab === "holders" && <HoldersList view={holders} now={now} whole={card.state === "whole" || !c.sharding} />}
-        {tab === "activity" && (activity?.tab ?? null)}
+        {tab === "activity" && <ActivityFeed rows={feed} now={now} />}
         {tab === "auction" && (
           c.sharding ? (
             <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
@@ -144,7 +145,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, activity }: Card
               <OwnershipSummary view={holders} owner={card.state === "whole" ? card.ownerOf : null} />
               <section className="flex min-w-0 flex-col gap-4">
                 <h2 className="font-display text-[24px] font-semibold text-text">Activity</h2>
-                {activity?.overview ?? null}
+                <ActivityList rows={feed} now={now} />
               </section>
             </div>
           )}
