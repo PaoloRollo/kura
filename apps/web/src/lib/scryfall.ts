@@ -60,13 +60,14 @@ export function reportCacheFailure(op: "read" | "write", e: unknown) {
 }
 
 export class Scryfall {
-  private readonly fetchImpl: typeof fetch;
+  /** Null: the global fetch, looked up per request (a long-lived shared client must not pin one fetch). */
+  private readonly fetchImpl: typeof fetch | null;
   private readonly now: () => number;
   private queue: Promise<void> = Promise.resolve();
   private lastAt = 0;
 
   constructor(opts: { fetchImpl?: typeof fetch; now?: () => number } = {}) {
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = opts.fetchImpl ?? null;
     this.now = opts.now ?? Date.now;
   }
 
@@ -78,7 +79,7 @@ export class Scryfall {
       this.lastAt = this.now();
       let res: Response;
       try {
-        res = await this.fetchImpl(`${BASE}${path}`, { headers: HEADERS });
+        res = await (this.fetchImpl ?? fetch)(`${BASE}${path}`, { headers: HEADERS });
       } catch (e) {
         throw new ScryfallUnavailableError(String(e));
       }

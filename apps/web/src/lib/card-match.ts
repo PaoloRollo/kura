@@ -3,7 +3,7 @@ import type { CardIndexRow } from "@/lib/card-index-format";
 import type { LoadedCardIndex } from "@/lib/card-index";
 import { topK } from "@/lib/card-vectors";
 import { isConfident } from "@/lib/embed-spec";
-import { Scryfall, ScryfallUnavailableError, type Candidate, type ScryfallCard } from "@/lib/scryfall";
+import { Scryfall, scryfall as sharedScryfall, ScryfallUnavailableError, type Candidate, type ScryfallCard } from "@/lib/scryfall";
 
 export type IndexHit = { row: CardIndexRow; score: number };
 
@@ -70,7 +70,7 @@ async function printingsOf(scryfall: Scryfall, name: string): Promise<ScryfallCa
  * match. A candidate whose Scryfall lookup fails is dropped; only when every lookup failed because
  * Scryfall is unavailable does this throw.
  */
-export async function matchVector(index: LoadedCardIndex, vector: number[], scryfall = new Scryfall()): Promise<{ candidates: MatchCandidate[]; confident: boolean }> {
+export async function matchVector(index: LoadedCardIndex, vector: number[], scryfall: Scryfall = sharedScryfall()): Promise<{ candidates: MatchCandidate[]; confident: boolean }> {
   const hits: IndexHit[] = topK(index.vectors, vector, MATCH_TOP_K).map((h) => ({ row: index.meta[h.row], score: h.score }));
   // Judged on the raw ranking (one score per artwork), before any candidate is dropped below.
   const artworkScores = [...new Map(hits.map((h) => [h.row.illustration_id, h.score] as const)).values()];
