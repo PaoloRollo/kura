@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { StationPreview } from "./preview";
 
-const STATES = ["empty", "details", "search", "minted", "minted-unavailable", "signin", "denied"] as const;
+const STATES = ["empty", "owner", "details", "search", "minted", "minted-unavailable", "signin", "denied"] as const;
 export type PreviewState = (typeof STATES)[number];
 
 /** Dev-only: the vendor station and its shell states with fixture data, for checking against the designs. */

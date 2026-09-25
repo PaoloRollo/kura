@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isAddress } from "viem";
 import { toast } from "sonner";
 import { useReadContract } from "wagmi";
 import { CONDITIONS, abi, cardLabel, isDeployed, DeploymentsSchema } from "@kura/shared";
@@ -9,13 +8,13 @@ import deployments from "@/generated/deployments.json";
 import { CheckCircle2Icon, ListChecksIcon, QrCodeIcon, RotateCcwIcon, ScanEyeIcon, StampIcon } from "lucide-react";
 import { CardArt, Segmented, SearchInput, StatTile } from "@/components/kura";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { shortAddress } from "@/components/site-header";
 import { MintDetailsUnavailable, MintReading, MintSuccess, type MintResult } from "@/components/vendor/mint-success";
 import { Brackets, CandidateRow, HowRow, PanelHeading, ScanStage, StageChip, StationStepper } from "@/components/vendor/station";
 import { QrScanner } from "@/components/qr-scanner";
+import { OwnerHandleInput } from "@/components/vendor/owner-input";
 import { TxStepper } from "@/components/tx-stepper";
 import { WebcamCapture } from "@/components/webcam-capture";
 import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
@@ -25,7 +24,9 @@ import { addresses, publicClient } from "@/lib/chain";
 import { money } from "@/lib/format";
 import type { StepResult } from "@/lib/tx";
 import { useSendTx } from "@/lib/tx";
+import { indexerCollectors } from "@/lib/collectors";
 import { cardPageUrl } from "@/lib/meta";
+import { handleForAddress } from "@/lib/owner";
 import { describeMintError, mintOutcome, stationStats } from "@/lib/vendor";
 import { embedCard, warmUpEmbedder, type LoadProgress } from "@/lib/card-embed";
 import type { MatchCandidate } from "@/lib/card-match";
@@ -87,6 +88,7 @@ export type StationSeed = {
   results?: Candidate[];
   chosen?: Candidate | null;
   owner?: `0x${string}` | null;
+  ownerName?: string | null;
   manual?: string;
   minted?: MintResult | null;
   /** Preview the terminal "minted, details unavailable" state. */
@@ -115,11 +117,14 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   const [minted, setMinted] = useState<MintView | null>(
     seed?.minted ? { kind: "done", result: seed.minted } : seed?.mintUnavailable ? { kind: "unavailable", ...seed.mintUnavailable } : null,
   );
-  const [ownerSource, setOwnerSource] = useState<"qr" | "pasted">("pasted");
+  // The owner's Kura handle: typed, or looked up for a scanned address. Null when the address has none.
+  const [ownerName, setOwnerName] = useState<string | null>(seed?.ownerName ?? null);
+  const [ownerSource, setOwnerSource] = useState<"qr" | "handle">("qr");
   const deployed = isDeployed(DeploymentsSchema.parse(deployments));
   // Stable identity so the QR scanner's camera effect is not restarted on every render.
   const onQrAddress = useCallback((a: `0x${string}`) => {
     setOwner(a);
+    setOwnerName(null);
     setOwnerSource("qr");
     setStep("review");
   }, []);
@@ -145,6 +150,16 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
       live = false;
     };
   }, [warm]);
+
+  // A scanned address is shown by its Kura handle when it has one.
+  useEffect(() => {
+    if (!owner || ownerSource !== "qr" || seed) return;
+    let live = true;
+    void handleForAddress(owner, indexerCollectors).then((name) => live && setOwnerName(name));
+    return () => {
+      live = false;
+    };
+  }, [owner, ownerSource, seed]);
 
   function openSearch(prefill: string) {
     setManual(prefill);
@@ -217,10 +232,12 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
     setGroup(null);
     setMatches([]);
     setOwner(null);
+    setOwnerName(null);
     setCapture(null);
   }
 
   const stepIndex = STEP_INDEX[step];
+  const ownerLabel = owner ? (ownerName ?? shortAddress(owner)) : "";
   const ensParent = `${deployments.ensParentLabel}.eth`;
   // The id the next mint expects. A concurrent mint can take it; the authoritative label comes from CardMinted.
   const nextId = useReadContract({
@@ -257,7 +274,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
         set: `${chosen.setCode.toUpperCase()} · ${chosen.setName}`,
         tokenId: out.id.toString(),
         ensName: `${out.label}.${ensParent}`,
-        owner,
+        owner: ownerName ?? owner,
         condition,
         language,
         block: out.blockNumber.toLocaleString("en-US"),
@@ -455,24 +472,21 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
               {step === "owner" ? (
                 <div className="flex flex-col gap-3">
                   <QrScanner onAddress={onQrAddress} />
-                  <div className="flex gap-2">
-                    <Input
-                      className="h-10 font-mono text-[13px]"
-                      placeholder="0x… paste the collector's address"
-                      onChange={(e) => {
-                        setOwnerSource("pasted");
-                        setOwner(isAddress(e.target.value) ? (e.target.value as `0x${string}`) : null);
-                      }}
-                    />
-                    <Button variant="primary" size="default" className="h-10 px-4" disabled={!owner} onClick={() => setStep("review")}>Use address</Button>
-                  </div>
+                  <OwnerHandleInput
+                    onUse={(o) => {
+                      setOwner(o.address);
+                      setOwnerName(o.name);
+                      setOwnerSource("handle");
+                      setStep("review");
+                    }}
+                  />
                 </div>
               ) : step === "review" && owner ? (
                 <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3">
                   <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-2"><QrCodeIcon className="size-5" /></span>
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate font-mono text-[13px] text-text" title={owner}>{owner}</span>
-                    <span className="text-[11px] text-text-2">{shortAddress(owner)} · {ownerSource === "qr" ? "scanned just now" : "pasted"}</span>
+                    <span className="truncate font-mono text-[13px] text-text" title={owner}>{ownerName ?? owner}</span>
+                    <span className="text-[11px] text-text-2">{shortAddress(owner)} · {ownerSource === "qr" ? "scanned just now" : "typed handle"}</span>
                   </span>
                   <CheckCircle2Icon aria-label="owner set" className="size-5 shrink-0 text-good" />
                   <button type="button" className="text-[12px] text-muted-foreground hover:text-text" onClick={() => setStep("owner")}>Change</button>
@@ -488,13 +502,13 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
               <span className="text-[12px] text-muted-foreground">Will mint</span>
               <span className="truncate font-mono text-[15px] text-kin">{willMint}</span>
               <span className="text-[11px] text-text-2">
-                {owner ? `to ${shortAddress(owner)} · ` : ""}stays in the vault{nextId != null ? " · the id is confirmed once minted" : ""}
+                {owner ? `to ${ownerLabel} · ` : ""}stays in the vault{nextId != null ? " · the id is confirmed once minted" : ""}
               </span>
             </section>
 
             {step === "review" && chosen && owner && (
               <p className="text-[13px] text-text-2">
-                Ready to mint <strong className="font-semibold text-text">{chosen.name}</strong> ({chosen.setCode.toUpperCase()}, {condition}, {language}{foil ? ", foil" : ""}) to <span className="font-mono">{shortAddress(owner)}</span>.
+                Ready to mint <strong className="font-semibold text-text">{chosen.name}</strong> ({chosen.setCode.toUpperCase()}, {condition}, {language}{foil ? ", foil" : ""}) to <span className="font-mono">{ownerLabel}</span>.
               </p>
             )}
             <TxStepper
@@ -510,7 +524,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
                   ? [
                       {
                         id: "mint",
-                        label: `Mint ${chosen.name} to ${shortAddress(owner)}`,
+                        label: `Mint ${chosen.name} to ${ownerLabel}`,
                         run: () =>
                           send({
                             to: addresses.cardVault,

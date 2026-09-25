@@ -38,7 +38,8 @@ const match: MatchCandidate = { ...PRINTINGS[0], score: 0.97, illustrationId: "m
 
 const SEEDS: Record<string, StationSeed> = {
   empty: { step: "capture" },
-  details: { step: "review", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0], owner: "0x4f2cA0b3aE1f3d7a0b6d2f0C1e4B5a6D7c8Ea81e" },
+  owner: { step: "owner", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0] },
+  details: { step: "review", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0], owner: "0x4f2cA0b3aE1f3d7a0b6d2f0C1e4B5a6D7c8Ea81e", ownerName: "kenji.kura.eth" },
   search: { step: "search", capture: "/cards/mox-sapphire.webp", matches: [{ ...match, score: 0.41 }], confident: false, manual: "mox sapph", results: PRINTINGS },
   "minted-unavailable": {
     step: "minted",
