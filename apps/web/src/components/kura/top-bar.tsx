@@ -26,11 +26,16 @@ export type TopBarProps = {
   right?: React.ReactNode;
   /** Draw the hairline under the bar (the app shells); the landing has none. */
   bordered?: boolean;
+  /** "end" puts the nav beside the right-hand actions (landing); "center" is the app shells. */
+  navAlign?: "center" | "end";
+  /** Horizontal gutter at lg: 48px in the app shells, 64px on the landing. */
+  wide?: boolean;
   className?: string;
 };
 
 /** The 1440 "Top bar": wordmark, centred nav, wallet chips on the right. */
-export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right, bordered = true, className }: TopBarProps) {
+export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right, bordered = true, navAlign = "center", wide = false, className }: TopBarProps) {
+  const end = navAlign === "end";
   return (
     <header
       className={cn(
@@ -39,7 +44,13 @@ export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right,
         className,
       )}
     >
-      <div className="mx-auto grid h-16 max-w-[1440px] grid-cols-[1fr_auto] items-center gap-4 px-4 sm:px-6 md:h-[74px] md:grid-cols-[1fr_auto_1fr] lg:px-12">
+      <div
+        className={cn(
+          "mx-auto grid h-16 max-w-[1440px] grid-cols-[1fr_auto] items-center gap-4 px-4 sm:px-6 md:h-[74px]",
+          end ? "md:h-[84px] md:grid-cols-[1fr_auto_auto] md:gap-8" : "md:grid-cols-[1fr_auto_1fr]",
+          wide ? "lg:px-16" : "lg:px-12",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-3">
           <Logo />
           {badge && <span className="hidden rounded-[6px] bg-surface-2 px-2 py-1 text-[12px] text-text-2 sm:inline">{badge}</span>}
