@@ -36,9 +36,9 @@ export type PriceQuote = {
 
 /** The card's finish from its mint description ("Black Lotus, Limited Edition Alpha, foil"). */
 export function finishFromDescription(description: string | null | undefined): Finish {
-  const d = (description ?? "").toLowerCase();
-  if (/,\s*etched\b/.test(d)) return "etched";
-  if (/,\s*foil\b/.test(d)) return "foil";
+  const d = (description ?? "").trim();
+  if (/,\s*etched$/i.test(d)) return "etched";
+  if (/,\s*foil$/i.test(d)) return "foil";
   return "nonfoil";
 }
 

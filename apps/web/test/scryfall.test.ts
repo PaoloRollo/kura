@@ -174,4 +174,17 @@ describe("Scryfall", () => {
     insert.mockRestore();
     error.mockRestore();
   });
+
+  it("looks a printing up by set, number and language, then serves it from the cache", async () => {
+    const { fn, calls } = fakeFetch(() => ({ status: 200, body: lotus }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p1 = s.getPrinting("LEA", "232", "en");
+    await vi.runAllTimersAsync();
+    expect((await p1)?.id).toBe(lotus.id);
+    expect(calls[0]).toContain("/cards/lea/232/en");
+    const p2 = s.getPrinting("lea", "232", "en");
+    await vi.runAllTimersAsync();
+    expect((await p2)?.id).toBe(lotus.id);
+    expect(calls).toHaveLength(1);
+  });
 });

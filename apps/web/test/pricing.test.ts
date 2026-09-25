@@ -23,6 +23,10 @@ describe("finish", () => {
     expect(finishFromDescription("Black Lotus, Vintage Masters, foil")).toBe("foil");
     expect(finishFromDescription("Sol Ring, Commander Legends, etched")).toBe("etched");
     expect(finishFromDescription(null)).toBe("nonfoil");
+    // Only a trailing ", foil" marks a foil: set names that merely contain the word don't.
+    expect(finishFromDescription("Sol Ring, Foil Collection Promos")).toBe("nonfoil");
+    expect(finishFromDescription("Sol Ring, Commander, foil edition")).toBe("nonfoil");
+    expect(finishFromDescription("Sol Ring, Commander, Foil")).toBe("foil");
   });
 
   it("picks the finish's own price and never falls back across finishes", () => {

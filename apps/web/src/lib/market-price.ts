@@ -3,7 +3,7 @@ import { and, eq } from "@ponder/client";
 import { finishFromDescription, quoteMarketPrice, type PriceQuote } from "@/lib/pricing";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
-import { Scryfall } from "@/lib/scryfall";
+import { scryfall as sharedScryfall, type Scryfall } from "@/lib/scryfall";
 
 /** The card's mint description (its ENS `description` record), which carries ", foil" for foils. */
 async function mintDescription(cardId: bigint): Promise<string | null> {
@@ -20,7 +20,7 @@ async function mintDescription(cardId: bigint): Promise<string | null> {
  * The market price quote for a vault card (lib/pricing's rule): its printing's Scryfall price for its finish, the
  * English printing as fallback, times the condition multiplier. Null when the card or its printing is unknown.
  */
-export async function marketPriceForCard(card: { id: bigint; scryfallId: string; condition: string }, scryfall = new Scryfall()): Promise<PriceQuote | null> {
+export async function marketPriceForCard(card: { id: bigint; scryfallId: string; condition: string }, scryfall: Scryfall = sharedScryfall()): Promise<PriceQuote | null> {
   const [printing, description] = await Promise.all([scryfall.getCard(card.scryfallId), mintDescription(card.id)]);
   if (!printing) return null;
   return quoteMarketPrice({

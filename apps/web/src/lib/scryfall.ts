@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { setCode as normaliseSet, slugify } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { scryfallCache, type CandidateJson } from "@/lib/db/schema";
@@ -197,6 +197,14 @@ export class Scryfall {
     return row.raw as ScryfallCard;
   }
 
+  private async cacheGetPrinting(setCode: string, collectorNumber: string, lang: string): Promise<ScryfallCard | null> {
+    const rows = await getDb().select().from(scryfallCache)
+      .where(and(eq(scryfallCache.setCode, setCode), eq(scryfallCache.collectorNumber, collectorNumber), eq(scryfallCache.lang, lang))).limit(1);
+    const row = rows[0];
+    if (!row || this.now() - row.fetchedAt.getTime() > CACHE_TTL_MS) return null;
+    return row.raw as ScryfallCard;
+  }
+
   // The cache is best-effort here: a database outage must not take card lookups (and token metadata) down with it.
   async getById(id: string): Promise<Candidate | null> {
     const card = await this.getCard(id);
@@ -216,9 +224,15 @@ export class Scryfall {
     return card;
   }
 
-  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang). */
+  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang), cache first. */
   async getPrinting(set: string, collectorNumber: string, lang = "en"): Promise<ScryfallCard | null> {
-    const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(set)}/${encodeURIComponent(collectorNumber)}/${encodeURIComponent(lang)}`);
+    const code = normaliseSet(set);
+    const cached = await this.cacheGetPrinting(code, collectorNumber, lang).catch((e) => {
+      reportCacheFailure("read", e);
+      return null;
+    });
+    if (cached) return cached;
+    const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(code)}/${encodeURIComponent(collectorNumber)}/${encodeURIComponent(lang)}`);
     if (!card) return null;
     await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
     return card;
@@ -267,4 +281,11 @@ export class Scryfall {
     await this.cachePutMany(cards);
     return cards;
   }
+}
+
+let shared: Scryfall | null = null;
+/** One client per server process, so Scryfall's request spacing holds across concurrent requests. */
+export function scryfall(): Scryfall {
+  if (!shared) shared = new Scryfall();
+  return shared;
 }
