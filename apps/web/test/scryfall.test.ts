@@ -84,16 +84,46 @@ describe("Scryfall", () => {
     expect(await p2).toBeInstanceOf(ScryfallUnavailableError);
   });
 
-  it("spaces requests by at least 500 ms", async () => {
+  it("spaces requests by at least 100 ms (Scryfall asks for 50-100 ms)", async () => {
     const { fn, calls } = fakeFetch(() => ({ status: 200, body: lotus }));
     const s = new Scryfall({ fetchImpl: fn });
     const a = s.getById("a");
     const b = s.getById("b");
     await vi.advanceTimersByTimeAsync(10);
     expect(calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(80);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(20);
     expect(calls).toHaveLength(2);
     await Promise.all([a, b]);
+  });
+
+  it("treats a query Scryfall rejects (400) as no results", async () => {
+    const { fn } = fakeFetch(() => ({ status: 400, body: { object: "error", code: "bad_request" } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p = s.search("name:(((");
+    await vi.runAllTimersAsync();
+    expect(await p).toEqual([]);
+  });
+
+  it("lists every printing of a name in every language, oldest first, with illustration ids", async () => {
+    const leb = { ...lotus, id: "leb1", set: "leb", illustration_id: "ill-1" };
+    const { fn, calls } = fakeFetch(() => ({ status: 200, body: { data: [{ ...lotus, illustration_id: "ill-1" }, leb] } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p = s.printingsOf('Kongming, "Sleeping Dragon"');
+    await vi.runAllTimersAsync();
+    const cards = await p;
+    expect(cards.map((c) => [c.id, c.illustration_id])).toEqual([[lotus.id, "ill-1"], ["leb1", "ill-1"]]);
+    const q = new URL(calls[0]).searchParams;
+    // Names holding double quotes are wrapped in single quotes instead (Scryfall has no escape).
+    expect(q.get("q")).toBe(`!'Kongming, "Sleeping Dragon"' unique:prints lang:any`);
+    expect(q.get("order")).toBe("released");
+    expect(q.get("dir")).toBe("asc");
+
+    const none = new Scryfall({ fetchImpl: fakeFetch(() => ({ status: 404, body: {} })).fn });
+    const p2 = none.printingsOf("Nope");
+    await vi.runAllTimersAsync();
+    expect(await p2).toEqual([]);
   });
 
   it("serves a second lookup of the same id from the cache without fetching", async () => {
