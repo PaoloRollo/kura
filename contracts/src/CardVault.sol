@@ -145,7 +145,10 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     }
 
     constructor(Config memory c) ERC721("Kura Card", "KURA") TicketVerifier("Kura CardVault", c.signer) Ownable(c.owner) {
-        if (c.vendor == address(0) || c.payout == address(0) || c.usdc == address(0) || c.names == address(0)) revert ZeroAddress();
+        if (
+            c.vendor == address(0) || c.payout == address(0) || c.usdc == address(0) || c.names == address(0)
+                || c.ccaFactory == address(0) || c.hook == address(0)
+        ) revert ZeroAddress();
         if (c.feeBps > MAX_FEE_BPS) revert FeeTooHigh();
         vendor = c.vendor;
         feeBps = c.feeBps;
@@ -258,6 +261,8 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         _transfer(msg.sender, address(this), id);
 
         AuctionParameters memory params = _auctionParams(p);
+        c.state = State.Auctioning;
+        c.endBlock = params.endBlock;
         {
             ShardToken token = new ShardToken(string.concat("Shard ", c.label), "SHARD", address(this));
             shardToken = address(token);
@@ -271,10 +276,8 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
             ICCAAuction(auction).onTokensReceived();
         }
 
-        c.state = State.Auctioning;
         c.shardToken = shardToken;
         c.auction = auction;
-        c.endBlock = params.endBlock;
         _shardings[shardToken] = Sharding({
             cardId: id,
             totalShards: p.totalShards,

@@ -7,6 +7,8 @@ import {ShardToken} from "../src/ShardToken.sol";
 import {PriceMath} from "../src/libraries/PriceMath.sol";
 import {AuctionSteps} from "../src/libraries/AuctionSteps.sol";
 import {ICCAAuction} from "../src/interfaces/ICCA.sol";
+import {BidGateHook} from "../src/BidGateHook.sol";
+import {ValidationHookLib} from "@cca/libraries/ValidationHookLib.sol";
 
 contract CardVaultShardTest is ForkTest {
     uint256 id;
@@ -137,8 +139,24 @@ contract CardVaultShardTest is ForkTest {
         _permitAuction(bob, auction, 20e6);
         uint256 tick = ICCAAuction(auction).tickSpacing();
         vm.prank(bob);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(ValidationHookLib.ValidationHookCallFailed.selector, bytes("")));
         ICCAAuction(auction).submitBid(tick * 22, 20e6, bob, "");
+    }
+
+    function test_bidWithWrongSubjectTicketReverts() public {
+        vm.prank(alice);
+        (, address auction) = vault.shardAndAuction(id, _defaultParams());
+        bytes memory data = _humanTicket(alice, 1);
+        _dealUsdc(bob, 20e6);
+        _permitAuction(bob, auction, 20e6);
+        uint256 tick = ICCAAuction(auction).tickSpacing();
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ValidationHookLib.ValidationHookCallFailed.selector, abi.encodeWithSelector(BidGateHook.WrongSubject.selector)
+            )
+        );
+        ICCAAuction(auction).submitBid(tick * 22, 20e6, bob, data);
     }
 
     function test_bidWithTicketSucceeds() public {

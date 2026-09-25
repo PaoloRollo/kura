@@ -80,10 +80,10 @@ abstract contract ForkTest is Test {
         });
     }
 
-    /// @dev Sets a USDC balance on the fork. If `deal` cannot find the balance slot for Circle's proxy, replace the body
+    /// @dev Adds `amount` to `to`'s USDC balance on the fork. If `deal` cannot find the balance slot for Circle's proxy, replace the body
     /// with the minter path: `vm.prank(IUsdcAdmin(address(USDC)).masterMinter()); IUsdcAdmin(address(USDC)).configureMinter(address(this), type(uint256).max); IUsdcAdmin(address(USDC)).mint(to, amount);`
     function _dealUsdc(address to, uint256 amount) internal {
-        deal(address(USDC), to, amount);
+        deal(address(USDC), to, USDC.balanceOf(to) + amount);
     }
 
     function _permitAuction(address bidder, address auction, uint160 amount) internal {
@@ -117,6 +117,7 @@ abstract contract ForkTest is Test {
     }
 
     /// @dev Funds, permits and bids in one go. `nullifier` is derived from the bidder so each wallet is a distinct human.
+    /// @dev Nullifiers come from the bidder address (distinct humans); "same human, two wallets" tests must call `_humanTicket` with a shared nullifier directly.
     function _bid(address bidder, address auction, uint256 maxPriceQ96, uint128 amount) internal returns (uint256 bidId) {
         _dealUsdc(bidder, amount);
         _permitAuction(bidder, auction, amount);
