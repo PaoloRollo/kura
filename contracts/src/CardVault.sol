@@ -130,6 +130,10 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         uint256 indexed id, address indexed shardToken, uint256 clearingPriceQ96, uint256 raisedUsdc, uint256 feeUsdc, bool graduated
     );
     event FeeAccrued(uint256 indexed id, FeeKind kind, uint256 amountUsdc);
+    event CardRedeemed(
+        uint256 indexed id, address indexed shardToken, address indexed redeemer, uint256 buyoutPerShard, uint256 payoutUsdc, uint256 feeUsdc
+    );
+    event PayoutClaimed(uint256 indexed id, address indexed shardToken, address indexed holder, uint256 shardUnits, uint256 usdc);
 
     error OnlyVendor();
     error FeeTooHigh();
@@ -143,6 +147,10 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     error InvalidForSale();
     error InvalidPricing();
     error AuctionNotOver();
+    error BelowThreshold(uint256 balance, uint256 supply);
+    error AppraisalMismatch();
+    error NotRedeemed();
+    error NothingToClaim();
 
     modifier onlyVendor() {
         if (msg.sender != vendor) revert OnlyVendor();
@@ -381,6 +389,69 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         names.setState(id, "sharded", c.shardToken, c.auction, PriceMath.q96ToUsdcPerShard(clearingQ96));
         emit AuctionSettled(id, c.shardToken, clearingQ96, raised, fee, graduated);
         if (fee > 0) emit FeeAccrued(id, FeeKind.Sale, fee);
+    }
+
+    // ---------------------------------------------------------------- redeem
+
+    /// @notice Buy out the remaining shards of a Sharded card. Caller must hold at least 80 percent of the supply.
+    /// Price per shard is the higher of the auction clearing price and a fresh backend-signed appraisal; the vendor
+    /// fee is charged on top. The card returns to Whole under the caller; the other holders claim USDC via claimPayout.
+    function redeem(uint256 id, Tickets.Appraisal calldata a, bytes calldata sig) external {
+        Card storage c = _cards[id];
+        if (c.state != State.Sharded) revert WrongState(id, c.state);
+
+        address shardToken = c.shardToken;
+        ShardToken token = ShardToken(shardToken);
+        Sharding storage s = _shardings[shardToken];
+
+        uint256 supply = token.totalSupply();
+        uint256 bal = token.balanceOf(msg.sender);
+        if (bal * 5 < supply * 4) revert BelowThreshold(bal, supply);
+
+        uint256 price = PriceMath.q96ToUsdcPerShard(s.clearingPriceQ96);
+        uint256 payoutAmount;
+        uint256 fee;
+        if (bal < supply) {
+            if (a.cardId != id || a.shardToken != shardToken) revert AppraisalMismatch();
+            _verifyAppraisal(a, sig);
+            if (a.usdcPerShard > price) price = a.usdcPerShard;
+            payoutAmount = PriceMath.payoutFor(price, supply - bal);
+            fee = payoutAmount * feeBps / 10_000;
+            usdc.safeTransferFrom(msg.sender, address(this), payoutAmount + fee);
+            if (fee > 0) usdc.safeTransfer(payout, fee);
+        }
+
+        token.burn(msg.sender, bal);
+        s.buyoutPerShard = price;
+        s.payoutPool += payoutAmount;
+        s.redeemer = msg.sender;
+
+        c.state = State.Whole;
+        c.shardToken = address(0);
+        c.auction = address(0);
+        c.endBlock = 0;
+        c.beneficialOwner = msg.sender;
+        _transfer(address(this), msg.sender, id);
+
+        names.setState(id, "whole", address(0), address(0), price);
+        names.setOwnerRecord(id, msg.sender);
+        emit CardRedeemed(id, shardToken, msg.sender, price, payoutAmount, fee);
+        if (fee > 0) emit FeeAccrued(id, FeeKind.Buyout, fee);
+    }
+
+    /// @notice Burn your shards of a redeemed sharding and receive USDC at the buyout price.
+    function claimPayout(address shardToken) external {
+        Sharding storage s = _shardings[shardToken];
+        if (s.redeemer == address(0)) revert NotRedeemed();
+        ShardToken token = ShardToken(shardToken);
+        uint256 bal = token.balanceOf(msg.sender);
+        if (bal == 0) revert NothingToClaim();
+
+        uint256 amount = PriceMath.payoutFor(s.buyoutPerShard, bal);
+        token.burn(msg.sender, bal);
+        s.payoutPool -= amount; // sum of floored claims never exceeds the floored pool
+        if (amount > 0) usdc.safeTransfer(msg.sender, amount);
+        emit PayoutClaimed(s.cardId, shardToken, msg.sender, bal, amount);
     }
 
     // ---------------------------------------------------------------- internals
