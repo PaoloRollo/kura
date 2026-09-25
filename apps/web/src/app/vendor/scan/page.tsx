@@ -140,6 +140,17 @@ export default function ScanPage() {
     setStep("details");
   }
 
+  // Records the pick so a manual scan is auditable the same way an embedding match already is; a
+  // failure here should not block the vendor, who already has the card chosen.
+  async function chooseManual(c: Candidate) {
+    choose(c);
+    try {
+      await getJson("/api/scan/draft", { method: "POST", identityToken, body: JSON.stringify({ candidate: c }) });
+    } catch (e) {
+      console.error("failed to record manual scan draft", e);
+    }
+  }
+
   function pickArtwork(m: MatchCandidate) {
     if (m.siblings.length > 1) {
       setGroup(m);
@@ -207,7 +218,7 @@ export default function ScanPage() {
               </div>
               {results.length === 0 && !searching && <p className="text-sm text-muted-foreground">Search the card by name.</p>}
               <div className="grid gap-3 sm:grid-cols-3">
-                {results.map((c) => <CandidateTile key={c.scryfallId} c={c} onPick={() => choose(c)} note={`$${c.prices.usd ?? "?"}`} />)}
+                {results.map((c) => <CandidateTile key={c.scryfallId} c={c} onPick={() => chooseManual(c)} note={`$${c.prices.usd ?? "?"}`} />)}
               </div>
               <Button variant="ghost" onClick={restart}>Back to camera</Button>
             </div>
