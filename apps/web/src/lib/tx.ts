@@ -23,8 +23,20 @@ function externalWallet(w: ConnectedWallet): ExternalWallet {
     getChainId: async () => Number(await (await w.getEthereumProvider()).request({ method: "eth_chainId" })),
     switchChain: (id) => w.switchChain(id),
     sendTransaction: async (tx) => {
-      const client = createWalletClient({ account: w.address as Address, chain: sepolia, transport: custom(await w.getEthereumProvider()) });
-      return { hash: await client.sendTransaction({ to: tx.to, data: tx.data, value: tx.value }) };
+      const account = w.address as Address;
+      // Do every read (nonce, gas, fees) through our own RPC, so the wallet's RPC is only used to sign and broadcast.
+      // Wallets like Rabby default to a public Sepolia RPC that may refuse reads (e.g. drpc's free tier).
+      const [nonce, gas, fees] = await Promise.all([
+        publicClient.getTransactionCount({ address: account, blockTag: "pending" }),
+        publicClient.estimateGas({ account, to: tx.to, data: tx.data, value: tx.value }),
+        publicClient.estimateFeesPerGas(),
+      ]);
+      const client = createWalletClient({ account, chain: sepolia, transport: custom(await w.getEthereumProvider()) });
+      const hash = await client.sendTransaction({
+        to: tx.to, data: tx.data, value: tx.value, nonce, gas: (gas * 12n) / 10n,
+        maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      });
+      return { hash };
     },
   };
 }
