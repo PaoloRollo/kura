@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/migrate";
+import { getDb } from "@/lib/db/client";
+import { scryfallCache } from "@/lib/db/schema";
 import { Scryfall, ScryfallUnavailableError } from "@/lib/scryfall";
 
 const lotus = {
@@ -124,6 +126,22 @@ describe("Scryfall", () => {
     const p2 = none.printingsOf("Nope");
     await vi.runAllTimersAsync();
     expect(await p2).toEqual([]);
+  });
+
+  it("caches every printing from printingsOf in a single batched insert", async () => {
+    const printings = Array.from({ length: 12 }, (_, i) => ({ ...lotus, id: `p${i}`, illustration_id: `ill-${i}` }));
+    const { fn } = fakeFetch(() => ({ status: 200, body: { data: printings } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const db = getDb();
+    const insertSpy = vi.spyOn(db, "insert");
+    const p = s.printingsOf("Black Lotus");
+    await vi.runAllTimersAsync();
+    const cards = await p;
+    expect(cards).toHaveLength(12);
+    // One batched insert, not one per printing.
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const rows = await db.select().from(scryfallCache);
+    expect(rows.map((r) => r.scryfallId).sort()).toEqual(printings.map((c) => c.id).sort());
   });
 
   it("serves a second lookup of the same id from the cache without fetching", async () => {

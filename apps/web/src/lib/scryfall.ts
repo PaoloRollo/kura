@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { setCode as normaliseSet, slugify } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { scryfallCache, type CandidateJson } from "@/lib/db/schema";
@@ -138,6 +138,45 @@ export class Scryfall {
       .onConflictDoUpdate({ target: scryfallCache.scryfallId, set: { prices: { usd: c.prices.usd, usd_foil: c.prices.usdFoil, eur: c.prices.eur }, raw: card, fetchedAt: new Date(this.now()) } });
   }
 
+  /** Same upsert as cachePut, batched into one insert for every card (used for a name's full printings list). */
+  private async cachePutMany(cards: ScryfallCard[]): Promise<void> {
+    if (cards.length === 0) return;
+    // A name's printings never repeat an id within one page, but stay defensive against a duplicate
+    // key in the same INSERT, which Postgres rejects ("ON CONFLICT DO UPDATE command cannot affect
+    // row a second time").
+    const byId = new Map(cards.map((card) => [card.id, card]));
+    const rows = [...byId.values()].map((card) => {
+      const c = this.toCandidate(card);
+      return {
+        scryfallId: card.id,
+        name: card.name,
+        printedName: c.printedName,
+        setCode: c.setCode,
+        setName: card.set_name,
+        collectorNumber: card.collector_number,
+        lang: card.lang,
+        rarity: card.rarity,
+        colors: card.colors ?? [],
+        typeLine: card.type_line ?? "",
+        manaValue: card.cmc?.toString() ?? null,
+        releasedAt: card.released_at ?? null,
+        imageNormal: c.image,
+        imageSmall: c.imageSmall,
+        prices: { usd: c.prices.usd, usd_foil: c.prices.usdFoil, eur: c.prices.eur },
+        finishes: c.finishes,
+        raw: card,
+        fetchedAt: new Date(this.now()),
+      };
+    });
+    await getDb()
+      .insert(scryfallCache)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: scryfallCache.scryfallId,
+        set: { prices: sql`excluded.prices`, raw: sql`excluded.raw`, fetchedAt: sql`excluded.fetched_at` },
+      });
+  }
+
   private async cacheGet(id: string): Promise<ScryfallCard | null> {
     const rows = await getDb().select().from(scryfallCache).where(eq(scryfallCache.scryfallId, id)).limit(1);
     const row = rows[0];
@@ -195,7 +234,7 @@ export class Scryfall {
     // Scryfall has no escape inside quotes, so a name holding double quotes goes in single quotes.
     const exact = name.includes('"') ? `!'${name}'` : `!"${name}"`;
     const cards = await this.searchCards(`${exact} unique:prints lang:any`, "&order=released&dir=asc");
-    await Promise.all(cards.map((c) => this.cachePut(c)));
+    await this.cachePutMany(cards);
     return cards;
   }
 }
