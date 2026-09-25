@@ -56,6 +56,9 @@ export const shardings = onchainTable("shardings", (t) => ({
   updatedAt: t.integer().notNull(),
 }), (table) => ({ cardIdx: index().on(table.cardId) }));
 
+// Row is deleted on AuctionSettled, but settle is permissionless (not automatic): an auction that has passed its
+// endBlock stays here, unsettled, until someone calls settle. Consumers should filter on endBlock rather than
+// assume every row here is still accepting bids.
 export const activeAuctions = onchainTable("active_auctions", (t) => ({
   auction: t.hex().primaryKey(),
   cardId: t.bigint().notNull(),
@@ -153,6 +156,8 @@ export const activities = onchainTable("activities", (t) => ({
   kind: activityKind("kind").notNull(),
   cardId: t.bigint(),
   actor: t.hex().notNull(),
+  // Units depend on kind: "shard" and "claim" are 18-decimal shard units; "bid", "exit", "settle", "redeem" and
+  // "payout" are 6-decimal USDC; "mint", "named", "transfer" and "release" carry no amount (null).
   amount: t.bigint(),
   meta: t.json(),
   txHash: t.hex().notNull(),
