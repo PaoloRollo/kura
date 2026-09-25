@@ -53,21 +53,35 @@ repo root).
 The index is ~37 MB and git-ignored, so it is not in the deployment. Host it on Vercel Blob:
 
 1. **Create a Blob store.** Vercel dashboard > Storage > Create > Blob, then connect it to the
-   project. Copy its `BLOB_READ_WRITE_TOKEN` (the store's `.env.local` tab). The token is only
-   needed to upload; the deployed app reads the public URLs and does not need it.
+   project. Private access is the default and what we use: the index is only readable with the
+   store's token, and connecting the store makes Vercel inject `BLOB_READ_WRITE_TOKEN` into the
+   project's functions, which the loader uses. Copy the token (the store's `.env.local` tab) for
+   the upload.
 2. **Upload the index** (built locally with `build:index`):
 
        BLOB_READ_WRITE_TOKEN=vercel_blob_rw_... pnpm --filter web upload:index
 
    It reads `data/card-index/` (or `--dir DIR`), gzips `meta.json`, and uploads
    `manifest.json`, `meta.json.gz` and `vectors.bin` under
-   `card-index/<builtAt>-<content hash>/`, then prints the base URL. Each upload is a new,
+   `card-index/<builtAt>-<content hash>/`, then prints the env to set. Uploads are private
+   unless `CARD_INDEX_BLOB_ACCESS=public` is set, and the access must match the store's (a
+   private store refuses public uploads, and the other way round). Each upload is a new,
    immutable prefix (a re-upload of the same index reuses its prefix), so an old deployment
    keeps working while a new one points at the new index; delete old prefixes by hand in the
    dashboard. The manifest is uploaded last, so an interrupted upload never looks complete.
-3. **Set `CARD_INDEX_URL`** in the Vercel project (Settings > Environment Variables) to the
-   printed base URL, e.g. `https://<store>.public.blob.vercel-storage.com/card-index/20260925T150908Z-1a2b3c4d`,
-   and redeploy. When it is set, `CARD_INDEX_DIR` is ignored.
+3. **Set the printed env** in the Vercel project (Settings > Environment Variables) and
+   redeploy. For a private store that is
+
+       CARD_INDEX_URL=https://<store>.private.blob.vercel-storage.com/card-index/20260925T150908Z-1a2b3c4d
+       CARD_INDEX_BLOB_ACCESS=private
+
+   and `BLOB_READ_WRITE_TOKEN` must be present too (it is when the store is connected to the
+   project; otherwise add it by hand). With a private store the server reads each file through
+   `@vercel/blob`'s `get` with that token; without the token every scan answers 503
+   `INDEX_UNAVAILABLE` and the server logs `BLOB_READ_WRITE_TOKEN is not set`. A
+   `*.private.blob.vercel-storage.com` URL is treated as private even without
+   `CARD_INDEX_BLOB_ACCESS`. For a public store only `CARD_INDEX_URL` is needed, and the files are
+   fetched without a token. When `CARD_INDEX_URL` is set, `CARD_INDEX_DIR` is ignored.
 
 **Cold-start cost.** The index is loaded on the first `/api/scan/match` request a function
 instance serves, not at boot, and kept in memory for as long as the instance stays warm; concurrent
