@@ -16,6 +16,7 @@ const Body = z.object({
 });
 
 export const POST = withAuth(async (req, user) => {
+  // The action comes from the body, so the release vendor check below cannot run before parseBody.
   const body = await parseBody(Body, req);
   const db = getDb();
 

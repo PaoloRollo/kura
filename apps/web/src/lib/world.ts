@@ -1,3 +1,4 @@
+import "server-only";
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import { HttpError } from "@/lib/http";
 

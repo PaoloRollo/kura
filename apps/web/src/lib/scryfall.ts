@@ -1,3 +1,4 @@
+import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { setCode as normaliseSet, slugify } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
