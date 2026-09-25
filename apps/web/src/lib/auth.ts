@@ -48,10 +48,16 @@ export async function requireUser(req: Request, deps: Deps = defaultDeps): Promi
   if (process.env.NODE_ENV === "test" && testUser) return testUser;
   const token = readIdToken(req);
   if (!token) throw new AuthError("UNAUTHENTICATED", "missing identity token");
+  // Build the Privy client outside the try: a config error (e.g. a missing env var) must surface as a 500,
+  // not be reported to the user as an invalid identity token.
+  if (deps === defaultDeps) privy();
   let user: PrivyUserLike;
   try {
     user = await deps.getUser(token);
-  } catch {
+  } catch (err) {
+    // Log why Privy rejected the token (never the token itself) so auth failures are diagnosable.
+    const e = err as { name?: string; code?: string; message?: string };
+    console.warn(`[auth] identity token rejected: ${e.name ?? "Error"}${e.code ? ` (${e.code})` : ""}: ${e.message ?? String(err)}`);
     throw new AuthError("UNAUTHENTICATED", "invalid identity token");
   }
   const wallets = user.linked_accounts.filter((a) => a.type === "wallet" && a.chain_type === "ethereum" && a.address);

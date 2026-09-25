@@ -10,7 +10,7 @@ const ServerSchema = z.object({
   WORLD_ENV: z.enum(["production", "staging", "sandbox"]),
   DATABASE_URL: z.string().min(1),
   ALCHEMY_HTTP_URL: z.string().url(),
-  ALCHEMY_WS_URL: z.string().min(1),
+  ALCHEMY_WS_URL: z.string().optional(),
   PONDER_URL: z.string().url(),
 });
 
