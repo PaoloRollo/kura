@@ -13,3 +13,6 @@ apps/indexer/generated/*.db
 .worktrees/
 .superpowers/
 .DS_Store
+
+# Ponder codegen (regenerated on every run)
+apps/indexer/generated/schema.graphql

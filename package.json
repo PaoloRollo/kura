@@ -2,6 +2,7 @@
   "name": "kura",
   "private": true,
   "packageManager": "pnpm@10.25.0",
+  "engines": { "node": ">=22 <25" },
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
