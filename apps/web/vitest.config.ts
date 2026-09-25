@@ -15,5 +15,8 @@ export default defineConfig({
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     setupFiles: ["test/setup.ts"],
     testTimeout: 20_000,
+    // Keep the laptop usable: at most two test workers.
+    minWorkers: 1,
+    maxWorkers: 2,
   },
 });
