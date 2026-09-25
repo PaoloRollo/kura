@@ -55,6 +55,8 @@ abstract contract EnsEnv is Script {
 /// Phase 1: deploy the vault's subname registry and shared resolver, fund the registrar fee, commit to the name.
 contract SetupEnsCommit is EnsEnv {
     function run() external {
+        require(block.chainid == 11155111, "Deploy targets Sepolia only");
+
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
@@ -108,6 +110,8 @@ contract SetupEnsCommit is EnsEnv {
 /// Phase 2: reveal and register the name, link the registry as its parent, name the appraiser agent.
 contract SetupEnsRegister is EnsEnv {
     function run() external {
+        require(block.chainid == 11155111, "Deploy targets Sepolia only");
+
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");

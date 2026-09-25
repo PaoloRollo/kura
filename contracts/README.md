@@ -54,3 +54,25 @@ already deployed.
 - Bid gating: `BidGateHook.validate` is the auction's validation hook.
 - Settlement: `CardVault.settle` sweeps unsold tokens and currency as the auction's recipients.
 - Bids fund through Permit2: approve USDC to Permit2, then allow the auction in Permit2, then `submitBid`.
+
+## Operations
+
+- **Rotating the signer** is two calls, not one: `BidGateHook.setSigner` (owner only) authorizes World ID tickets for
+  bidding, and `CardVault.setSigner` (owner only) authorizes tickets and appraisals for release and redeem. Both must
+  be rotated together, or the old signer stays valid on whichever contract was missed.
+- **`CardVault.setNames` is not a recovery path.** A fresh `CardNames` has no labels for any existing card, so
+  pointing the vault at one mid-flight leaves every already-minted card unresolvable through it. The emergency
+  fallback for a broken `CardNames` is an adapter implementing `ICardNames` that no-ops on calls for cards it
+  doesn't know about, rather than a replacement registrar that starts empty.
+- **Never `transferFrom` a card to the vault address.** `CardVault.shardAndAuction` is the only path that should ever
+  move a card's NFT to the vault, and it does so with `_transfer` from within the contract while recording
+  `beneficialOwner`. A plain `transferFrom` to the vault address bypasses that bookkeeping, and the card becomes
+  unrecoverable: there is no function that lets the vault return an NFT it holds without a matching `Sharding`
+  record.
+- **A non-graduated auction still records a clearing price.** `CardVault.settle` always reads `auction.clearingPrice()`
+  and stores it, even when `isGraduated()` is false and no funds were swept. Treat that price as advisory only for a
+  non-graduated sharding; it did not clear a real sale and should not be relied on for a redeem appraisal floor
+  without checking `Sharding.graduated`.
+- **`CardVault` is close to the EIP-170 24 KB size limit.** Before adding code to it, enable `via_ir` in
+  `foundry.toml` or move the new logic into a library or a cloned satellite contract; a few more bytes of inline
+  logic can push a deploy over the limit.

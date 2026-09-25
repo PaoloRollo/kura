@@ -14,6 +14,11 @@ contract Deploy is EnsEnv {
     address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
 
+    /// @dev Mirrors CardVault.MAX_FEE_BPS (src/CardVault.sol). Solidity has no way to read a public constant off
+    /// another contract's type without a deployed instance, so this is kept in sync by hand; the vault's own
+    /// constructor enforces the same bound as a backstop.
+    uint16 constant MAX_VENDOR_FEE_BPS = 1000;
+
     struct Ctx {
         uint256 pk;
         address deployer;
@@ -26,6 +31,8 @@ contract Deploy is EnsEnv {
     }
 
     function run() external {
+        require(block.chainid == 11155111, "Deploy targets Sepolia only");
+
         Ctx memory c;
         c.pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         c.deployer = vm.addr(c.pk);
@@ -72,11 +79,13 @@ contract Deploy is EnsEnv {
     }
 
     function _deployVault(Ctx memory c, address hook, address names) internal returns (CardVault) {
+        uint256 feeBps = vm.envUint("VENDOR_FEE_BPS");
+        require(feeBps <= MAX_VENDOR_FEE_BPS, "VENDOR_FEE_BPS exceeds CardVault.MAX_FEE_BPS");
         return new CardVault(
             CardVault.Config({
                 owner: c.deployer,
                 vendor: c.vendor,
-                feeBps: uint16(vm.envUint("VENDOR_FEE_BPS")),
+                feeBps: uint16(feeBps),
                 payout: vm.envAddress("VENDOR_PAYOUT_ADDRESS"),
                 signer: c.signer,
                 usdc: USDC,

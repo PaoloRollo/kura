@@ -8,6 +8,8 @@ import {CardVault} from "../src/CardVault.sol";
 /// Run with the vendor key. Sharding is done from the app by the owner's Privy wallet.
 contract Seed is Script {
     function run() external {
+        require(block.chainid == 11155111, "Deploy targets Sepolia only");
+
         uint256 vendorPk = vm.envUint("VENDOR_PRIVATE_KEY");
         address demoOwner = vm.envAddress("DEMO_OWNER");
         string memory dir = vm.envOr("KURA_DEPLOYMENTS_DIR", string("deployments"));
