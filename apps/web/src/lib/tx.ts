@@ -6,7 +6,7 @@ import { createWalletClient, custom, type Address, type Hex, type TransactionRec
 import { sepolia } from "viem/chains";
 import { publicClient } from "@/lib/chain";
 import { useKuraUser } from "@/hooks/use-kura-user";
-import { sendContractTx, type EmbeddedWallet, type ExternalWallet, type SendInput, type Sent } from "@/lib/tx-core";
+import { sendContractTx, sendExternalTx, type EmbeddedWallet, type ExternalWallet, type SendInput, type Sent } from "@/lib/tx-core";
 
 export * from "@/lib/tx-core";
 
@@ -24,19 +24,8 @@ function externalWallet(w: ConnectedWallet): ExternalWallet {
     switchChain: (id) => w.switchChain(id),
     sendTransaction: async (tx) => {
       const account = w.address as Address;
-      // Do every read (nonce, gas, fees) through our own RPC, so the wallet's RPC is only used to sign and broadcast.
-      // Wallets like Rabby default to a public Sepolia RPC that may refuse reads (e.g. drpc's free tier).
-      const [nonce, gas, fees] = await Promise.all([
-        publicClient.getTransactionCount({ address: account, blockTag: "pending" }),
-        publicClient.estimateGas({ account, to: tx.to, data: tx.data, value: tx.value }),
-        publicClient.estimateFeesPerGas(),
-      ]);
       const client = createWalletClient({ account, chain: sepolia, transport: custom(await w.getEthereumProvider()) });
-      const hash = await client.sendTransaction({
-        to: tx.to, data: tx.data, value: tx.value, nonce, gas: (gas * 12n) / 10n,
-        maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-      });
-      return { hash };
+      return sendExternalTx(publicClient, (request) => client.sendTransaction(request), account, tx);
     },
   };
 }

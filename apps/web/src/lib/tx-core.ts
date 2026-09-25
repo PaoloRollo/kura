@@ -166,6 +166,40 @@ export type ExternalWallet = {
   sendTransaction: (tx: UnsignedTx) => Promise<{ hash: Hex }>;
 };
 
+/** The reads an external wallet's send needs, all served by our own RPC (see `sendExternalTx`). */
+export type ExternalSendReader = {
+  getTransactionCount: (args: { address: Address; blockTag: "pending" }) => Promise<number>;
+  estimateGas: (args: { account: Address; to: Address; data?: Hex; value?: bigint }) => Promise<bigint>;
+  estimateFeesPerGas: () => Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
+};
+
+export type ExternalSendRequest = {
+  to: Address; data: Hex; value: bigint; nonce: number; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint;
+};
+
+/**
+ * Sends `tx` from an external wallet with the pending nonce, gas estimate plus 20% headroom and
+ * EIP-1559 fees, all read through our own RPC so the wallet's RPC is only used to sign and broadcast. Wallets like
+ * Rabby default to a public Sepolia RPC that may refuse reads (e.g. drpc's free tier). Never sets `gasPrice`.
+ */
+export async function sendExternalTx(
+  reader: ExternalSendReader,
+  sendTransaction: (request: ExternalSendRequest) => Promise<Hex>,
+  account: Address,
+  tx: UnsignedTx,
+): Promise<{ hash: Hex }> {
+  const [nonce, gas, fees] = await Promise.all([
+    reader.getTransactionCount({ address: account, blockTag: "pending" }),
+    reader.estimateGas({ account, to: tx.to, data: tx.data, value: tx.value }),
+    reader.estimateFeesPerGas(),
+  ]);
+  const hash = await sendTransaction({
+    to: tx.to, data: tx.data, value: tx.value, nonce, gas: (gas * 12n) / 10n,
+    maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+  });
+  return { hash };
+}
+
 export type SenderDeps = {
   /** The user's identity address (see `identityAddress`); calls are simulated from it. */
   account: Address | undefined;
