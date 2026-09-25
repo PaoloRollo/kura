@@ -1,5 +1,5 @@
-import { isAddress, keccak256, toBytes, type Address } from "viem";
-import { RESERVED_HANDLES } from "@kura/shared";
+import { isAddress, type Address } from "viem";
+import { HANDLE_PATTERN, isValidHandle } from "@kura/shared";
 import { shortAddress } from "@/lib/format";
 
 // Collector handles (`<label>.kura.eth`): the availability check and the names addresses are shown by.
@@ -8,32 +8,27 @@ import { shortAddress } from "@/lib/format";
 export type HandleReason = "INVALID" | "RESERVED" | "TAKEN" | "ALREADY_NAMED";
 export type Availability = { available: true } | { available: false; reason: HandleReason; label?: string };
 
-/** The on-chain reads behind a check (CardNames `reserved`, `isAvailable`, `collectorLabels`). */
+/**
+ * The chain state behind a check, read in one call: CardNames `isAvailable(label)` and, when `address` is given,
+ * `collectorLabels(address)` ("" when it has no handle).
+ */
 export type HandleReader = {
-  reserved: (labelHash: `0x${string}`) => Promise<boolean>;
-  isAvailable: (label: string) => Promise<boolean>;
-  collectorLabel: (address: Address) => Promise<string>;
+  lookup: (label: string, address?: Address) => Promise<{ available: boolean; current: string }>;
 };
-
-const HANDLE_RE = /^[a-z0-9]{3,32}$/;
 
 /** Lowercased and trimmed, the way the input and the route read a typed handle. */
 export const normalizeHandle = (s: string) => s.trim().toLowerCase();
 
 /**
- * Checks a handle in the order `CardNames.registerCollector` reverts: InvalidHandle, HandleReserved (the on-chain set,
- * plus the shared list), HandleTaken, then AlreadyNamed when `address` already holds a handle.
+ * Checks a handle in the order `CardNames.registerCollector` reverts: InvalidHandle, HandleReserved, HandleTaken, then
+ * AlreadyNamed when `address` already holds a handle. Reserved handles come from the shared list, whose leading entries
+ * are the on-chain set, so they need no chain read.
  */
 export async function checkHandle(raw: string, reader: HandleReader, address?: Address): Promise<Availability> {
   const label = normalizeHandle(raw);
-  if (!HANDLE_RE.test(label)) return { available: false, reason: "INVALID" };
-  if ((RESERVED_HANDLES as readonly string[]).includes(label)) return { available: false, reason: "RESERVED" };
-  const [reserved, available, current] = await Promise.all([
-    reader.reserved(keccak256(toBytes(label))),
-    reader.isAvailable(label),
-    address ? reader.collectorLabel(address) : Promise.resolve(""),
-  ]);
-  if (reserved) return { available: false, reason: "RESERVED" };
+  if (!HANDLE_PATTERN.test(label)) return { available: false, reason: "INVALID" };
+  if (!isValidHandle(label)) return { available: false, reason: "RESERVED" };
+  const { available, current } = await reader.lookup(label, address);
   if (!available) return { available: false, reason: "TAKEN" };
   if (current) return { available: false, reason: "ALREADY_NAMED", label: current };
   return { available: true };

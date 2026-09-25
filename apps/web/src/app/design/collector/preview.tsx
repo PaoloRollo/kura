@@ -38,38 +38,49 @@ function Claim({ initial }: { initial: { label: string; check: CheckState } }) {
   );
 }
 
+function StateNav({ state, states }: { state: string; states: readonly string[] }) {
+  return (
+    <nav aria-label="Preview states" className="flex flex-wrap gap-2 border-b border-border px-4 py-2 lg:px-12" data-preview-nav>
+      {states.map((s) => (
+        <Link key={s} href={`/design/collector?state=${s}`} className={cn("rounded-full px-2.5 py-1 text-[12px]", s === state ? "bg-surface-2 text-text" : "text-muted-foreground")}>
+          {s}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
 export function CollectorPreview({ state, states }: { state: string; states: readonly string[] }) {
-  const signedIn = state !== "login";
+  // Login is full-bleed (no top bar); Claim handle drops the top bar on mobile, like /app/onboarding.
+  if (state === "login") {
+    return (
+      <div className="relative min-h-screen">
+        <div className="absolute inset-x-0 top-0 z-10 bg-bg/80"><StateNav state={state} states={states} /></div>
+        <CollectorLogin onLogin={() => {}} />
+      </div>
+    );
+  }
+  const claim = state !== "shell";
   return (
     <div className="min-h-screen">
       <TopBar
-        nav={signedIn ? NAV.collector : []}
+        className={claim ? "max-md:hidden" : undefined}
+        nav={NAV.collector}
         pathname="/app"
         exactHrefs={["/app"]}
         right={
-          signedIn ? (
-            <>
-              <BarChip icon={CircleDollarSignIcon} className="hidden sm:inline-flex">248.50 USDC</BarChip>
-              <span className="inline-flex h-9 items-center rounded-md border border-border px-3">
-                <EnsName name={state === "shell" ? "paolo.kura.eth" : "0x4f2c…a81e"} copyable={false} />
-              </span>
-            </>
-          ) : (
-            <Button variant="inverse" size="compact">Log in</Button>
-          )
+          <>
+            <BarChip icon={CircleDollarSignIcon} className="hidden sm:inline-flex">248.50 USDC</BarChip>
+            {/* The shell fixture is a wallet without a handle yet (it shows the banner), so the chip is the short address. */}
+            <span className="inline-flex h-9 items-center rounded-md border border-border px-3">
+              <EnsName name="0x4f2c…a81e" copyable={false} />
+            </span>
+          </>
         }
       />
-      <nav aria-label="Preview states" className="flex flex-wrap gap-2 border-b border-border px-4 py-2 lg:px-12" data-preview-nav>
-        {states.map((s) => (
-          <Link key={s} href={`/design/collector?state=${s}`} className={cn("rounded-full px-2.5 py-1 text-[12px]", s === state ? "bg-surface-2 text-text" : "text-muted-foreground")}>
-            {s}
-          </Link>
-        ))}
-      </nav>
+      <StateNav state={state} states={states} />
       <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-24 sm:px-6 md:pb-10 lg:px-12 lg:pt-8">
-        {state === "login" ? (
-          <CollectorLogin onLogin={() => {}} />
-        ) : state === "shell" ? (
+        {state === "shell" ? (
           <>
             <HandleBanner forceShow />
             <h1 className="font-display text-[28px] font-semibold text-text md:text-[32px]">Live auctions</h1>

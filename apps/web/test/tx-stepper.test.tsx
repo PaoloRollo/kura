@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { TxProgress, describeTxError } from "@/components/tx-stepper";
 
 afterEach(cleanup);
@@ -22,6 +22,16 @@ describe("TxProgress error card", () => {
   it("shows a transaction still confirming with its link", () => {
     render(<TxProgress title="t" rows={[{ id: "a", label: "Bid", status: "confirming", hash: HASH }]} />);
     expect(screen.getByRole("link").textContent).toBe("Still confirming · 0x5d1…07b");
+  });
+});
+
+describe("TxProgress without a retry", () => {
+  it("offers only the way back when retrying would fail the same way", () => {
+    const onCancel = vi.fn();
+    render(<TxProgress title="t" rows={rows} failure={{ title: "Taken", reverted: "HandleTaken()", retry: false }} backLabel="Edit handle" onCancel={onCancel} onRetry={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit handle" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -133,11 +133,13 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
   // The signed-out and not-authorised vendor screens show only the wordmark and the station badge.
   const showNav = role === "collector" ? signedIn : signedIn && isVendor;
   const nav = showNav ? NAV[role] : [];
-  // Claim handle (D0ZWe) is a full-screen step on mobile: no tab bar under its CTA.
-  const tabs = showNav && bare !== "/app/onboarding" ? TABS[role] : [];
+  // Claim handle (D0ZWe) is a full-screen step on mobile: no top bar, wallet chip or tab bar.
+  const fullScreenStep = bare === "/app/onboarding";
+  const tabs = showNav && !fullScreenStep ? TABS[role] : [];
   return (
     <>
       <TopBar
+        className={fullScreenStep ? "max-md:hidden" : undefined}
         nav={nav}
         pathname={pathname}
         exactHrefs={["/app"]}

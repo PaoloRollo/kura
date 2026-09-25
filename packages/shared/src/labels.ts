@@ -1,7 +1,22 @@
 export const CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"] as const;
 export type Condition = (typeof CONDITIONS)[number];
 
-export const RESERVED_HANDLES = ["appraiser", "vault", "vendor", "admin", "www", "app", "api", "ens", "eth"] as const;
+/**
+ * Handles no collector can claim. The first ON_CHAIN_RESERVED_COUNT entries are CardNames' on-chain `reserved` set,
+ * which was fixed at deploy. The rest block look-alike or official-sounding names, and only the app enforces them:
+ * the contract would still accept them from a direct call. Append new entries at the end so the on-chain prefix
+ * (and RESERVED_HANDLES[1] === "vault") keep their positions.
+ */
+export const RESERVED_HANDLES = [
+  "appraiser", "vault", "vendor", "admin", "www", "app", "api", "ens", "eth",
+  "kura", "kuravault", "kuraeth", "official", "support", "help", "team", "staff", "mod",
+] as const;
+
+/** How many leading RESERVED_HANDLES entries CardNames reserves on chain. */
+export const ON_CHAIN_RESERVED_COUNT = 9;
+
+/** A handle's shape: 3 to 32 of a-z0-9 (CardNames `_requireHandle`). */
+export const HANDLE_PATTERN = /^[a-z0-9]{3,32}$/;
 
 /** Longest label part `CardVault._requireLabelPart` accepts, in bytes (slugs and set codes are ascii). */
 export const MAX_LABEL_PART = 48;
@@ -43,7 +58,7 @@ export function cardLabel(slug: string, set: string, tokenId: bigint | number): 
 }
 
 export function isValidHandle(label: string): boolean {
-  if (!/^[a-z0-9]{3,32}$/.test(label)) return false;
+  if (!HANDLE_PATTERN.test(label)) return false;
   return !(RESERVED_HANDLES as readonly string[]).includes(label);
 }
 

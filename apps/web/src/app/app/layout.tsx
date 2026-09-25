@@ -13,19 +13,17 @@ export default function CollectorLayout({ children }: { children: React.ReactNod
   const { login } = useLogin();
   const { handles, ready: handlesReady } = useHandlesState();
   const pathname = usePathname() ?? "";
+  if (!ready) return <div className="min-h-screen" />;
+  // Login (OoX90) is full-bleed: no top bar.
+  if (!authenticated) return <CollectorLogin onLogin={(method) => login({ loginMethods: [method] })} />;
+  const onboarding = pathname === "/app/onboarding";
   const unnamed = !!address && handlesReady && !handles[address.toLowerCase()];
   return (
     <div className="min-h-screen">
       <SiteHeader role="collector" />
       <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-24 sm:px-6 md:pb-10 lg:px-12 lg:pt-8">
-        {!ready ? null : !authenticated ? (
-          <CollectorLogin onLogin={(method) => login({ loginMethods: [method] })} />
-        ) : (
-          <>
-            {unnamed && pathname !== "/app/onboarding" && <HandleBanner />}
-            {children}
-          </>
-        )}
+        {unnamed && !onboarding && <HandleBanner />}
+        {children}
       </main>
     </div>
   );

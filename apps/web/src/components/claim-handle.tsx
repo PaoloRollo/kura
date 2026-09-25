@@ -55,7 +55,7 @@ export function ClaimHandleView({
     : handleMessage(check, label, PARENT);
   const preview = label ? `${label}.${PARENT}` : fallbackName;
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-9rem)] w-full max-w-[420px] flex-col">
+    <div className="mx-auto flex min-h-[calc(100dvh-7.5rem)] md:min-h-[calc(100dvh-12rem)] w-full max-w-[420px] flex-col">
       <div className="flex justify-end">
         <Link href="/app" className="text-[13px] text-text-2 hover:text-text">Skip for now</Link>
       </div>
@@ -241,6 +241,9 @@ export function ClaimHandle() {
           failedTitle="Your handle wasn't claimed"
           disabled={!available || !address}
           describeError={(e, r) => describeError(e, r) ?? describeTxError(e, r)}
+          // A handle revert repeats on retry: send the user back to change the handle instead.
+          retryable={(r) => !reasonFromRevert(r.inner?.name ?? r.name)}
+          backLabel="Edit handle"
           onDone={() => router.push("/app")}
         />
       }

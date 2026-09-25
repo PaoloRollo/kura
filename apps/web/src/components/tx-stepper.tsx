@@ -20,7 +20,7 @@ export type TxRow = { id: string; label: string; status: StepStatus; hash?: stri
  * The error card. `reverted` is the decoded error ("Expired()"); `hash` is set once the transaction was broadcast.
  * `confirming`: broadcast but not mined yet, so the card offers to check again instead of re-sending.
  */
-export type TxFailure = { title: string; body?: string; reverted?: string; hash?: string; confirming?: boolean };
+export type TxFailure = { title: string; body?: string; reverted?: string; hash?: string; confirming?: boolean; retry?: boolean };
 
 function RowIcon({ status }: { status: StepStatus }) {
   const base = "flex size-6 shrink-0 items-center justify-center rounded-full [&_svg]:size-3.5";
@@ -36,6 +36,7 @@ export function TxProgress({
   rows,
   failure,
   retryLabel = "Retry",
+  backLabel = "Back",
   onCancel,
   onRetry,
   retrying,
@@ -50,6 +51,8 @@ export function TxProgress({
   lagging?: boolean;
   onDismiss?: () => void;
   retryLabel?: string;
+  /** The only button when `failure.retry` is false: back to change the input ("Edit handle"). */
+  backLabel?: string;
   onCancel?: () => void;
   onRetry?: () => void;
   retrying?: boolean;
@@ -106,10 +109,14 @@ export function TxProgress({
               </p>
             )}
           </div>
-          <div className="flex gap-2.5">
-            <Button variant="secondary" size="md" className="flex-1" onClick={onCancel}>Cancel</Button>
-            <Button variant="primary" size="md" className="flex-1" onClick={onRetry} disabled={retrying}>{retryLabel}</Button>
-          </div>
+          {failure.retry === false ? (
+            <Button variant="primary" size="md" onClick={onCancel}>{backLabel}</Button>
+          ) : (
+            <div className="flex gap-2.5">
+              <Button variant="secondary" size="md" className="flex-1" onClick={onCancel}>Cancel</Button>
+              <Button variant="primary" size="md" className="flex-1" onClick={onRetry} disabled={retrying}>{retryLabel}</Button>
+            </div>
+          )}
         </>
       ) : lagging ? (
         <>
@@ -176,6 +183,10 @@ export type TxStepperProps = {
   onCancel?: () => void;
   /** Turns a failure into the error card's human title and sentence. */
   describeError?: (e: unknown, revert: Revert) => { title: string; body?: string };
+  /** False for a revert that would repeat on retry (the input must change): the card then offers only `backLabel`. */
+  retryable?: (revert: Revert) => boolean;
+  /** The failure card's only button when a revert is not retryable. */
+  backLabel?: string;
   className?: string;
 };
 
@@ -198,6 +209,8 @@ export function TxStepper({
   onRetry,
   onCancel,
   describeError = describeTxError,
+  retryable,
+  backLabel,
   className,
 }: TxStepperProps) {
   const queryClient = useQueryClient();
@@ -232,7 +245,12 @@ export function TxStepper({
       const human = describeError(failed.cause, revert);
       const name = revert.inner?.name ?? revert.name;
       setIndexStatus("skipped");
-      setFailure({ ...human, reverted: name ? `${name}()` : undefined, hash: failed.hash ?? revert.hash });
+      setFailure({
+        ...human,
+        reverted: name ? `${name}()` : undefined,
+        hash: failed.hash ?? revert.hash,
+        ...(retryable && !retryable(revert) ? { retry: false } : {}),
+      });
       setPhase("failed");
       notify({ title: failedTitle, body: human.title, tone: "shu", icon: <XIcon /> });
       onError?.(out, revert);
@@ -296,6 +314,7 @@ export function TxStepper({
       rows={rows}
       failure={phase === "failed" ? failure : null}
       retryLabel={failure?.confirming ? "Check again" : retryLabel}
+      backLabel={backLabel}
       lagging={phase === "lagging"}
       onDismiss={reset}
       onCancel={cancel}

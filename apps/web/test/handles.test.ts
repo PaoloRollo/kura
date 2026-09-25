@@ -1,19 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { keccak256, toBytes, type Address } from "viem";
+import type { Address } from "viem";
 import { checkHandle, displayName, handleMessage, reasonFromRevert, type HandleReader } from "@/lib/handles";
 
 const ME = "0x00000000000000000000000000000000000000aa" as Address;
-const reader = (o: { reservedOnChain?: string[]; taken?: string[]; mine?: string } = {}): HandleReader => ({
-  reserved: vi.fn(async (h: `0x${string}`) => (o.reservedOnChain ?? []).some((l) => keccak256(toBytes(l)) === h)),
-  isAvailable: vi.fn(async (l: string) => !(o.taken ?? []).includes(l)),
-  collectorLabel: vi.fn(async () => o.mine ?? ""),
+const reader = (o: { taken?: string[]; mine?: string } = {}): HandleReader => ({
+  lookup: vi.fn(async (l: string, a?: Address) => ({ available: !(o.taken ?? []).includes(l), current: a ? (o.mine ?? "") : "" })),
 });
 
 describe("checkHandle", () => {
-  it("accepts a free handle, trimmed and lowercased", async () => {
+  it("accepts a free handle, trimmed and lowercased, in one lookup", async () => {
     const r = reader();
     expect(await checkHandle("  Paolo ", r, ME)).toEqual({ available: true });
-    expect(r.isAvailable).toHaveBeenCalledWith("paolo");
+    expect(r.lookup).toHaveBeenCalledTimes(1);
+    expect(r.lookup).toHaveBeenCalledWith("paolo", ME);
   });
 
   it("refuses bad shapes before touching the chain", async () => {
@@ -21,15 +20,18 @@ describe("checkHandle", () => {
     for (const l of ["", "ab", "a".repeat(33), "pa-olo", "pa.olo", "paolo!"]) {
       expect(await checkHandle(l, r)).toEqual({ available: false, reason: "INVALID" });
     }
-    expect(r.isAvailable).not.toHaveBeenCalled();
+    expect(r.lookup).not.toHaveBeenCalled();
   });
 
-  it("reports the shared reserved list and the on-chain reserved set as RESERVED", async () => {
-    expect(await checkHandle("vault", reader())).toEqual({ available: false, reason: "RESERVED" });
-    expect(await checkHandle("kurateam", reader({ reservedOnChain: ["kurateam"] }))).toEqual({ available: false, reason: "RESERVED" });
+  it("reports reserved handles, on-chain and client-side ones, without a chain read", async () => {
+    const r = reader();
+    for (const l of ["vault", "appraiser", "kura", "kuravault", "support", "Mod"]) {
+      expect(await checkHandle(l, r)).toEqual({ available: false, reason: "RESERVED" });
+    }
+    expect(r.lookup).not.toHaveBeenCalled();
   });
 
-  it("follows the contract's revert order: reserved, then taken, then already named", async () => {
+  it("follows the contract's revert order: taken, then already named", async () => {
     expect(await checkHandle("kenji", reader({ taken: ["kenji"], mine: "paolo" }), ME)).toEqual({ available: false, reason: "TAKEN" });
     expect(await checkHandle("aiko", reader({ mine: "paolo" }), ME)).toEqual({ available: false, reason: "ALREADY_NAMED", label: "paolo" });
     // Without an address there is no wallet to check.
