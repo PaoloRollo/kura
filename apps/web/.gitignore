@@ -42,3 +42,6 @@ next-env.d.ts
 
 AGENTS.md
 CLAUDE.md
+
+# card image embedding index (build with pnpm --filter web build:index)
+/data/card-index/
