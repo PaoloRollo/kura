@@ -19,6 +19,7 @@ export async function recordActivity(
     meta: fields.meta ?? null,
     txHash: event.transaction.hash,
     blockNumber: event.block.number,
+    logIndex: event.log.logIndex,
     timestamp: Number(event.block.timestamp),
   }).onConflictDoNothing();
 }

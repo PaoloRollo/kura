@@ -157,6 +157,8 @@ export const activities = onchainTable("activities", (t) => ({
   meta: t.json(),
   txHash: t.hex().notNull(),
   blockNumber: t.bigint().notNull(),
+  // Log index within the block, for stable ordering of same-block/same-timestamp activities.
+  logIndex: t.integer().notNull(),
   timestamp: t.integer().notNull(),
 }), (table) => ({ cardIdx: index().on(table.cardId), actorIdx: index().on(table.actor), timeIdx: index().on(table.timestamp) }));
 

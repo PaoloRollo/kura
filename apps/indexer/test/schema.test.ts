@@ -27,4 +27,10 @@ describe("schema", () => {
     expect(cols(schema.collectors)).toEqual(expect.arrayContaining(["resolver", "node"]));
     expect(indexedColumns(schema.collectors)).toContainEqual(["resolver"]);
   });
+  it("orders activities by a required integer logIndex for stable sorting", () => {
+    expect(cols(schema.activities)).toContain("logIndex");
+    const logIndex = (schema.activities as unknown as Record<string, { notNull: boolean; columnType: string }>).logIndex;
+    expect(logIndex.notNull).toBe(true);
+    expect(logIndex.columnType).toBe("PgInteger");
+  });
 });
