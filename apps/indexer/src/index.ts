@@ -1,1 +1,1 @@
-export {};
+import "./vault";
