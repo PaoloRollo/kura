@@ -23,7 +23,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
         defaultChain: sepolia,
         supportedChains: [sepolia],
-        appearance: { theme: "dark", accentColor: "#6366f1" },
+        appearance: { theme: "dark", accentColor: "#E8552F" },
       }}
     >
       <QueryClientProvider client={queryClient}>

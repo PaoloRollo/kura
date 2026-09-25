@@ -2,14 +2,112 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Kura is dark only; the `dark:` variant stays wired for shadcn components that use it. */
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Kura design tokens, from the pen.dev Components sheet (v839x).
+ * The raw palette lives on :root; the shadcn semantic variables below point at it, so every shadcn
+ * component picks up the look without per-component overrides.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Palette */
+  --kura-bg: #111112;
+  --kura-surface: #18181a;
+  --kura-surface-2: #222225;
+  --kura-border: #2c2c30;
+  --kura-text: #ededee;
+  --kura-text-2: #a1a1a7;
+  --kura-muted: #8a8a91;
+  --kura-shu: #e8552f;
+  --kura-shu-soft: #e8552f22;
+  --kura-kin: #d4b06a;
+  --kura-kin-soft: #d4b06a22;
+  --kura-kin-ink: #1a1405;
+  --kura-good: #0ca30c;
+  --kura-good-soft: #0ca30c22;
+  --kura-good-fg: #6fd66f;
+  --kura-s1: #3987e5;
+  --kura-s1-soft: #3987e522;
+  --kura-s1-fg: #9cc4f5;
+  --kura-s2: #d95926;
+  --kura-s3: #199e70;
+  --kura-s4: #c98500;
+  --kura-s5: #d55181;
+  --kura-s6: #d55181; /* unused in the designs; aliased so s1..s7 stays contiguous */
+  --kura-s7: #9085e9;
+
+  /* shadcn semantics */
+  --background: var(--kura-bg);
+  --foreground: var(--kura-text);
+  --card: var(--kura-surface);
+  --card-foreground: var(--kura-text);
+  --popover: var(--kura-surface-2);
+  --popover-foreground: var(--kura-text);
+  --primary: var(--kura-shu);
+  --primary-foreground: #ffffff;
+  --secondary: var(--kura-surface);
+  --secondary-foreground: var(--kura-text);
+  --muted: var(--kura-surface-2);
+  --muted-foreground: var(--kura-muted);
+  --accent: var(--kura-surface-2);
+  --accent-foreground: var(--kura-text);
+  --destructive: var(--kura-shu);
+  --border: var(--kura-border);
+  --input: var(--kura-border);
+  --ring: var(--kura-shu);
+  --chart-1: var(--kura-s1);
+  --chart-2: var(--kura-s2);
+  --chart-3: var(--kura-s3);
+  --chart-4: var(--kura-s4);
+  --chart-5: var(--kura-s5);
+  --radius: 12px;
+  --sidebar: var(--kura-surface);
+  --sidebar-foreground: var(--kura-text);
+  --sidebar-primary: var(--kura-shu);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--kura-surface-2);
+  --sidebar-accent-foreground: var(--kura-text);
+  --sidebar-border: var(--kura-border);
+  --sidebar-ring: var(--kura-shu);
+}
+
 @theme inline {
+  /* Fonts (next/font variables set on <html> in app/layout.tsx) */
+  --font-sans: var(--font-inter-tight), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-heading: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* Kura colours: bg-surface, text-text-2, text-shu, bg-kin, bg-s1 ... */
+  --color-bg: var(--kura-bg);
+  --color-surface: var(--kura-surface);
+  --color-surface-2: var(--kura-surface-2);
+  --color-text: var(--kura-text);
+  --color-text-2: var(--kura-text-2);
+  --color-shu: var(--kura-shu);
+  --color-shu-soft: var(--kura-shu-soft);
+  --color-kin: var(--kura-kin);
+  --color-kin-soft: var(--kura-kin-soft);
+  --color-kin-ink: var(--kura-kin-ink);
+  --color-good: var(--kura-good);
+  --color-good-soft: var(--kura-good-soft);
+  --color-good-fg: var(--kura-good-fg);
+  --color-s1: var(--kura-s1);
+  --color-s1-soft: var(--kura-s1-soft);
+  --color-s1-fg: var(--kura-s1-fg);
+  --color-s2: var(--kura-s2);
+  --color-s3: var(--kura-s3);
+  --color-s4: var(--kura-s4);
+  --color-s5: var(--kura-s5);
+  --color-s6: var(--kura-s6);
+  --color-s7: var(--kura-s7);
+
+  /* shadcn semantic colours */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,92 +137,32 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+
+  /* Radii from the Components sheet: chip/pill full, icon box 10, button/input 12, tile/toast 14,
+     auction card 18, panels 20. */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
-}
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 20px;
+  --radius-4xl: 24px;
 
-:root {
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --shadow-toast: 0 12px 30px #00000099;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    @apply bg-background font-sans;
+  }
   body {
     @apply bg-background text-foreground;
   }
-  html {
-    @apply font-sans;
+  ::selection {
+    background: var(--kura-shu-soft);
   }
 }
