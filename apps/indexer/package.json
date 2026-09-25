@@ -1,0 +1,24 @@
+{
+  "name": "indexer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev",
+    "start": "ponder start",
+    "codegen": "ponder codegen",
+    "typecheck": "ponder codegen && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "@kura/shared": "workspace:*",
+    "hono": "^4.13.9",
+    "ponder": "^0.17.11",
+    "viem": "^2.56.9"
+  }
+}
