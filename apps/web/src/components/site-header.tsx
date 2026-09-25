@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeftIcon,
@@ -32,6 +32,7 @@ import { useKuraUser } from "@/hooks/use-kura-user";
 import { addresses, publicClient } from "@/lib/chain";
 import { usePayoutBalance } from "@/hooks/use-vendor-data";
 import { usdc } from "@/lib/format";
+import { recordNavigation } from "@/lib/nav-history";
 
 export const NAV: Record<"vendor" | "collector", NavItem[]> = {
   vendor: [
@@ -136,12 +137,15 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
   // Claim handle (D0ZWe) is a full-screen step on mobile: no top bar, wallet chip or tab bar.
   const fullScreenStep = bare === "/app/onboarding";
   // A card page (yV8eD) is a detail screen: its own CTAs pin to the bottom on mobile instead of the tab bar.
+  // On mobile it shows its own Nav row (MobileNav: back, title, share) in place of the top bar.
   const detail = bare.startsWith("/app/cards/");
   const tabs = showNav && !fullScreenStep && !detail ? TABS[role] : [];
+  useEffect(() => recordNavigation(bare), [bare]);
   return (
     <>
       <TopBar
-        className={fullScreenStep ? "max-md:hidden" : undefined}
+        className={fullScreenStep || detail ? "max-md:hidden" : undefined}
+        homeHref={role === "collector" ? "/app" : undefined}
         nav={nav}
         pathname={pathname}
         exactHrefs={["/app"]}

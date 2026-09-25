@@ -7,6 +7,7 @@ import { ActivityFeed, ActivityList } from "@/components/activity-feed";
 import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
 import { AuctionSummary, OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
+import { MobileNav } from "@/components/mobile-nav";
 import { HoldersList, OwnershipSummary } from "@/components/holders-list";
 import { IndexerLoading } from "@/components/sync-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,6 +54,7 @@ export function identityOf(c: CardData): Identity {
 export function CardLoading() {
   return (
     <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
+      <MobileNav className="-mt-2 -mb-6" />
       <Skeleton className="mx-auto aspect-[63/88] w-full max-w-[280px] rounded-3xl bg-surface lg:max-w-none" />
       <div className="flex min-w-0 flex-col gap-4">
         <Skeleton className="h-6 w-60 bg-surface" />
@@ -65,10 +67,13 @@ export function CardLoading() {
 
 export function CardNotFound({ id }: { id: string }) {
   return (
-    <div className="flex flex-col items-start gap-2 rounded-3xl border border-border bg-surface p-6">
-      <h1 className="font-display text-[24px] font-semibold text-text">Card not found</h1>
-      <p className="text-[14px] text-text-2">No vault card has id {id}. It may not be minted yet, or the indexer is still catching up.</p>
-      <Link href="/app" className="text-[13px] text-text underline-offset-2 hover:underline">Back to explore</Link>
+    <div className="flex flex-col gap-4">
+      <MobileNav className="-mt-2" />
+      <div className="flex flex-col items-start gap-2 rounded-3xl border border-border bg-surface p-6">
+        <h1 className="font-display text-[24px] font-semibold text-text">Card not found</h1>
+        <p className="text-[14px] text-text-2">No vault card has id {id}. It may not be minted yet, or the indexer is still catching up.</p>
+        <Link href="/app" className="text-[13px] text-text underline-offset-2 hover:underline">Back to explore</Link>
+      </div>
     </div>
   );
 }
@@ -101,6 +106,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   if (tab !== "overview") {
     return (
       <div className="flex flex-col gap-7">
+        <MobileNav title={identity.name} className="-mt-2 -mb-3" />
         <CompactHeader card={card} identity={identity} shards={shards} />
         <CardTabs tab={tab} href={tabHref} />
         {tab === "holders" && (
@@ -143,6 +149,8 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
 
   return (
     <div className="flex flex-col gap-8">
+      {/* yV8eD: the Nav row has no title on the Overview; the name sits under the art. */}
+      <MobileNav className="-mt-2 -mb-4" />
       <CardTabs tab={tab} href={tabHref} />
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
         <CardArtColumn identity={identity} condition={card.condition} released={released}>

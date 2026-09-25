@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ back: vi.fn(), push: vi.fn() }) }));
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: undefined }) }));
 
 import { CardNotFound, CardPageView } from "@/components/card-page-view";
@@ -142,8 +143,16 @@ describe("CardPageView", () => {
   it("shows the bought-out sharding's auction as history", () => {
     renderCard("whole-after-buyout", { tab: "auction" });
     expect(screen.getByText("Past auction · history")).toBeTruthy();
-    expect(screen.getByText("$1,712 / shard")).toBeTruthy();
+    expect(screen.getByText("per shard · paid $5,136")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open the auction" })).toBeNull();
+  });
+
+  it("has a mobile Nav row with a way back to the app on every view", () => {
+    renderCard("whole-owner");
+    expect(screen.getByRole("link", { name: "Back" }).getAttribute("href")).toBe("/app");
+    cleanup();
+    renderCard("sharded", { tab: "holders" });
+    expect(screen.getByRole("link", { name: "Back" }).getAttribute("href")).toBe("/app");
   });
 
   it("says when a card does not exist", () => {

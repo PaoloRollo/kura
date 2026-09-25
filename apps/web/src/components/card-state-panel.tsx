@@ -154,7 +154,7 @@ export function PastAuction({ s, settledAt }: { s: ShardingRow; settledAt: strin
         <Stat label="Clearing" value={clearing != null ? money(clearing, 0) : "n/a"} sub={s.graduated === false ? "Reserve not met · refunded" : "per shard"} />
         <Stat label="Raised" value={money(s.raisedUsdc ?? 0n, 0)} sub={`fee ${money(s.feeUsdc ?? 0n)}`} />
         <Stat label="Shards" value={String(s.totalShards)} sub={`${s.forSale} were for sale`} />
-        <Stat label="Buyout" value={s.buyoutPerShard != null ? `${money(s.buyoutPerShard, 0)} / shard` : "n/a"} sub={s.payoutUsdc != null ? `paid ${money(s.payoutUsdc, 0)}` : undefined} />
+        <Stat label="Buyout" value={s.buyoutPerShard != null ? money(s.buyoutPerShard, 0) : "n/a"} sub={`per shard${s.payoutUsdc != null ? ` · paid ${money(s.payoutUsdc, 0)}` : ""}`} />
       </div>
     </Panel>
   );

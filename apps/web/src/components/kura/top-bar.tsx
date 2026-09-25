@@ -30,11 +30,13 @@ export type TopBarProps = {
   navAlign?: "center" | "end";
   /** Horizontal gutter at lg: 48px in the app shells, 64px on the landing. */
   wide?: boolean;
+  /** Where the wordmark links: the landing by default, the app's home inside the app shells. */
+  homeHref?: string;
   className?: string;
 };
 
 /** The 1440 "Top bar": wordmark, centred nav, wallet chips on the right. */
-export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right, bordered = true, navAlign = "center", wide = false, className }: TopBarProps) {
+export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right, bordered = true, navAlign = "center", wide = false, homeHref = "/", className }: TopBarProps) {
   const end = navAlign === "end";
   return (
     <header
@@ -52,7 +54,7 @@ export function TopBar({ nav = [], pathname = "", exactHrefs = [], badge, right,
         )}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <Logo />
+          <Logo href={homeHref} />
           {badge && <span className="hidden rounded-[6px] bg-surface-2 px-2 py-1 text-[12px] text-text-2 sm:inline">{badge}</span>}
         </div>
         {nav.length > 0 && (

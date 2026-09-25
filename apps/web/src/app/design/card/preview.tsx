@@ -32,6 +32,8 @@ export function CardPreview({ state, tab, now, liveId }: { state: PreviewState |
     <HandlesFixture.Provider value={live ? null : HANDLES}>
       <div className="min-h-screen">
         <TopBar
+          className="max-md:hidden"
+          homeHref="/app"
           nav={NAV.collector}
           pathname="/app"
           exactHrefs={["/app"]}
