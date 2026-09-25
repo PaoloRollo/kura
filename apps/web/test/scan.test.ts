@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { setUserForTests } from "@/lib/auth";
 import { getDb } from "@/lib/db/client";
 import { scanDrafts } from "@/lib/db/schema";
 import deployments from "@/generated/deployments.json";
+import placeholder from "../../../packages/shared/deployments.placeholder.json";
+import { resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
 import { requireVendor } from "@/lib/scan";
 import { GET as searchRoute } from "@/app/api/scan/search/route";
 
@@ -15,6 +17,14 @@ describe("requireVendor", () => {
   it("accepts the vendor in any case and refuses everyone else", () => {
     expect(() => requireVendor({ did: "did:vendor", wallet: vendor.toUpperCase().replace("0X", "0x") as `0x${string}` })).not.toThrow();
     expect(() => requireVendor({ did: "did:alice", wallet: alice })).toThrow(expect.objectContaining({ code: "FORBIDDEN", status: 403 }));
+  });
+
+  afterEach(() => resetDeploymentsForTests());
+
+  it("fails with CONFIG against placeholder deployments, even for the zero address", () => {
+    setDeploymentsForTests(placeholder as Parameters<typeof setDeploymentsForTests>[0]);
+    const zero = "0x0000000000000000000000000000000000000000" as const;
+    expect(() => requireVendor({ did: "did:zero", wallet: zero })).toThrow(expect.objectContaining({ code: "CONFIG", status: 500 }));
   });
 });
 

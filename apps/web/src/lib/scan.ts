@@ -1,8 +1,9 @@
 import "server-only";
-import deployments from "@/generated/deployments.json";
 import type { KuraUser } from "@/lib/auth";
+import { requireDeployed } from "@/lib/deployments";
 import { HttpError } from "@/lib/http";
 
 export function requireVendor(user: KuraUser) {
-  if (user.wallet.toLowerCase() !== deployments.vendor.toLowerCase()) throw new HttpError("FORBIDDEN", "vendor only", 403);
+  const { vendor } = requireDeployed();
+  if (user.wallet.toLowerCase() !== vendor.toLowerCase()) throw new HttpError("FORBIDDEN", "vendor only", 403);
 }
