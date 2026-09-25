@@ -164,6 +164,21 @@ export function mintedFromLogs(logs: readonly Log[], vault: Address = addresses.
   return log ? { id: log.args.id, label: log.args.label, to: log.args.to } : null;
 }
 
+/** The CardSharded event fields the confirmation needs. */
+export type Sharded = { id: bigint; shardToken: Address; auction: Address; totalShards: number; forSale: number; startBlock: bigint; endBlock: bigint };
+
+/**
+ * The CardSharded event in a `shardAndAuction` receipt, taken only from logs the vault itself emitted: the same receipt
+ * carries the vault's ERC-721 Transfer, the ShardToken's mints, the CCA's and factory's logs and the ENS state records.
+ */
+export function shardedFromLogs(logs: readonly Log[], vault: Address = addresses.cardVault): Sharded | null {
+  const own = logs.filter((l) => isAddressEqual(l.address, vault));
+  const [log] = parseEventLogs({ abi: abi.cardVault, eventName: "CardSharded", logs: own, strict: true });
+  if (!log) return null;
+  const a = log.args;
+  return { id: a.id, shardToken: a.shardToken, auction: a.auction, totalShards: a.totalShards, forSale: a.forSale, startBlock: a.startBlock, endBlock: a.endBlock };
+}
+
 export type MintOutcome =
   | { status: "minted"; hash: `0x${string}`; blockNumber: bigint; id: bigint; label: string; to: Address }
   | { status: "details-unavailable"; hash: `0x${string}`; reason: string };

@@ -11,6 +11,11 @@ import {
   formatUsdcInput,
   gridColumns,
   parseUsdcInput,
+  marketPrice,
+  oneTick,
+  roundFloor,
+  shardOutcome,
+  TICK_MISMATCH,
   shardParamErrors,
   validateShardParams,
   type ShardParams,
@@ -67,13 +72,32 @@ describe("shard math", () => {
     expect(DURATIONS.map((d) => [d.blocks, d.label])).toEqual([[25, "5 min"], [7_200, "1 day"], [50_400, "1 week"], [216_000, "1 month"]]);
     expect(DURATIONS.map((d) => durationText(d.blocks))).toEqual(["5 min", "1 day", "7 days", "30 days"]);
   });
-  it("picks a tick that divides a typed floor", () => {
+  it("picks a tick that divides a typed floor, never below 0.1% of it", () => {
     expect(autoTick(1_200_000_000n)).toBe(12_000_000n);
-    expect(autoTick(1_000_001n)).toBe(1n);
     expect(autoTick(1_234_500_000n)).toBe(12_345_000n);
-    expect(autoTick(1_234_560_001n)).toBe(1n);
-    expect(autoTick(1_234_560_010n)).toBe(10n);
-    for (const f of [1n, 99n, 150n, 7_777_777n, 50_000_000n]) expect(f % autoTick(f)).toBe(0n);
+    expect(autoTick(1_250n)).toBe(10n); // 1% (12.5 units) doesn't divide; 10 units does and is >= 0.1%
+    expect(autoTick(1_234_567_890n)).toBeNull(); // 10 units divides it, but that's under 0.1%
+    expect(autoTick(1_000_001n)).toBeNull(); // only 1 unit divides it, far below 0.1%
+    expect(autoTick(1_234_560_010n)).toBeNull();
+    expect(autoTick(99n)).toBe(1n);
+    for (const f of [1n, 99n, 150n, 50_000_000n, 1_234_500_000n]) {
+      const t = autoTick(f)!;
+      expect(f % t).toBe(0n);
+      expect(t * 1000n >= f).toBe(true);
+    }
+  });
+  it("rounds a floor to the nearest multiple of the tick", () => {
+    expect(roundFloor(1_234_567n, 12_346n)).toBe(1_234_600n);
+    expect(roundFloor(1_222_000n, 12_346n)).toBe(1_222_254n);
+    expect(roundFloor(5n, 12_346n)).toBe(12_346n);
+    expect(oneTick(1_234_567n)).toBe(12_346n);
+  });
+  it("treats a zero market price as no price", () => {
+    expect(marketPrice({ adjustedUsd: "0.00" })).toBeNull();
+    expect(marketPrice({ adjustedUsd: null })).toBeNull();
+    expect(marketPrice(null)).toBeNull();
+    expect(marketPrice({ adjustedUsd: "25000" })).toBe(25_000_000_000n);
+    expect(defaultPricing("0.00", 32)).toEqual(defaultPricing(null, 32));
   });
   it("parses and formats USDC inputs", () => {
     expect(parseUsdcInput("1,200.00")).toBe(1_200_000_000n);
@@ -105,5 +129,35 @@ describe("shardRevertMessage", () => {
     }
     expect(shardRevertMessage("SomethingElse")).toBeNull();
     expect(shardRevertMessage(null)).toBeNull();
+  });
+});
+
+describe("shardOutcome", () => {
+  const token = "0x8c0B76235b3c4D179C0576517ae1C66640C8cEBf" as const;
+  const auction = "0xdb6E8ADEdfd5dA3A50b9c738755770EDD98E5cCb" as const;
+  const hash = "0x3a1f00000000000000000000000000000000000000000000000000000000c9f2" as const;
+  const sharded = { id: 1n, shardToken: token, auction, totalShards: 32, forSale: 8, startBlock: 100n, endBlock: 50_500n };
+  const card = async () => ({ shardToken: "0x0000000000000000000000000000000000000001" as `0x${string}`, auction: "0x0000000000000000000000000000000000000002" as `0x${string}`, endBlock: 60_000n });
+
+  it("reads the new auction from the receipt's CardSharded", async () => {
+    const out = await shardOutcome(hash, { getReceipt: async () => ({ blockNumber: 100n, logs: [] }), readLogs: () => sharded, readCard: card, getBlockNumber: async () => 999n });
+    expect(out).toEqual({ shardToken: token, auction, endBlock: 50_500n, refBlock: 100n, hash, source: "receipt" });
+  });
+  it("falls back to the vault's card record when the step was skipped", async () => {
+    const out = await shardOutcome(undefined, { getReceipt: async () => { throw new Error("no hash"); }, readLogs: () => null, readCard: card, getBlockNumber: async () => 999n });
+    expect(out).toEqual({ shardToken: "0x0000000000000000000000000000000000000001", auction: "0x0000000000000000000000000000000000000002", endBlock: 60_000n, refBlock: 999n, hash: null, source: "vault" });
+  });
+  it("falls back to the vault when the receipt has no event, and gives up quietly when everything fails", async () => {
+    const out = await shardOutcome(hash, { getReceipt: async () => ({ blockNumber: 100n, logs: [] }), readLogs: () => null, readCard: card, getBlockNumber: async () => 999n });
+    expect(out?.source).toBe("vault");
+    expect(out?.hash).toBe(hash);
+    const fail = async () => { throw new Error("rpc down"); };
+    expect(await shardOutcome(hash, { getReceipt: fail, readLogs: () => null, readCard: fail, getBlockNumber: fail })).toBeNull();
+  });
+});
+
+describe("TICK_MISMATCH", () => {
+  it("is the floor error for a floor off the tick", () => {
+    expect(shardParamErrors({ ...base, floorUsdcPerShard: 101n, tickUsdcPerShard: 2n }).floor).toBe(TICK_MISMATCH);
   });
 });

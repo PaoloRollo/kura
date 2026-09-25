@@ -7,6 +7,7 @@ import {
   awaitingHandover,
   describeMintError,
   mintedFromLogs,
+  shardedFromLogs,
   mintOutcome,
   feeTotals,
   feesCsv,
@@ -189,6 +190,51 @@ describe("mintedFromLogs", () => {
   it("returns null when there is no CardMinted", () => {
     expect(mintedFromLogs(ensLogs)).toBeNull();
     expect(mintedFromLogs([])).toBeNull();
+  });
+});
+
+describe("shardedFromLogs", () => {
+  const owner = "0x4f2ca0b3ae1f3d7a0b6d2f0c1e4b5a6d7c8ea81e" as const;
+  const token = "0x8c0b76235b3c4d179c0576517ae1c66640c8cebf" as const;
+  const auction = "0xdb6e8adedfd5da3a50b9c738755770edd98e5ccb" as const;
+  const log = (address: Hex, topics: Hex[], data: Hex, logIndex: number) =>
+    ({ address, topics, data, logIndex, blockNumber: 1n, blockHash: "0x01", transactionHash: "0x02", transactionIndex: 0, removed: false }) as unknown as Log;
+  const cardSharded = (address: Hex, id: bigint, i: number) =>
+    log(
+      address,
+      encodeEventTopics({ abi: abi.cardVault, eventName: "CardSharded", args: { id, shardToken: token, auction } }) as Hex[],
+      encodeAbiParameters(
+        [{ type: "uint16" }, { type: "uint16" }, { type: "uint64" }, { type: "uint64" }, { type: "uint256" }, { type: "uint256" }, { type: "uint128" }],
+        [32, 8, 11_781_778n, 11_832_178n, 7n, 1n, 0n],
+      ),
+      i,
+    );
+  const noise = [
+    // The card NFT into the vault (the vault's own ERC-721 Transfer, same address, other event).
+    log(addresses.cardVault, encodeEventTopics({ abi: abi.cardVault, eventName: "Transfer", args: { from: owner, to: addresses.cardVault, tokenId: 1n } }) as Hex[], "0x", 0),
+    // Shards minted to the auction and to the owner.
+    log(token, encodeEventTopics({ abi: abi.shardToken, eventName: "Transfer", args: { from: "0x0000000000000000000000000000000000000000", to: auction } }) as Hex[], encodeAbiParameters([{ type: "uint256" }], [8n * 10n ** 18n]), 1),
+    log(token, encodeEventTopics({ abi: abi.shardToken, eventName: "Transfer", args: { from: "0x0000000000000000000000000000000000000000", to: owner } }) as Hex[], encodeAbiParameters([{ type: "uint256" }], [24n * 10n ** 18n]), 2),
+    // The CCA taking its tokens, and the factory announcing it.
+    log(auction, encodeEventTopics({ abi: abi.ccaAuction, eventName: "TokensReceived" }) as Hex[], encodeAbiParameters([{ type: "uint256" }], [8n * 10n ** 18n]), 3),
+    // ENS state records for the card name.
+    log(addresses.ensResolver, encodeEventTopics({ abi: abi.ensResolver, eventName: "TextChanged", args: { node: keccak256(toHex("black-lotus-lea-1.kura.eth")), indexedKey: "state" } }) as Hex[], encodeAbiParameters([{ type: "string" }, { type: "string" }], ["state", "auctioning"]), 4),
+  ];
+
+  it("reads CardSharded from the vault's log among the token, auction and ENS logs", () => {
+    expect(shardedFromLogs([...noise, cardSharded(addresses.cardVault, 1n, 5)])).toEqual({
+      id: 1n, shardToken: getAddress(token), auction: getAddress(auction), totalShards: 32, forSale: 8, startBlock: 11_781_778n, endBlock: 11_832_178n,
+    });
+  });
+
+  it("ignores a CardSharded emitted by any other contract", () => {
+    expect(shardedFromLogs([cardSharded(auction, 1n, 0), ...noise])).toBeNull();
+    expect(shardedFromLogs([cardSharded(token, 9n, 0), cardSharded(addresses.cardVault.toLowerCase() as Hex, 1n, 6)])?.id).toBe(1n);
+  });
+
+  it("returns null when there is no CardSharded", () => {
+    expect(shardedFromLogs(noise)).toBeNull();
+    expect(shardedFromLogs([])).toBeNull();
   });
 });
 

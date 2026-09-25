@@ -1,5 +1,6 @@
-import { formatUnits, parseUnits } from "viem";
+import { formatUnits, parseUnits, type Address, type Hex, type Log } from "viem";
 import { usdcPerShardToQ96 } from "@kura/shared";
+import type { Sharded } from "@/lib/vendor";
 
 /**
  * `CardVault.ShardParams`, typed as viem types the ABI tuple: uint16 → number, uint256/uint128 → bigint, and uint40
@@ -60,18 +61,41 @@ export function defaultPricing(priceUsd: string | null, totalShards: number): { 
   return { floorUsdcPerShard: floor, tickUsdcPerShard: tick };
 }
 
+/** One percent of the floor, rounded up to at least one unit: the tick the designs describe. */
+export const oneTick = (floorUsdcPerShard: bigint) => (floorUsdcPerShard + 99n) / 100n || 1n;
+
 /**
  * The tick for a floor the user typed: exactly 1% when it divides the floor, else the largest power of ten at or below
- * 1% that does (so the floor always sits on a tick).
+ * 1% that does, as long as it is at least 0.1% of the floor. Null when nothing that coarse divides it: the floor then
+ * has to be rounded (`roundFloor`) to the 1% tick.
  */
-export function autoTick(floorUsdcPerShard: bigint): bigint {
+export function autoTick(floorUsdcPerShard: bigint): bigint | null {
   if (floorUsdcPerShard < 100n) return 1n;
   if (floorUsdcPerShard % 100n === 0n) return floorUsdcPerShard / 100n;
   let tick = 1n;
   while (tick * 10n <= floorUsdcPerShard / 100n) tick *= 10n;
   while (tick > 1n && floorUsdcPerShard % tick !== 0n) tick /= 10n;
-  return tick;
+  return tick * 1000n >= floorUsdcPerShard ? tick : null;
 }
+
+/** The floor moved to the nearest multiple of `tick` (at least one tick). */
+export function roundFloor(floorUsdcPerShard: bigint, tickUsdcPerShard: bigint): bigint {
+  const n = (floorUsdcPerShard + tickUsdcPerShard / 2n) / tickUsdcPerShard;
+  return (n < 1n ? 1n : n) * tickUsdcPerShard;
+}
+
+/** A price quote's adjusted market price in USDC, or null when there is none or it is zero. */
+export function marketPrice(q: { adjustedUsd: string | null } | null | undefined): bigint | null {
+  if (!q?.adjustedUsd) return null;
+  try {
+    const v = parseUnits(q.adjustedUsd, 6);
+    return v > 0n ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export const TICK_MISMATCH = "Floor must be a multiple of the tick";
 
 export type ShardField = "totalShards" | "forSale" | "floor" | "tick" | "reserve" | "duration";
 
@@ -85,7 +109,7 @@ export function shardParamErrors(p: ShardParams): Partial<Record<ShardField, str
   if (p.tickUsdcPerShard < 1n) e.tick = "Tick must be at least 0.000001 USDC";
   else if (usdcPerShardToQ96(p.tickUsdcPerShard) < MIN_TICK_SPACING_Q96) e.tick = "Tick is too small";
   if (!e.tick) {
-    if (p.floorUsdcPerShard < p.tickUsdcPerShard || p.floorUsdcPerShard % p.tickUsdcPerShard !== 0n) e.floor = "Floor must be a multiple of the tick";
+    if (p.floorUsdcPerShard < p.tickUsdcPerShard || p.floorUsdcPerShard % p.tickUsdcPerShard !== 0n) e.floor = TICK_MISMATCH;
     // Unreachable from a tick of 1 unit or more (one USDC unit is ~7.9e10 in Q96), kept as the CCA's own check.
     else if (floorPriceQ96(p.floorUsdcPerShard, p.tickUsdcPerShard) < MIN_FLOOR_PRICE_Q96) e.floor = "Floor is below the auction's minimum price";
   }
@@ -173,5 +197,46 @@ export function shardRevertMessage(name: string | null | undefined): { title: st
       return { title: "That auction length isn't allowed", body: "Pick one of the listed lengths." };
     default:
       return null;
+  }
+}
+
+/** The auction a confirmed `shardAndAuction` opened. `refBlock` is the block `endBlock` counts from, for an end date. */
+export type ShardCreated = {
+  shardToken: Address;
+  auction: Address;
+  endBlock: bigint;
+  refBlock: bigint;
+  hash: Hex | null;
+  /** "receipt": the CardSharded event; "vault": `cards(id)` (a retry found it already done, or the event was missing). */
+  source: "receipt" | "vault";
+};
+
+/**
+ * What a confirmed shard produced: the CardSharded event from the receipt of `hash`, else the vault's record of the card.
+ * Null when neither can be read; the success state then shows the transaction alone.
+ */
+export async function shardOutcome(
+  hash: Hex | undefined,
+  deps: {
+    getReceipt: (hash: Hex) => Promise<{ blockNumber: bigint; logs: readonly Log[] }>;
+    readLogs: (logs: readonly Log[]) => Sharded | null;
+    readCard: () => Promise<{ shardToken: Address; auction: Address; endBlock: bigint }>;
+    getBlockNumber: () => Promise<bigint>;
+  },
+): Promise<ShardCreated | null> {
+  if (hash) {
+    try {
+      const receipt = await deps.getReceipt(hash);
+      const s = deps.readLogs(receipt.logs);
+      if (s) return { shardToken: s.shardToken, auction: s.auction, endBlock: s.endBlock, refBlock: receipt.blockNumber, hash, source: "receipt" };
+    } catch {
+      // Fall through to the vault's record.
+    }
+  }
+  try {
+    const [card, block] = await Promise.all([deps.readCard(), deps.getBlockNumber()]);
+    return { shardToken: card.shardToken, auction: card.auction, endBlock: card.endBlock, refBlock: block, hash: hash ?? null, source: "vault" };
+  } catch {
+    return null;
   }
 }
