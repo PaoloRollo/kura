@@ -11,8 +11,14 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/80",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+        // Kura: Button/Secondary is surface with a hairline border.
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
+          "border-border bg-secondary text-secondary-foreground hover:bg-surface-2 aria-expanded:bg-surface-2 aria-expanded:text-secondary-foreground",
+        // Kura variants from the Components sheet (v839x).
+        primary: "bg-shu text-white hover:bg-shu/90 disabled:bg-surface-2 disabled:text-muted-foreground disabled:opacity-100",
+        redeem: "bg-kin text-kin-ink hover:bg-kin/90 disabled:bg-surface-2 disabled:text-muted-foreground disabled:opacity-100",
+        inverse: "bg-text text-bg hover:bg-text/90 disabled:bg-surface-2 disabled:text-muted-foreground disabled:opacity-100",
+        disabled: "pointer-events-none bg-surface-2 text-muted-foreground",
         ghost:
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
         destructive:
@@ -25,6 +31,10 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        // Kura CTA size: 13px/20px padding, 12px radius, 14px semibold label, 16px icon.
+        md: "h-11 gap-2 rounded-lg px-5 text-[14px] font-semibold",
+        // Kura compact action (state cards, toolbars): 34px tall, 10px radius.
+        compact: "h-[34px] gap-1.5 rounded-md px-3.5 text-[13px] font-medium",
         icon: "size-8",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
