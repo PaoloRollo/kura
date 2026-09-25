@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { ShardPreview } from "./preview";
 import { SHARD_PREVIEWS, type ShardPreviewState } from "./states";
@@ -10,5 +11,5 @@ export default async function ShardDesignPage({ searchParams }: { searchParams: 
   if (process.env.NODE_ENV === "production") notFound();
   const { state, id } = await searchParams;
   const s = (SHARD_PREVIEWS as readonly string[]).includes(String(state)) ? (state as ShardPreviewState) : "step1";
-  return <ShardPreview state={s} now={requestTime()} liveId={BigInt(/^\d+$/.test(id ?? "") ? id! : "1")} />;
+  return <Suspense><ShardPreview state={s} now={requestTime()} liveId={BigInt(/^\d+$/.test(id ?? "") ? id! : "1")} /></Suspense>;
 }

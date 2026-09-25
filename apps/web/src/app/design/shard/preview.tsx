@@ -5,7 +5,7 @@ import { CircleDollarSignIcon, GavelIcon } from "lucide-react";
 import { BarChip, EnsName, TopBar } from "@/components/kura";
 import { CardLoading, CardNotFound } from "@/components/card-page-view";
 import { NAV } from "@/components/site-header";
-import { ShardWizard, type ShardDone, type WizardStep } from "@/components/shard-wizard";
+import { ShardWizard, useUrlStepNav, type ShardDone, type WizardStep } from "@/components/shard-wizard";
 import { TxStepper, describeTxError } from "@/components/tx-stepper";
 import { useCard } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
@@ -41,17 +41,20 @@ function PreviewSubmit({ p, disabled }: { p: ShardParams; disabled: boolean }) {
 function LiveShard({ id, now }: { id: bigint; now: number }) {
   const c = useCard(id);
   const feeBps = useVaultFeeBps();
+  const nav = useUrlStepNav();
   if (c.isLoading) return <CardLoading />;
   if (!c.card) return <CardNotFound id={id.toString()} />;
-  return <ShardWizard c={c} me={LIVE_OWNER} feeBps={feeBps} now={now} cardHref={`/design/card?state=live&id=${id}`} renderSubmit={(p, disabled) => <PreviewSubmit p={p} disabled={disabled} />} />;
+  return <ShardWizard c={c} me={LIVE_OWNER} feeBps={feeBps} now={now} cardHref={`/design/card?state=live&id=${id}`} nav={nav} renderSubmit={(p, disabled) => <PreviewSubmit p={p} disabled={disabled} />} />;
 }
 
 export function ShardPreview({ state, now, liveId }: { state: ShardPreviewState; now: number; liveId: bigint }) {
+  const nav = useUrlStepNav();
   const fixture = cardFixture(state === "notowner" ? "whole" : state === "auctioning" ? "auctioning" : "whole-owner", now);
   const c = state === "noprice" ? { ...fixture, price: { ...fixture.price!, usd: null, adjustedUsd: null } } : fixture;
   const step: WizardStep = state === "step2" || state === "noprice" || state === "invalid" ? 2 : state === "step3" ? 3 : 1;
   const done: ShardDone | null = state === "done"
-    ? { params: { totalShards: 32, forSale: 8, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 }, hash: "0x3a1f8e2b9c4d5a6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c49f2", at: now }
+    ? { params: { totalShards: 32, forSale: 8, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 }, hash: "0x3a1f8e2b9c4d5a6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c49f2", at: now,
+        created: { shardToken: "0x8c0B76235b3c4D179C0576517ae1C66640C8cEBf", auction: "0xdb6E8ADEdfd5dA3A50b9c738755770EDD98E5cCb", endBlock: 11_832_178n, refBlock: 11_781_778n, hash: null, source: "receipt" } }
     : null;
   return (
     <HandlesFixture.Provider value={state === "live" ? null : HANDLES}>
@@ -85,6 +88,7 @@ export function ShardPreview({ state, now, liveId }: { state: ShardPreviewState;
               feeBps={250}
               now={now}
               cardHref="/design/card?state=whole-owner"
+              nav={nav}
               initialStep={step}
               initialDone={done}
               initialFloor={state === "invalid" ? "1,200.0000005" : undefined}

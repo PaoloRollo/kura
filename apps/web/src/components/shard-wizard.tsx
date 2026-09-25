@@ -1,19 +1,20 @@
 "use client";
 
 import type * as React from "react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowRightIcon, CheckIcon, ChevronLeftIcon, ExternalLinkIcon, InfoIcon, Loader2Icon, XIcon } from "lucide-react";
 import { AmountInput, Button, CardArt, Segmented } from "@/components/kura";
 import { Slider } from "@/components/ui/slider";
 import type { CardData } from "@/hooks/use-card";
 import { identityOf } from "@/components/card-page-view";
-import { explorerTx } from "@/lib/chain";
+import { explorerAddress, explorerTx } from "@/lib/chain";
 import { dateTime } from "@/lib/card-view";
-import { money, shortHash } from "@/lib/format";
-import { quoteUsdc } from "@/lib/pricing";
+import { money, shortAddress, shortHash } from "@/lib/format";
 import {
   DEFAULT_DURATION,
+  BLOCK_SECONDS,
   DURATIONS,
   MAX_SHARDS,
   MIN_SHARDS,
@@ -25,16 +26,45 @@ import {
   estimatedEnd,
   formatUsdcInput,
   gridColumns,
+  marketPrice,
+  oneTick,
   parseUsdcInput,
+  roundFloor,
   shardParamErrors,
+  TICK_MISMATCH,
+  type ShardCreated,
   type ShardField,
   type ShardParams,
 } from "@/lib/shard-math";
 import { cn } from "@/lib/utils";
 
 export type WizardStep = 1 | 2 | 3;
-/** What the success state shows: the parameters that went through, the tx hash (none when a retry found it done) and when. */
-export type ShardDone = { params: ShardParams; hash?: string; at: number };
+/**
+ * What the success state shows: the parameters that went through, the tx hash (none when a retry found it done), when,
+ * and the auction it opened (`shardOutcome`): undefined while the receipt is being read, null if it couldn't be.
+ */
+export type ShardDone = { params: ShardParams; hash?: string; at: number; created?: ShardCreated | null };
+
+/** The wizard step in the URL (`?step=`), so browser back goes back a step. */
+export type StepNav = { step: WizardStep | null; go: (s: WizardStep) => void; replace: (s: WizardStep) => void; back: () => void };
+
+const asStep = (v: string | null): WizardStep | null => (v === "1" ? 1 : v === "2" ? 2 : v === "3" ? 3 : null);
+
+/** `?step=` through the Next router: Next pushes a history entry, back pops one. */
+export function useUrlStepNav(): StepNav {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const query = params.toString();
+  return useMemo(() => {
+    const href = (s: WizardStep) => {
+      const q = new URLSearchParams(query);
+      q.set("step", String(s));
+      return `${pathname}?${q}`;
+    };
+    return { step: asStep(new URLSearchParams(query).get("step")), go: (s) => router.push(href(s)), replace: (s) => router.replace(href(s)), back: () => router.back() };
+  }, [router, pathname, query]);
+}
 
 /** "$1,200", "$12.50", "$9,360.039": whole dollars when exact, else cents, or every digit that carries value. */
 export function price(x: bigint): string {
@@ -160,6 +190,9 @@ export type ShardWizardProps = {
   /** Unix seconds, for the end-date estimate. */
   now: number;
   cardHref: string;
+  /** Where the step lives (`useUrlStepNav`). */
+  nav: StepNav;
+  /** The furthest step the form may show on load; a cold load of `?step=3` has no form state, so it starts at 1. */
   initialStep?: WizardStep;
   /** Previews: open on the success state. */
   initialDone?: ShardDone | null;
@@ -170,8 +203,19 @@ export type ShardWizardProps = {
 };
 
 /** Shard a whole card (bWyqz, ITGkz, couMI): shards and for sale, then pricing, then duration and review. */
-export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, initialDone = null, initialFloor, renderSubmit }: ShardWizardProps) {
-  const [step, setStep] = useState<WizardStep>(initialStep);
+export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1, initialDone = null, initialFloor, renderSubmit }: ShardWizardProps) {
+  // The URL names the step; the form only shows steps it has reached (browser forward can't skip ahead of the state).
+  const [reached, setReached] = useState<WizardStep>(initialStep);
+  const step = Math.min(nav.step ?? initialStep, reached) as WizardStep;
+  useEffect(() => {
+    if (nav.step != null && nav.step !== step) nav.replace(step);
+  }, [nav, step]);
+  const next = (s: WizardStep) => {
+    setReached((r) => (s > r ? s : r));
+    nav.go(s);
+  };
+  // Which of floor and tick the user touched last: a floor off the tick is reported under that one.
+  const [lastEdited, setLastEdited] = useState<"floor" | "tick">("floor");
   const [totalShards, setTotalShards] = useState(32);
   const [forSale, setForSale] = useState(8);
   // Floor and tick follow the market price until edited; an edited floor picks its own tick (autoTick) until that is edited too.
@@ -191,10 +235,12 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
   if (done) return <ShardSuccess c={c} done={done} cardHref={cardHref} />;
   if (!opened) return <NotShardable c={c} title={title} cardHref={cardHref} />;
 
-  const market = quoteUsdc(c.price);
-  const d = defaultPricing(c.price?.adjustedUsd ?? null, totalShards);
+  // A zero price is no price: the defaults and the banner both fall back.
+  const market = marketPrice(c.price);
+  const d = defaultPricing(market != null ? c.price!.adjustedUsd : null, totalShards);
   const floor = floorText != null ? parseUsdcInput(floorText) : d.floorUsdcPerShard;
-  const tick = tickText != null ? parseUsdcInput(tickText) : floorText != null && floor != null ? autoTick(floor) : d.tickUsdcPerShard;
+  // A typed floor picks its tick (autoTick), or keeps the 1% tick and asks to round the floor when nothing coarse divides it.
+  const tick = tickText != null ? parseUsdcInput(tickText) : floorText != null && floor != null ? (autoTick(floor) ?? oneTick(floor)) : d.tickUsdcPerShard;
   const reserve = parseUsdcInput(reserveText || "0");
   const p: ShardParams = {
     totalShards,
@@ -208,8 +254,29 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
   if (floor == null) errors.floor = "Enter an amount in USDC, up to 6 decimals";
   if (tick == null) errors.tick = "Enter an amount in USDC, up to 6 decimals";
   if (reserve == null) errors.reserve = "Enter an amount in USDC, up to 6 decimals";
+  const mismatch = errors.floor === TICK_MISMATCH && floor != null && tick != null && tick > 0n;
+  if (mismatch && lastEdited === "tick") {
+    errors.tick = errors.floor;
+    delete errors.floor;
+  }
+  const rounded = mismatch ? roundFloor(floor!, tick!) : null;
+  const roundTo = rounded != null && (
+    <button
+      type="button"
+      className="w-fit rounded-md border border-shu/40 px-2.5 py-1 text-[12px] font-semibold text-shu hover:bg-shu-soft"
+      onClick={() => {
+        setFloorText(formatUsdcInput(rounded));
+        setTickText(formatUsdcInput(tick!)); // keep this tick: the rounded floor sits on it
+      }}
+    >
+      Round to {price(rounded)}
+    </button>
+  );
   const stepErrors = { 1: !!(errors.totalShards || errors.forSale), 2: !!(errors.floor || errors.tick || errors.reserve), 3: !!errors.duration };
-  const invalid = stepErrors[1] || stepErrors[2] || stepErrors[3];
+  const disabledReason = stepErrors[1] ? "Fix the shard counts on step 1 first."
+    : stepErrors[2] ? "Fix the floor, tick or reserve on step 2 first."
+      : stepErrors[3] ? "Pick one of the listed auction lengths."
+        : !me ? "Your wallet is still connecting." : null;
 
   const implied = p.floorUsdcPerShard * BigInt(totalShards);
   const maxRaise = p.floorUsdcPerShard * BigInt(forSale);
@@ -219,7 +286,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
 
   return (
     <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6">
-      <WizardNav title={title} step={step} cardHref={cardHref} onBack={() => setStep((s) => (s > 1 ? ((s - 1) as WizardStep) : s))} />
+      <WizardNav title={title} step={step} cardHref={cardHref} onBack={nav.back} />
 
       {step === 1 && (
         <>
@@ -253,7 +320,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
             ]}
           />
           <Pinned>
-            <Button variant="primary" size="md" className="w-full" disabled={stepErrors[1]} onClick={() => setStep(2)}>
+            <Button variant="primary" size="md" className="w-full" disabled={stepErrors[1]} onClick={() => next(2)}>
               Next: set floor price <ArrowRightIcon aria-hidden />
             </Button>
           </Pinned>
@@ -280,27 +347,35 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
             <AmountInput
               label="Floor price per shard"
               value={floorText ?? formatUsdcInput(d.floorUsdcPerShard)}
-              onChange={(e) => setFloorText(e.target.value)}
+              onChange={(e) => {
+                setFloorText(e.target.value);
+                setLastEdited("floor");
+              }}
               tone={errors.floor ? "shu" : "default"}
               aria-invalid={!!errors.floor}
               hint={market != null ? "Nobody can buy below this. Prefilled from the market price." : "Nobody can buy below this. Set it yourself: there's no market price to start from."}
             />
             <FieldError>{errors.floor}</FieldError>
+            {errors.floor === TICK_MISMATCH && roundTo}
           </div>
           <div className="flex flex-col gap-1.5">
             <AmountInput
               label="Price tick"
               value={tickText ?? (tick != null ? formatUsdcInput(tick) : "")}
-              onChange={(e) => setTickText(e.target.value)}
+              onChange={(e) => {
+                setTickText(e.target.value);
+                setLastEdited("tick");
+              }}
               tone={errors.tick ? "shu" : "default"}
               aria-invalid={!!errors.tick}
               hint="Bids move in steps of 1% of the floor."
             />
             <FieldError>{errors.tick}</FieldError>
+            {errors.tick === TICK_MISMATCH && roundTo}
           </div>
           <div className="flex flex-col gap-1.5">
             <AmountInput
-              label="Reserve (optional)"
+              label="Reserve (total, optional)"
               value={reserveText}
               onChange={(e) => setReserveText(e.target.value)}
               tone={errors.reserve ? "shu" : "default"}
@@ -318,7 +393,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
           />
           <p className="text-[12px] text-text-2">After the {feePct} vault fee. Clearing above the floor raises more.</p>
           <Pinned>
-            <Button variant="primary" size="md" className="w-full" disabled={stepErrors[2]} onClick={() => setStep(3)}>
+            <Button variant="primary" size="md" className="w-full" disabled={stepErrors[2]} onClick={() => next(3)}>
               Next: duration <ArrowRightIcon aria-hidden />
             </Button>
           </Pinned>
@@ -351,8 +426,10 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, initialStep = 1, ini
             <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
             Your card moves into escrow until the auction settles. You can redeem it back once you hold 80% of the shards.
           </p>
-          {invalid && <FieldError>Fix the highlighted settings before opening the auction.</FieldError>}
-          <Pinned>{renderSubmit(p, invalid, setDone)}</Pinned>
+          <Pinned>
+            {renderSubmit(p, !!disabledReason, setDone)}
+            {disabledReason && <p className="pt-2 text-center text-[12px] text-shu">{disabledReason}</p>}
+          </Pinned>
         </>
       )}
     </div>
@@ -385,8 +462,17 @@ function NotShardable({ c, title, cardHref }: { c: CardData; title: string; card
 /** The confirmation state: the auction that just opened, its tx and the way on to it. */
 function ShardSuccess({ c, done, cardHref }: { c: CardData; done: ShardDone; cardHref: string }) {
   const identity = identityOf(c);
-  const { params: p, hash } = done;
+  const { params: p, created } = done;
   const live = c.card?.state === "auctioning";
+  // The tx: this run's hash, else (a retry found it done) the indexer's shard activity for this sharding.
+  const indexed = created ? c.activities.find((a) => a.kind === "shard" && String((a.meta as { shardToken?: string } | null)?.shardToken ?? "").toLowerCase() === created.shardToken.toLowerCase()) : undefined;
+  const hash = done.hash ?? created?.hash ?? indexed?.txHash;
+  const reading = created === undefined;
+  const addressLink = (a: string) => (
+    <a href={explorerAddress(a)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-text-2 hover:text-text hover:underline">
+      {shortAddress(a)}<ExternalLinkIcon aria-hidden className="size-3" />
+    </a>
+  );
   return (
     <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6">
       <WizardNav title="Auction opened" step={null} cardHref={cardHref} onBack={() => {}} />
@@ -401,7 +487,13 @@ function ShardSuccess({ c, done, cardHref }: { c: CardData; done: ShardDone; car
       <div className="rounded-2xl border border-border bg-surface">
         <Row label="Floor · tick">{price(p.floorUsdcPerShard)} · {price(p.tickUsdcPerShard)}</Row>
         <Row label="Reserve">{p.reserveUsdc > 0n ? price(p.reserveUsdc) : "none"}</Row>
-        <Row label="Ends">{dateTime(estimatedEnd(done.at, p.durationBlocks))} · {durationText(p.durationBlocks)}</Row>
+        <Row label="Auction">{created ? addressLink(created.auction) : reading ? "reading the receipt…" : "see the card page"}</Row>
+        <Row label="Shard token">{created ? addressLink(created.shardToken) : reading ? "…" : "see the card page"}</Row>
+        <Row label="Ends">
+          {created
+            ? `${dateTime(done.at + Number(created.endBlock - created.refBlock) * BLOCK_SECONDS)} · block ${created.endBlock.toLocaleString("en-US")}`
+            : `${dateTime(estimatedEnd(done.at, p.durationBlocks))} · ${durationText(p.durationBlocks)}`}
+        </Row>
         <Row label="Transaction">
           {hash ? (
             <a href={explorerTx(hash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-text-2 hover:text-text hover:underline">
