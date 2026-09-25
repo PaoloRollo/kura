@@ -199,15 +199,29 @@ export class Scryfall {
 
   // The cache is best-effort here: a database outage must not take card lookups (and token metadata) down with it.
   async getById(id: string): Promise<Candidate | null> {
+    const card = await this.getCard(id);
+    return card ? this.toCandidate(card) : null;
+  }
+
+  /** The raw Scryfall card for an id (all prices, including usd_etched), cache first. */
+  async getCard(id: string): Promise<ScryfallCard | null> {
     const cached = await this.cacheGet(id).catch((e) => {
       reportCacheFailure("read", e);
       return null;
     });
-    if (cached) return this.toCandidate(cached);
+    if (cached) return cached;
     const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(id)}`);
     if (!card) return null;
     await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
-    return this.toCandidate(card);
+    return card;
+  }
+
+  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang). */
+  async getPrinting(set: string, collectorNumber: string, lang = "en"): Promise<ScryfallCard | null> {
+    const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(set)}/${encodeURIComponent(collectorNumber)}/${encodeURIComponent(lang)}`);
+    if (!card) return null;
+    await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
+    return card;
   }
 
   async named(q: { name: string; set?: string; lang?: string }): Promise<Candidate | null> {

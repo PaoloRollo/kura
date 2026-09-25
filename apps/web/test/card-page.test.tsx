@@ -1,0 +1,91 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+
+vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: undefined }) }));
+
+import { CardNotFound, CardPageView } from "@/components/card-page-view";
+import { HandlesFixture } from "@/hooks/use-handles";
+import type { CardTab } from "@/lib/card-view";
+import { FIXTURE_HEAD, HANDLES, KENJI, PAOLO, cardFixture, type PreviewState } from "@/app/design/card/fixtures";
+
+afterEach(cleanup);
+
+const NOW = 1_790_000_000;
+function renderCard(state: PreviewState, opts: { me?: string | null; tab?: CardTab } = {}) {
+  const c = cardFixture(state, NOW);
+  return render(
+    <HandlesFixture.Provider value={HANDLES}>
+      <CardPageView c={c} me={opts.me === undefined ? PAOLO : opts.me} now={NOW} block={FIXTURE_HEAD} tab={opts.tab ?? "overview"} tabHref={(t) => `/app/cards/1?tab=${t}`} />
+    </HandlesFixture.Provider>,
+  );
+}
+
+describe("CardPageView", () => {
+  it("offers the owner of a whole card to shard it or pick it up, with the priced market", () => {
+    renderCard("whole-owner");
+    expect(screen.getByRole("link", { name: /Shard this card/ }).getAttribute("href")).toBe("/app/cards/1/shard");
+    expect(screen.getByRole("button", { name: /Pick it up at the vault/ })).toBeTruthy();
+    expect(screen.getByText("You own")).toBeTruthy();
+    expect(screen.getByText("$25,000")).toBeTruthy();
+    expect(screen.getByText("Scryfall USD · nonfoil · EN printing · NM ×1.00")).toBeTruthy();
+  });
+
+  it("shows anyone else who owns a whole card, with no CTA", () => {
+    renderCard("whole");
+    expect(screen.getByText("Owned by")).toBeTruthy();
+    expect(screen.getAllByText("kenji.kura.eth").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Shard this card/)).toBeNull();
+  });
+
+  it("gates the shard CTA on ownerOf, not only on being signed in", () => {
+    renderCard("whole-owner", { me: KENJI });
+    expect(screen.queryByText(/Shard this card/)).toBeNull();
+    renderCard("whole-owner", { me: null });
+    expect(screen.queryAllByText(/Shard this card/)).toHaveLength(0);
+  });
+
+  it("puts the tab strip on every view, with the active tab marked", () => {
+    renderCard("auctioning");
+    const nav = screen.getByRole("navigation", { name: "Card sections" });
+    expect(within(nav).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
+    expect(within(nav).getByRole("link", { name: "Holders" }).getAttribute("href")).toBe("/app/cards/1?tab=holders");
+  });
+
+  it("shows the live auction context and the on-chain profile with key roles", () => {
+    renderCard("auctioning");
+    expect(screen.getByText("Live auction")).toBeTruthy();
+    expect(screen.getByText("LEA · Rare")).toBeTruthy();
+    expect(screen.getByText(/sharded by/)).toBeTruthy();
+    const profile = screen.getAllByRole("region", { name: "On-chain profile" })[0]!;
+    expect(within(profile).getByText("ENSv2 · Sepolia")).toBeTruthy();
+    expect(within(profile).getByText("appraiser")).toBeTruthy();
+    expect(within(profile).getByText("vendor")).toBeTruthy();
+    expect(screen.getAllByText(/Illustrated by Christopher Rush/).length).toBeGreaterThan(0);
+  });
+
+  it("marks a released card's profile as revoked read-only history", () => {
+    renderCard("released");
+    expect(screen.getByText(/name revoked on release/)).toBeTruthy();
+    expect(screen.getAllByText("revoked · read-only history").length).toBeGreaterThan(0);
+    expect(screen.getByText("This card left the vault")).toBeTruthy();
+  });
+
+  it("lists holders without the auction or vault, with the unclaimed tile", () => {
+    renderCard("auctioning", { tab: "holders" });
+    expect(screen.getByText("1 wallet")).toBeTruthy();
+    expect(screen.getByText("3.0 shards")).toBeTruthy();
+    expect(screen.getByText("can redeem")).toBeTruthy();
+    expect(screen.getByText("black-lotus-lea-1.kura.eth · auctioning · 16 shards")).toBeTruthy();
+  });
+
+  it("shows a whole card's holders as one owner", () => {
+    renderCard("whole", { tab: "holders" });
+    expect(screen.getByText("Not sharded, one owner")).toBeTruthy();
+  });
+
+  it("says when a card does not exist", () => {
+    render(<CardNotFound id="999" />);
+    expect(screen.getByText("Card not found")).toBeTruthy();
+  });
+});

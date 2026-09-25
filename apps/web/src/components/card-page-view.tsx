@@ -1,0 +1,165 @@
+"use client";
+
+import type * as React from "react";
+
+import Link from "next/link";
+import { CardArtColumn, CardHeader, CompactHeader, ShardedBy, type Identity } from "@/components/card-header";
+import { AuctionSummary, OwnedByPanel, OwnerPanel, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
+import { EnsRecords } from "@/components/ens-records";
+import { HoldersList, OwnershipSummary } from "@/components/holders-list";
+import { IndexerLoading } from "@/components/sync-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { CardData } from "@/hooks/use-card";
+import { addresses } from "@/lib/chain";
+import { CARD_TABS, agoLong, holdersView, type CardTab } from "@/lib/card-view";
+import { metaCardName, metaTrait } from "@/lib/meta";
+import { cn } from "@/lib/utils";
+
+/** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
+export function CardTabs({ tab, href }: { tab: CardTab; href: (t: CardTab) => string }) {
+  return (
+    <nav aria-label="Card sections" className="flex gap-8 overflow-x-auto border-b border-border">
+      {CARD_TABS.map((t) => (
+        <Link
+          key={t.value}
+          href={href(t.value)}
+          scroll={false}
+          aria-current={t.value === tab ? "page" : undefined}
+          className={cn(
+            "-mb-px shrink-0 border-b-2 pb-3 text-[14px] transition-colors",
+            t.value === tab ? "border-shu font-semibold text-text" : "border-transparent text-text-2 hover:text-text",
+          )}
+        >
+          {t.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Name, art, set and rarity from metadata and attributes, whichever has loaded. */
+export function identityOf(c: CardData): Identity {
+  return {
+    name: c.meta ? metaCardName(c.meta.name) : c.card ? c.card.label : "…",
+    image: c.meta?.image || null,
+    set: c.attributes?.set ?? (c.meta ? metaTrait(c.meta, "Set") : undefined),
+    rarity: c.attributes?.rarity ?? (c.meta ? metaTrait(c.meta, "Rarity") : undefined),
+    artist: c.attributes?.artist ?? null,
+  };
+}
+
+export function CardLoading() {
+  return (
+    <div className="grid gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
+      <Skeleton className="aspect-[63/88] w-full rounded-3xl bg-surface" />
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-6 w-60 bg-surface" />
+        <Skeleton className="h-14 w-96 max-w-full bg-surface" />
+        <IndexerLoading title="Loading this card" className="max-w-md" />
+      </div>
+    </div>
+  );
+}
+
+export function CardNotFound({ id }: { id: string }) {
+  return (
+    <div className="flex flex-col items-start gap-2 rounded-3xl border border-border bg-surface p-6">
+      <h1 className="font-display text-[24px] font-semibold text-text">Card not found</h1>
+      <p className="text-[14px] text-text-2">No vault card has id {id}. It may not be minted yet, or the indexer is still catching up.</p>
+      <Link href="/app" className="text-[13px] text-text underline-offset-2 hover:underline">Back to explore</Link>
+    </div>
+  );
+}
+
+export type CardPageViewProps = {
+  c: CardData;
+  /** The viewer's wallet, or null. */
+  me: string | null;
+  /** Unix seconds, for ages. */
+  now: number;
+  /** The indexer's latest block, for the auction countdown. */
+  block: bigint | null;
+  tab: CardTab;
+  tabHref: (t: CardTab) => string;
+  /** The activity list (Overview: the latest rows; Activity tab: the full feed). */
+  activity?: { overview: React.ReactNode; tab: React.ReactNode };
+};
+
+/** The card page (HisVE, Ps4OJ, oezcX, gmKpU, mWV0E, yV8eD) for a loaded card. */
+export function CardPageView({ c, me, now, block, tab, tabHref, activity }: CardPageViewProps) {
+  const card = c.card!;
+  const identity = identityOf(c);
+  const holders = holdersView({ balances: c.holders, sharding: c.sharding, shardings: c.allShardings, transfers: c.transfers, vault: addresses.cardVault });
+  const released = card.state === "released";
+  const isOwner = card.state === "whole" && !!me && card.ownerOf.toLowerCase() === me.toLowerCase();
+  const shards = c.sharding && card.state !== "whole" ? c.sharding.totalShards : null;
+  const revoked = released || !!c.ensName?.revokedAt;
+
+  if (tab !== "overview") {
+    return (
+      <div className="flex flex-col gap-7">
+        <CompactHeader card={card} identity={identity} shards={shards} />
+        <CardTabs tab={tab} href={tabHref} />
+        {tab === "holders" && <HoldersList view={holders} now={now} whole={card.state === "whole" || !c.sharding} />}
+        {tab === "activity" && (activity?.tab ?? null)}
+        {tab === "auction" && (
+          c.sharding ? (
+            <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
+          ) : (
+            <Empty title="No auction yet" body="This card is whole. An auction starts when its owner shards it." />
+          )
+        )}
+        {tab === "analytics" && <Empty title="Analytics" body="Price history and holder analytics for this card arrive with the analytics dashboard." />}
+      </div>
+    );
+  }
+
+  const shardActivity = c.activities.find((a) => a.kind === "shard");
+  const settled = c.activities.find((a) => a.kind === "settle");
+  const context =
+    card.state === "auctioning" ? <ShardedBy address={shardActivity?.actor ?? card.beneficialOwner} />
+    : card.state === "sharded" ? (settled ? `auction settled ${agoLong(settled.timestamp, now)}` : "auction settled")
+    : released ? "name revoked on release"
+    : null;
+
+  const panel =
+    card.state === "whole" ? (isOwner ? <OwnerPanel c={c} /> : <OwnedByPanel c={c} />)
+    : card.state === "auctioning" && c.sharding ? <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
+    : card.state === "sharded" && c.sharding ? <ShardedSummary c={c} />
+    : released ? <ReleasedSummary c={c} />
+    : null;
+
+  return (
+    <div className="flex flex-col gap-8">
+      <CardTabs tab={tab} href={tabHref} />
+      <div className="grid gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
+        <CardArtColumn identity={identity} condition={card.condition} released={released}>
+          <EnsRecords records={c.ensRecords} revoked={revoked} className="max-lg:hidden" />
+        </CardArtColumn>
+        <div className="flex min-w-0 flex-col gap-8">
+          <CardHeader card={card} identity={identity} context={context} />
+          {panel}
+          {!released && (
+            <div className="grid gap-10 xl:grid-cols-2">
+              <OwnershipSummary view={holders} owner={card.state === "whole" ? card.ownerOf : null} />
+              <section className="flex min-w-0 flex-col gap-4">
+                <h2 className="font-display text-[24px] font-semibold text-text">Activity</h2>
+                {activity?.overview ?? null}
+              </section>
+            </div>
+          )}
+          <EnsRecords records={c.ensRecords} revoked={revoked} className="lg:hidden" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Empty({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-surface p-6">
+      <h3 className="text-[16px] font-semibold text-text">{title}</h3>
+      <p className="mt-1 text-[13px] text-text-2">{body}</p>
+    </div>
+  );
+}
