@@ -156,19 +156,44 @@ export function decodeRevert(e: unknown): Revert {
 export type SendInput = { to: Address; abi: Abi | readonly unknown[]; functionName: string; args?: readonly unknown[]; value?: bigint };
 export type UnsignedTx = { to: Address; data: Hex; value: bigint; chainId: number };
 
+/** A Privy embedded wallet: sends through Privy, sponsored when it can be. */
+export type EmbeddedWallet = { kind: "embedded"; sendTransaction: (tx: UnsignedTx, opts: { sponsor: boolean }) => Promise<{ hash: Hex }> };
+/** An external wallet (MetaMask...): sends unsponsored through its own EIP-1193 provider. */
+export type ExternalWallet = {
+  kind: "external";
+  getChainId: () => Promise<number>;
+  switchChain: (chainId: number) => Promise<void>;
+  sendTransaction: (tx: UnsignedTx) => Promise<{ hash: Hex }>;
+};
+
 export type SenderDeps = {
+  /** The user's identity address (see `identityAddress`); calls are simulated from it. */
   account: Address | undefined;
-  /** Whether `account` is a Privy embedded wallet; only those can send (and be sponsored) through Privy. */
-  embedded: boolean;
+  /** The connected wallet whose address is `account`; undefined when it isn't connected. */
+  wallet: EmbeddedWallet | ExternalWallet | undefined;
   simulate: (req: { account: Address; address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint }) => Promise<unknown>;
-  sendTransaction: (tx: UnsignedTx, opts: { sponsor: boolean }) => Promise<{ hash: Hex }>;
   waitForReceipt: (hash: Hex) => Promise<TransactionReceipt>;
 };
 
+export const SEPOLIA_ID = 11155111;
 export const NO_GAS_MESSAGE = "Gas sponsorship isn't available right now and this wallet has no Sepolia ETH for gas.";
-export const NO_EMBEDDED_MESSAGE =
-  "Kura sends transactions from your Kura wallet with gas sponsored, and this login has none. Log in with email or Google to get one.";
+export const EXTERNAL_GAS_MESSAGE = "This wallet needs a little Sepolia ETH for gas.";
+export const WRONG_CHAIN_MESSAGE = "Switch your wallet to Sepolia to continue.";
+export const NOT_CONNECTED_MESSAGE = "Your wallet isn't connected. Reconnect it and try again.";
 export const NOT_LOGGED_IN_MESSAGE = "Log in to send transactions.";
+
+type LinkedAccountLike = { type: string; address?: string; chainType?: string; walletClientType?: string };
+
+/**
+ * The wallet a Kura user acts as, by the same rule as the server (`lib/auth.ts`): the embedded Privy wallet when the
+ * user has one, otherwise the first linked Ethereum wallet. The vendor logs in with its external EOA and has no
+ * embedded wallet, so it acts as that EOA; collectors act as their embedded wallet even with an external one linked.
+ */
+export function identityAddress(linkedAccounts: readonly LinkedAccountLike[]): Address | null {
+  const wallets = linkedAccounts.filter((a) => a.type === "wallet" && a.chainType === "ethereum" && a.address);
+  const chosen = wallets.find((a) => a.walletClientType === "privy") ?? wallets[0];
+  return (chosen?.address as Address | undefined) ?? null;
+}
 
 const SPONSOR_CODES = new Set(["policy_violation", "insufficient_funds", "too_many_requests"]);
 
@@ -186,13 +211,55 @@ export function isSponsorUnavailable(e: unknown): boolean {
   return /sponsor|unable to sign transaction|polic(y|ies)|quota|limit (reached|exceeded)|too many requests/i.test(text);
 }
 
+/** A wallet or node refusing a transaction because the sender can't cover gas. */
+function isInsufficientFunds(e: unknown): boolean {
+  if (e instanceof BaseError && e.walk((x) => x instanceof Error && x.name === "InsufficientFundsError")) return true;
+  const text = e instanceof Error ? `${e.message} ${(e as { details?: unknown }).details ?? ""}` : String(e);
+  return /insufficient funds|exceeds (the )?balance/i.test(text);
+}
+
+async function ensureSepolia(wallet: ExternalWallet) {
+  if ((await wallet.getChainId()) === SEPOLIA_ID) return;
+  try {
+    await wallet.switchChain(SEPOLIA_ID);
+  } catch (e) {
+    throw new TxError(WRONG_CHAIN_MESSAGE, { cause: e });
+  }
+  if ((await wallet.getChainId()) !== SEPOLIA_ID) throw new TxError(WRONG_CHAIN_MESSAGE);
+}
+
+async function broadcast(wallet: EmbeddedWallet | ExternalWallet, tx: UnsignedTx): Promise<Hex> {
+  if (wallet.kind === "external") {
+    try {
+      return (await wallet.sendTransaction(tx)).hash;
+    } catch (e) {
+      if (isInsufficientFunds(e)) throw new TxError(EXTERNAL_GAS_MESSAGE, { cause: e });
+      throw e;
+    }
+  }
+  try {
+    return (await wallet.sendTransaction(tx, { sponsor: true })).hash;
+  } catch (sponsorErr) {
+    if (!isSponsorUnavailable(sponsorErr)) throw sponsorErr;
+    try {
+      return (await wallet.sendTransaction(tx, { sponsor: false })).hash;
+    } catch {
+      throw new TxError(NO_GAS_MESSAGE, { cause: sponsorErr });
+    }
+  }
+}
+
 /**
- * Simulates, sends sponsored (falling back once to an unsponsored send when sponsorship is unavailable), and waits
- * for the receipt. Once a hash exists nothing here sends again: a lost receipt wait becomes a pending TxError.
+ * Simulates, broadcasts and waits for the receipt. An embedded wallet sends sponsored, falling back once to an
+ * unsponsored send when sponsorship is unavailable; an external wallet is moved to Sepolia and sends unsponsored.
+ * Once a hash exists nothing here sends again: a lost receipt wait becomes a pending TxError.
  */
 export async function sendContractTx(input: SendInput, deps: SenderDeps): Promise<Sent> {
   if (!deps.account) throw new TxError(NOT_LOGGED_IN_MESSAGE);
-  if (!deps.embedded) throw new TxError(NO_EMBEDDED_MESSAGE);
+  const wallet = deps.wallet;
+  if (!wallet) throw new TxError(NOT_CONNECTED_MESSAGE);
+  if (wallet.kind === "external") await ensureSepolia(wallet);
+
   const call = { abi: input.abi as Abi, functionName: input.functionName, args: input.args };
   try {
     await deps.simulate({ ...call, account: deps.account, address: input.to, value: input.value });
@@ -201,18 +268,8 @@ export async function sendContractTx(input: SendInput, deps: SenderDeps): Promis
     throw new TxError(r.message, { name: r.name, args: r.args, inner: r.inner, cause: e });
   }
 
-  const tx: UnsignedTx = { to: input.to, data: encodeFunctionData(call as never), value: input.value ?? 0n, chainId: 11155111 };
-  let hash: Hex;
-  try {
-    ({ hash } = await deps.sendTransaction(tx, { sponsor: true }));
-  } catch (sponsorErr) {
-    if (!isSponsorUnavailable(sponsorErr)) throw sponsorErr;
-    try {
-      ({ hash } = await deps.sendTransaction(tx, { sponsor: false }));
-    } catch {
-      throw new TxError(NO_GAS_MESSAGE, { cause: sponsorErr });
-    }
-  }
+  const tx: UnsignedTx = { to: input.to, data: encodeFunctionData(call as never), value: input.value ?? 0n, chainId: SEPOLIA_ID };
+  const hash = await broadcast(wallet, tx);
 
   let receipt: TransactionReceipt;
   try {

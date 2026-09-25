@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { encodeErrorResult, parseAbi, type Hex, type TransactionReceipt } from "viem";
 import {
-  NO_EMBEDDED_MESSAGE,
+  EXTERNAL_GAS_MESSAGE,
+  NOT_CONNECTED_MESSAGE,
   NO_GAS_MESSAGE,
+  WRONG_CHAIN_MESSAGE,
+  identityAddress,
   TxError,
   decodeRevert,
   runSteps,
@@ -21,14 +24,17 @@ const erc20 = parseAbi(["function approve(address spender, uint256 amount) retur
 const input = { to: TO, abi: erc20, functionName: "approve", args: [TO, 1n] };
 const receipt = (status: "success" | "reverted", blockNumber = 7n) => ({ status, blockNumber }) as TransactionReceipt;
 
-function deps(over: Partial<SenderDeps> = {}): SenderDeps {
+type EmbeddedSend = (tx: unknown, o: { sponsor: boolean }) => Promise<{ hash: Hex }>;
+
+function deps(over: Partial<SenderDeps> & { sendTransaction?: EmbeddedSend } = {}): SenderDeps & { sendTransaction: EmbeddedSend } {
+  const { sendTransaction = vi.fn(async () => ({ hash: H1 })), ...rest } = over;
   return {
     account: ACCOUNT,
-    embedded: true,
+    wallet: { kind: "embedded", sendTransaction },
     simulate: vi.fn(async () => undefined),
-    sendTransaction: vi.fn(async () => ({ hash: H1 })),
     waitForReceipt: vi.fn(async () => receipt("success")),
-    ...over,
+    sendTransaction,
+    ...rest,
   };
 }
 
@@ -88,10 +94,71 @@ describe("sendContractTx", () => {
     expect(err.hash).toBeUndefined();
   });
 
-  it("refuses clearly without an embedded wallet", async () => {
-    const d = deps({ embedded: false });
-    await expect(sendContractTx(input, d)).rejects.toThrow(NO_EMBEDDED_MESSAGE);
+  it("refuses clearly when the identity's wallet is not connected", async () => {
+    await expect(sendContractTx(input, deps({ wallet: undefined }))).rejects.toThrow(NOT_CONNECTED_MESSAGE);
+  });
+});
+
+function external(over: { chainId?: number; switchChain?: (id: number) => Promise<void>; send?: (tx: unknown) => Promise<{ hash: Hex }> } = {}) {
+  let chain = over.chainId ?? 11155111;
+  const w = {
+    kind: "external" as const,
+    getChainId: vi.fn(async () => chain),
+    switchChain: vi.fn(over.switchChain ?? (async (id: number) => { chain = id; })),
+    sendTransaction: vi.fn(over.send ?? (async () => ({ hash: H2 }))),
+  };
+  return w;
+}
+
+describe("sendContractTx from an external wallet", () => {
+  it("sends unsponsored through the wallet's own provider, after simulating", async () => {
+    const w = external();
+    const d = deps({ wallet: w });
+    const sent = await sendContractTx(input, d);
+    expect(sent.hash).toBe(H2);
+    expect(d.simulate).toHaveBeenCalledTimes(1);
+    expect(w.sendTransaction).toHaveBeenCalledTimes(1);
+    expect(w.sendTransaction.mock.calls[0]).toHaveLength(1); // no sponsor option on this path
+    expect(w.switchChain).not.toHaveBeenCalled();
     expect(d.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("switches to Sepolia first when the wallet is on another chain", async () => {
+    const w = external({ chainId: 1 });
+    await sendContractTx(input, deps({ wallet: w }));
+    expect(w.switchChain).toHaveBeenCalledWith(11155111);
+    expect(w.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so plainly when the switch is declined", async () => {
+    const w = external({ chainId: 1, switchChain: async () => { throw new Error("User rejected the request."); } });
+    await expect(sendContractTx(input, deps({ wallet: w }))).rejects.toThrow(WRONG_CHAIN_MESSAGE);
+    expect(w.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("asks for a little Sepolia ETH when the wallet can't pay for gas", async () => {
+    const gasErr = new Error("insufficient funds for gas * price + value");
+    const w = external({ send: async () => { throw gasErr; } });
+    const err = await sendContractTx(input, deps({ wallet: w })).catch((e) => e);
+    expect(err).toBeInstanceOf(TxError);
+    expect(err.message).toBe(EXTERNAL_GAS_MESSAGE);
+    expect(err.cause).toBe(gasErr);
+  });
+
+  it("keeps the pending-hash safety", async () => {
+    const w = external();
+    const err = await sendContractTx(input, deps({ wallet: w, waitForReceipt: async () => { throw new Error("timeout"); } })).catch((e) => e);
+    expect(err).toMatchObject({ hash: H2, pending: true });
+    expect(w.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("identityAddress", () => {
+  const w = (address: string, walletClientType?: string, chainType = "ethereum") => ({ type: "wallet", address, chainType, walletClientType });
+  it("matches the server: the embedded wallet first, otherwise the first linked ethereum wallet", () => {
+    expect(identityAddress([{ type: "email" }, w("0xAAA", "metamask"), w("0xBBB", "privy")])).toBe("0xBBB");
+    expect(identityAddress([w("0xSOL", "phantom", "solana"), w("0xAAA", "metamask"), w("0xCCC", "coinbase_wallet")])).toBe("0xAAA");
+    expect(identityAddress([{ type: "email" }])).toBeNull();
   });
 });
 
