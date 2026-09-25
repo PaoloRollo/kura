@@ -1,9 +1,11 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { Suspense } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeftIcon,
   ChartColumnIcon,
+  CircleDollarSignIcon,
   CompassIcon,
   CopyIcon,
   LandmarkIcon,
@@ -13,7 +15,7 @@ import {
   UserIcon,
   WalletIcon,
 } from "lucide-react";
-import { TabBar, TopBar, type NavItem } from "@/components/kura";
+import { BarChip, TabBar, TopBar, type NavItem } from "@/components/kura";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,13 +26,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useKuraUser } from "@/hooks/use-kura-user";
+import { usePayoutBalance } from "@/hooks/use-vendor-data";
+import { usdc } from "@/lib/format";
 
 export const NAV: Record<"vendor" | "collector", NavItem[]> = {
   vendor: [
     { href: "/vendor/scan", label: "Scan", icon: ScanLineIcon },
-    { href: "/vendor/inventory", label: "Inventory", icon: PackageIcon, soon: true },
-    { href: "/vendor/handover", label: "Handover", icon: ArrowRightLeftIcon, soon: true },
-    { href: "/vendor/fees", label: "Fees", icon: LandmarkIcon, soon: true },
+    { href: "/vendor/vault", label: "Inventory", icon: PackageIcon },
+    // Handover is the inventory on its Whole tab, where the cards awaiting a handover are.
+    { href: "/vendor/vault?tab=whole", label: "Handover", icon: ArrowRightLeftIcon },
+    { href: "/vendor/fees", label: "Fees", icon: LandmarkIcon },
   ],
   collector: [
     { href: "/app", label: "Explore", icon: CompassIcon },
@@ -78,10 +83,37 @@ function WalletChip({ address, role, onLogout }: { address: string; role?: strin
   );
 }
 
+/** The vendor's "Fees 412.30 USDC" chip: USDC held by the vault's payout address. */
+function FeesChip() {
+  const balance = usePayoutBalance();
+  return <BarChip icon={CircleDollarSignIcon} className="hidden lg:inline-flex">Fees {balance != null ? usdc(balance) : "…"} USDC</BarChip>;
+}
+
+/** The path the nav matches against. Handover is /vendor/vault?tab=whole, so the vault's tab counts as part of it. */
+function useNavPath() {
+  const pathname = usePathname() ?? "";
+  const tab = useSearchParams()?.get("tab");
+  return pathname === "/vendor/vault" && tab === "whole" ? `${pathname}?tab=whole` : pathname;
+}
+
 /** App shell top bar (and mobile tab bar) for the collector app and the vendor station. */
 export function SiteHeader({ role }: { role: "vendor" | "collector" }) {
+  // useSearchParams needs a Suspense boundary so static pages can still prerender; the fallback ignores the query.
+  return (
+    <Suspense fallback={<Header role={role} path={null} />}>
+      <HeaderWithPath role={role} />
+    </Suspense>
+  );
+}
+
+function HeaderWithPath({ role }: { role: "vendor" | "collector" }) {
+  return <Header role={role} path={useNavPath()} />;
+}
+
+function Header({ role, path }: { role: "vendor" | "collector"; path: string | null }) {
   const { ready, authenticated, login, logout, address, isVendor } = useKuraUser();
-  const pathname = usePathname() ?? "";
+  const bare = usePathname() ?? "";
+  const pathname = path ?? bare;
   const signedIn = ready && authenticated;
   // The signed-out and not-authorised vendor screens show only the wordmark and the station badge.
   const showNav = role === "collector" ? signedIn : signedIn && isVendor;
@@ -96,7 +128,10 @@ export function SiteHeader({ role }: { role: "vendor" | "collector" }) {
         badge={role === "vendor" ? "Vendor station" : undefined}
         right={
           signedIn && address ? (
-            <WalletChip address={address} role={isVendor ? "vendor" : undefined} onLogout={logout} />
+            <>
+              {role === "vendor" && isVendor && <FeesChip />}
+              <WalletChip address={address} role={isVendor ? "vendor" : undefined} onLogout={logout} />
+            </>
           ) : role === "collector" ? (
             <Button variant="inverse" size="compact" onClick={login} disabled={!ready}>
               Log in

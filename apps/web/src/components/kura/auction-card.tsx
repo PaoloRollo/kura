@@ -42,9 +42,12 @@ export function AuctionCard({
   const p = Math.min(1, Math.max(0, progress));
   const body = (
     <>
-      <div className="relative flex h-[260px] items-center justify-center bg-surface-2">
-        <CardArt src={image} alt={name} className="h-[223px] w-auto" />
-        <Pill tone={status} className="absolute top-3 left-3" />
+      {/* The pill sits in its own row above the art, so a long label ("Redeemable") never covers a narrow card's art. */}
+      <div className="flex h-[260px] flex-col gap-2 bg-surface-2 p-3">
+        <Pill tone={status} />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <CardArt src={image} alt={name} className="h-full max-h-[200px] w-auto max-w-full" />
+        </div>
       </div>
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">

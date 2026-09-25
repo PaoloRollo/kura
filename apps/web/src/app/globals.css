@@ -166,3 +166,22 @@
     background: var(--kura-shu-soft);
   }
 }
+
+/* Printing the Mint success sleeve label (anR2F): print only the label, on white. */
+@media print {
+  body:has([data-print-label]) * {
+    visibility: hidden;
+  }
+  body:has([data-print-label]) {
+    background: #fff;
+  }
+  [data-print-label],
+  [data-print-label] * {
+    visibility: visible;
+  }
+  [data-print-label] {
+    position: fixed;
+    top: 0;
+    left: 0;
+  }
+}

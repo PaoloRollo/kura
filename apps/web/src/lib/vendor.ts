@@ -1,0 +1,149 @@
+import { usdc } from "@/lib/format";
+import type { Revert } from "@/lib/tx-core";
+
+// Pure helpers behind the vendor screens: inventory (tM3Hy), fees (xJ7vz) and the station stats (g3IDaw).
+
+export type CardState = "whole" | "auctioning" | "sharded" | "released";
+export type InventoryTab = "all" | "whole" | "sharded" | "released";
+export const INVENTORY_TABS: { id: InventoryTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "whole", label: "Whole" },
+  { id: "sharded", label: "Sharded" },
+  { id: "released", label: "Released" },
+];
+
+const lower = (a: string | null | undefined) => (a ?? "").toLowerCase();
+
+/** The Sharded tab holds cards on auction as well as sharded ones. */
+export function inTab(state: CardState, tab: InventoryTab): boolean {
+  if (tab === "all") return true;
+  if (tab === "sharded") return state === "auctioning" || state === "sharded";
+  return state === tab;
+}
+
+export function tabCounts(cards: { state: CardState }[]): Record<InventoryTab, number> {
+  return {
+    all: cards.length,
+    whole: cards.filter((c) => inTab(c.state, "whole")).length,
+    sharded: cards.filter((c) => inTab(c.state, "sharded")).length,
+    released: cards.filter((c) => inTab(c.state, "released")).length,
+  };
+}
+
+/** Per card: holders with a positive shard balance, not counting the card's auction or the vault. */
+export function holderCounts(
+  cards: { id: bigint; shardToken: string | null; auction: string | null }[],
+  balances: { shardToken: string; holder: string; balance: bigint }[],
+  vault: string,
+): Map<bigint, number> {
+  const out = new Map<bigint, number>();
+  for (const c of cards) {
+    if (!c.shardToken) continue;
+    const token = lower(c.shardToken);
+    const skip = new Set([lower(c.auction), lower(vault)]);
+    out.set(c.id, balances.filter((b) => lower(b.shardToken) === token && b.balance > 0n && !skip.has(lower(b.holder))).length);
+  }
+  return out;
+}
+
+/** Whole cards that came out of a buyout: their latest sharding (by createdAt) has a redeemer. */
+export function awaitingHandover(
+  cards: { id: bigint; state: CardState }[],
+  shardings: { cardId: bigint; createdAt: number; redeemer: string | null }[],
+): Set<bigint> {
+  const latest = new Map<bigint, { createdAt: number; redeemer: string | null }>();
+  for (const s of shardings) {
+    const prev = latest.get(s.cardId);
+    if (!prev || s.createdAt > prev.createdAt) latest.set(s.cardId, s);
+  }
+  return new Set(cards.filter((c) => c.state === "whole" && latest.get(c.id)?.redeemer).map((c) => c.id));
+}
+
+/** Case-insensitive match on the card name, the ENS name or the owner (address or handle). */
+export function matchesSearch(row: { name?: string; ensName: string; owner?: string }, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return [row.name, row.ensName, row.owner].some((s) => s?.toLowerCase().includes(needle));
+}
+
+type Fee = { amountUsdc: bigint; timestamp: number };
+const DAY = 86_400;
+
+/** All fees, and those in the last seven days. `now` in unix seconds. */
+export function feeTotals(fees: Fee[], now: number): { total: bigint; week: bigint } {
+  let total = 0n;
+  let week = 0n;
+  for (const f of fees) {
+    total += f.amountUsdc;
+    if (f.timestamp >= now - 7 * DAY) week += f.amountUsdc;
+  }
+  return { total, week };
+}
+
+const utcDay = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 10);
+
+/** Sale and buyout fees per UTC day for the last `days` days (today last), empty days included. */
+export function feesPerDay(
+  fees: (Fee & { kind: "sale" | "buyout" })[],
+  days: number,
+  now: number,
+): { day: string; sale: bigint; buyout: bigint }[] {
+  const out = Array.from({ length: days }, (_, i) => ({ day: utcDay(now - (days - 1 - i) * DAY), sale: 0n, buyout: 0n }));
+  const byDay = new Map(out.map((d) => [d.day, d]));
+  for (const f of fees) {
+    const d = byDay.get(utcDay(f.timestamp));
+    if (d) d[f.kind] += f.amountUsdc;
+  }
+  return out;
+}
+
+const csvCell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+
+/** The fee ledger as CSV, one row per fee event. */
+export function feesCsv(rows: (Fee & { id: string; cardId: bigint; kind: string; name?: string })[]): string {
+  const head = "time,kind,card_id,card,amount_usdc,event_id";
+  const body = rows.map((r) =>
+    [new Date(r.timestamp * 1000).toISOString(), r.kind, r.cardId.toString(), r.name ?? "", usdc(r.amountUsdc), r.id].map(csvCell).join(","),
+  );
+  return [head, ...body].join("\n");
+}
+
+/** Short age for the ledger: "now", "22m", "2h", "3d". */
+export function age(unix: number, now: number): string {
+  const s = Math.max(0, now - unix);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < DAY) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / DAY)}d`;
+}
+
+/** The empty station's row (g3IDaw). "Today" starts at local midnight, the counter's day. */
+export function stationStats(
+  cards: { state: CardState; mintedAt: number }[],
+  fees: Fee[],
+  now: number,
+): { mintedToday: number; inCustody: number; feesToday: bigint } {
+  const d = new Date(now * 1000);
+  const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
+  return {
+    mintedToday: cards.filter((c) => c.mintedAt >= midnight).length,
+    inCustody: cards.filter((c) => c.state !== "released").length,
+    feesToday: fees.filter((f) => f.timestamp >= midnight).reduce((a, f) => a + f.amountUsdc, 0n),
+  };
+}
+
+/** Why a mint was refused, in the vendor's words (g5bcZ). */
+export function describeMintError(_e: unknown, revert: Revert): { title: string; body?: string } {
+  const reason: Record<string, string> = {
+    OnlyVendor: "Only the vendor wallet can mint. Sign in with the vendor wallet and try again.",
+    InvalidLabel: "The card name or set code can't be used in an ENS name. Pick the printing again.",
+    InvalidCondition: "The condition isn't one of NM, LP, MP, HP or DMG.",
+    InvalidLanguage: "The language code isn't valid. Pick the language again.",
+    ZeroAddress: "The owner address is empty. Scan the owner's QR again.",
+  };
+  const name = revert.inner?.name ?? revert.name;
+  if (name && reason[name]) return { title: "The vault refused this mint", body: `${reason[name]} Nothing was minted.` };
+  if (revert.hash) return { title: "The mint reverted", body: "It was mined but the vault rejected it. Nothing was minted." };
+  if (/reject|denied|cancel/i.test(revert.message)) return { title: "Request cancelled", body: "The mint was not sent." };
+  return { title: "Couldn't send the mint", body: revert.message };
+}

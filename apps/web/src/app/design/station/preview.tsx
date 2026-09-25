@@ -42,7 +42,7 @@ const SEEDS: Record<string, StationSeed> = {
   search: { step: "search", capture: "/cards/mox-sapphire.webp", matches: [{ ...match, score: 0.41 }], confident: false, manual: "mox sapph", results: PRINTINGS },
   minted: {
     step: "minted",
-    minted: { image: "/cards/mox-sapphire.webp", name: "Mox Sapphire", tokenId: "2", ensName: "mox-sapphire-lea-2.kura.eth", owner: "kenji.kura.eth", condition: "NM", language: "en", block: "7,412,901", slot: "B-07" },
+    minted: { image: "/cards/mox-sapphire.webp", name: "Mox Sapphire", tokenId: "2", ensName: "mox-sapphire-lea-2.kura.eth", owner: "kenji.kura.eth", condition: "NM", language: "en", block: "7,412,901", set: "LEA · Limited Edition Alpha", url: "https://kuravault.xyz/app/cards/2" },
   },
 };
 

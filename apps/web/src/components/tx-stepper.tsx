@@ -1,5 +1,6 @@
 "use client";
 
+import type * as React from "react";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, CircleIcon, FuelIcon, Loader2Icon, XIcon } from "lucide-react";
@@ -158,6 +159,9 @@ export type TxStepperProps = {
   steps: Step[];
   /** The button label that starts the sequence ("Place bid"). */
   cta: string;
+  /** Leading icon and extra classes for the CTA button. */
+  ctaIcon?: React.ReactNode;
+  ctaClassName?: string;
   onDone?: (results: StepResult[]) => void;
   onError?: (results: StepResult[], revert: Revert) => void;
   disabled?: boolean;
@@ -183,6 +187,8 @@ export type TxStepperProps = {
 export function TxStepper({
   steps,
   cta,
+  ctaIcon,
+  ctaClassName,
   onDone,
   onError,
   disabled,
@@ -303,7 +309,8 @@ export function TxStepper({
       {active && isDesktop ? (
         panel
       ) : (
-        <Button variant="primary" size="md" className="w-full" onClick={go} disabled={disabled || active}>
+        <Button variant="primary" size="md" className={cn("w-full", ctaClassName)} onClick={go} disabled={disabled || active}>
+          {!active && ctaIcon}
           {active ? "Working…" : cta}
         </Button>
       )}

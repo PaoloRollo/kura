@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isAddress } from "viem";
+import { isAddress, parseEventLogs } from "viem";
 import { toast } from "sonner";
-import { CONDITIONS, cardLabel, isDeployed, DeploymentsSchema } from "@kura/shared";
+import { useReadContract } from "wagmi";
+import { CONDITIONS, abi, cardLabel, isDeployed, DeploymentsSchema } from "@kura/shared";
 import deployments from "@/generated/deployments.json";
 import { CheckCircle2Icon, ListChecksIcon, QrCodeIcon, RotateCcwIcon, ScanEyeIcon, StampIcon } from "lucide-react";
-import { CardArt, Segmented, SearchInput } from "@/components/kura";
+import { CardArt, Segmented, SearchInput, StatTile } from "@/components/kura";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -15,13 +16,21 @@ import { shortAddress } from "@/components/site-header";
 import { MintSuccess, type MintResult } from "@/components/vendor/mint-success";
 import { Brackets, CandidateRow, HowRow, PanelHeading, ScanStage, StageChip, StationStepper } from "@/components/vendor/station";
 import { QrScanner } from "@/components/qr-scanner";
+import { TxStepper } from "@/components/tx-stepper";
 import { WebcamCapture } from "@/components/webcam-capture";
 import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
+import { useNow } from "@/hooks/use-now";
+import { useFeeEvents, useVaultCards } from "@/hooks/use-vendor-data";
+import { addresses, publicClient } from "@/lib/chain";
+import { money } from "@/lib/format";
+import type { StepResult } from "@/lib/tx";
+import { useSendTx } from "@/lib/tx";
+import { describeMintError, stationStats } from "@/lib/vendor";
 import { embedCard, warmUpEmbedder, type LoadProgress } from "@/lib/card-embed";
 import type { MatchCandidate } from "@/lib/card-match";
 import type { Candidate } from "@/lib/scryfall";
 
-// "minted" follows a successful mint (anR2F). Minting is not wired yet, so nothing enters it today.
+// "minted" follows a successful mint (anR2F).
 export type Step = "capture" | "matching" | "pick" | "search" | "edition" | "details" | "owner" | "review" | "minted";
 const STEP_INDEX: Record<Step, number> = { capture: 0, matching: 1, pick: 1, search: 1, edition: 1, details: 2, owner: 3, review: 4, minted: 5 };
 const LANGUAGES = ["en", "ja", "zhs", "zht", "ko", "de", "fr", "it", "es", "pt", "ru"];
@@ -46,6 +55,22 @@ async function getJson<T>(path: string, init: Parameters<typeof apiFetch>[1]): P
 const usd = (c: Candidate) => (c.prices.usd ? `$${Number(c.prices.usd).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : undefined);
 const meta = (c: Candidate) => `${c.setCode.toUpperCase()} · #${c.collectorNumber} · ${c.lang.toUpperCase()}`;
 
+/** The empty station's "Minted today / In custody / Fees today" row (g3IDaw), live from the indexer. */
+function StationStats() {
+  const cards = useVaultCards();
+  const fees = useFeeEvents();
+  const now = useNow();
+  if (!cards.data || !fees.data) return null;
+  const s = stationStats(cards.data, fees.data, now);
+  return (
+    <div className="flex justify-between gap-4 px-4 pt-3">
+      <StatTile bare label="Minted today" value={s.mintedToday} />
+      <StatTile bare label="In custody" value={s.inCustody} />
+      <StatTile bare label="Fees today" value={money(s.feesToday)} />
+    </div>
+  );
+}
+
 function CandidateTile({ c, onPick, note, highlight }: { c: Candidate; onPick: () => void; note?: string; highlight?: boolean }) {
   return <CandidateRow image={c.imageSmall || c.image} name={c.printedName ?? c.name} meta={meta(c)} price={usd(c)} note={note} selected={highlight} onPick={onPick} />;
 }
@@ -65,6 +90,7 @@ export type StationSeed = {
 
 export function ScanStation({ seed }: { seed?: StationSeed }) {
   const { identityToken } = useKuraUser();
+  const { send } = useSendTx();
   const [step, setStep] = useState<Step>(seed?.step ?? "capture");
   // A seeded preview never loads the embedding model.
   const [model, setModel] = useState<ModelState>(seed ? { status: "ready", device: "wasm" } : { status: "loading", progress: null });
@@ -80,8 +106,8 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   const [owner, setOwner] = useState<`0x${string}` | null>(seed?.owner ?? null);
   const [manual, setManual] = useState(seed?.manual ?? "");
   const [searching, setSearching] = useState(false);
-  // Filled by the mint handler once minting is wired; drives the Mint success screen.
-  const [minted] = useState<MintResult | null>(seed?.minted ?? null);
+  // Filled from the mint's CardMinted event; drives the Mint success screen.
+  const [minted, setMinted] = useState<MintResult | null>(seed?.minted ?? null);
   const [ownerSource, setOwnerSource] = useState<"qr" | "pasted">("pasted");
   const deployed = isDeployed(DeploymentsSchema.parse(deployments));
   // Stable identity so the QR scanner's camera effect is not restarted on every render.
@@ -178,6 +204,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   }
 
   function restart() {
+    setMinted(null);
     setStep("capture");
     setChosen(null);
     setGroup(null);
@@ -186,11 +213,43 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
     setCapture(null);
   }
 
-  // The token id is only known after minting; cardLabel formats the rest, the placeholder is appended here.
-  const labelPrefix = chosen ? cardLabel(chosen.slug, chosen.setCode, 0).slice(0, -1) : "";
-
   const stepIndex = STEP_INDEX[step];
   const ensParent = `${deployments.ensParentLabel}.eth`;
+  // The id the next mint expects. A concurrent mint can take it; the authoritative label comes from CardMinted.
+  const nextId = useReadContract({
+    address: addresses.cardVault,
+    abi: abi.cardVault,
+    functionName: "nextId",
+    query: { enabled: deployed && !!chosen, refetchInterval: step === "review" ? 12_000 : false },
+  }).data;
+  const willMint = chosen ? `${nextId != null ? cardLabel(chosen.slug, chosen.setCode, nextId) : cardLabel(chosen.slug, chosen.setCode, 0).slice(0, -1) + "N"}.${ensParent}` : `card-set-N.${ensParent}`;
+  const description = chosen ? `${chosen.name}, ${chosen.setName}${foil ? ", foil" : ""}` : "";
+
+  async function onMinted(results: StepResult[]) {
+    const r = results.find((x) => x.status === "done");
+    if (!r?.hash || !chosen || !owner) return;
+    const receipt = await publicClient.getTransactionReceipt({ hash: r.hash });
+    // Filtering by the vault ABI and event name ignores the ENS logs in the same receipt.
+    const [log] = parseEventLogs({ abi: abi.cardVault, eventName: "CardMinted", logs: receipt.logs });
+    if (!log) {
+      toast.error("Minted, but the CardMinted event wasn't found", { description: r.hash });
+      return;
+    }
+    const siteBase = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+    setMinted({
+      image: chosen.image,
+      name: chosen.name,
+      set: `${chosen.setCode.toUpperCase()} · ${chosen.setName}`,
+      tokenId: log.args.id.toString(),
+      ensName: `${log.args.label}.${ensParent}`,
+      owner,
+      condition,
+      language,
+      block: receipt.blockNumber.toLocaleString("en-US"),
+      url: `${siteBase.replace(/\/+$/, "")}/app/cards/${log.args.id}`,
+    });
+    setStep("minted");
+  }
   const detailsOpen = step === "details" || step === "owner" || step === "review";
   // The Details/Owner/Mint block is previewed (dimmed) while the card is still being identified.
   const showForm = stepIndex >= 1 && step !== "matching";
@@ -199,7 +258,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   const recognised = !!chosen || (step === "pick" && confident);
   const score = chosen ? (group?.score ?? (confident ? top?.score : undefined)) : top?.score;
 
-  if (step === "minted" && minted) return <MintSuccess result={minted} onScanNext={restart} />;
+  if (step === "minted" && minted) return <MintSuccess result={minted} onScanNext={restart} onPrint={() => window.print()} />;
 
   const searchBox = (
     <form
@@ -274,6 +333,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
             <HowRow icon={<ListChecksIcon />} title="You check the details" body="Condition, language and finish are yours to set." />
             <HowRow icon={<QrCodeIcon />} title="Scan the owner's QR" body="From the Kura app on their phone." />
             <HowRow icon={<StampIcon />} title="Mint the twin" body="It gets an ENS name and stays in the vault." />
+            <StationStats />
             {model.status === "ready" && <p className="px-1 text-[12px] text-muted-foreground">Card matcher on {model.device === "webgpu" ? "WebGPU" : "WASM"}</p>}
           </section>
         )}
@@ -408,9 +468,9 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
 
             <section className="flex flex-col gap-1.5 rounded-xl border border-border px-4 py-4">
               <span className="text-[12px] text-muted-foreground">Will mint</span>
-              <span className="truncate font-mono text-[15px] text-kin">{chosen ? `${labelPrefix}N.${ensParent}` : `card-set-N.${ensParent}`}</span>
+              <span className="truncate font-mono text-[15px] text-kin">{willMint}</span>
               <span className="text-[11px] text-text-2">
-                {owner ? `to ${shortAddress(owner)} · ` : ""}N is the token id, known once minted. The card stays in the vault.
+                {owner ? `to ${shortAddress(owner)} · ` : ""}stays in the vault{nextId != null ? " · the id is confirmed once minted" : ""}
               </span>
             </section>
 
@@ -419,15 +479,33 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
                 Ready to mint <strong className="font-semibold text-text">{chosen.name}</strong> ({chosen.setCode.toUpperCase()}, {condition}, {language}{foil ? ", foil" : ""}) to <span className="font-mono">{shortAddress(owner)}</span>.
               </p>
             )}
-            <Button
-              variant="primary"
-              size="md"
-              className="h-12 w-full text-[15px]"
-              disabled={step !== "review" || !deployed}
-              title={deployed ? undefined : "Contracts are not deployed yet"}
-            >
-              <StampIcon />Mint digital twin
-            </Button>
+            <TxStepper
+              cta="Mint digital twin"
+              ctaIcon={<StampIcon />}
+              ctaClassName="h-12 text-[15px]"
+              title="Minting the twin"
+              failedTitle="The mint didn't go through"
+              disabled={step !== "review" || !deployed || !chosen || !owner}
+              describeError={describeMintError}
+              steps={
+                chosen && owner
+                  ? [
+                      {
+                        id: "mint",
+                        label: `Mint ${chosen.name} to ${shortAddress(owner)}`,
+                        run: () =>
+                          send({
+                            to: addresses.cardVault,
+                            abi: abi.cardVault,
+                            functionName: "mint",
+                            args: [{ to: owner, scryfallId: chosen.scryfallId, slug: chosen.slug, setCode: chosen.setCode, condition, language, imageUrl: chosen.image, description }],
+                          }),
+                      },
+                    ]
+                  : []
+              }
+              onDone={(results) => void onMinted(results)}
+            />
             {detailsOpen && <Button variant="ghost" size="compact" className="w-fit" onClick={restart}>Start over</Button>}
           </div>
         )}
