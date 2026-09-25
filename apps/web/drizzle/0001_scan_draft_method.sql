@@ -1,0 +1,1 @@
+ALTER TABLE "app"."scan_drafts" ADD COLUMN "method" text DEFAULT 'manual' NOT NULL;

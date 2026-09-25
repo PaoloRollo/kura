@@ -12,17 +12,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QrScanner } from "@/components/qr-scanner";
-import { WebcamCapture } from "@/components/webcam-capture";
 import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
 import type { Candidate } from "@/lib/scryfall";
 
-type Step = "capture" | "recognising" | "pick" | "details" | "owner" | "review";
+type Step = "pick" | "details" | "owner" | "review";
 const LANGUAGES = ["en", "ja", "zhs", "zht", "ko", "de", "fr", "it", "es", "pt", "ru"];
 
 export default function ScanPage() {
   const { identityToken } = useKuraUser();
-  const [step, setStep] = useState<Step>("capture");
-  const [image, setImage] = useState<string | null>(null);
+  const [step, setStep] = useState<Step>("pick");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [chosen, setChosen] = useState<Candidate | null>(null);
   const [condition, setCondition] = useState<(typeof CONDITIONS)[number]>("NM");
@@ -36,23 +34,6 @@ export default function ScanPage() {
     setOwner(a);
     setStep("review");
   }, []);
-
-  async function recognise(dataUrl: string) {
-    setImage(dataUrl);
-    setStep("recognising");
-    const res = await apiFetch("/api/scan", { method: "POST", body: JSON.stringify({ image: dataUrl, mediaType: "image/jpeg" }), identityToken });
-    if (!res.ok) {
-      const { error } = await res.json().catch(() => ({ error: null }));
-      toast.error(error?.code === "RECOGNITION_UNAVAILABLE" ? "Recognition unavailable, search by name instead" : error?.message ?? "Scan failed");
-      setCandidates([]);
-      setStep("pick");
-      return;
-    }
-    const json = await res.json();
-    setCandidates(json.candidates);
-    if (json.recognition?.language) setLanguage(json.recognition.language);
-    setStep("pick");
-  }
 
   async function search() {
     const res = await apiFetch(`/api/scan/search?q=${encodeURIComponent(manual)}`, { identityToken });
@@ -71,11 +52,9 @@ export default function ScanPage() {
       <Card>
         <CardHeader><CardTitle>Scan a card</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          {step === "capture" && <WebcamCapture onCapture={recognise} />}
-          {step === "recognising" && <p className="text-muted-foreground">Identifying card…</p>}
           {step === "pick" && (
             <div className="space-y-4">
-              {candidates.length === 0 && <p className="text-sm text-muted-foreground">No match found. Search by name or rescan.</p>}
+              {candidates.length === 0 && <p className="text-sm text-muted-foreground">Search the card by name.</p>}
               <div className="grid gap-3 sm:grid-cols-3">
                 {candidates.map((c) => (
                   <button key={c.scryfallId} onClick={() => choose(c)} className="rounded-lg border p-2 text-left hover:bg-accent">
@@ -89,7 +68,6 @@ export default function ScanPage() {
               <div className="flex gap-2">
                 <Input placeholder="Search by name" value={manual} onChange={(e) => setManual(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
                 <Button variant="secondary" onClick={search}>Search</Button>
-                <Button variant="ghost" onClick={() => setStep("capture")}>Rescan</Button>
               </div>
             </div>
           )}
@@ -127,7 +105,7 @@ export default function ScanPage() {
               <p className="text-sm">Ready to mint <strong>{chosen.name}</strong> ({chosen.setCode.toUpperCase()}, {condition}, {language}{foil ? ", foil" : ""}) to <span className="font-mono">{owner}</span>.</p>
               <p className="text-sm text-muted-foreground">ENS name will be <span className="font-mono">{`${chosen.slug}-${chosen.setCode}-N`}.{deployments.ensParentLabel}.eth</span> where N is the token id.</p>
               <Button size="lg" disabled={!deployed} title={deployed ? undefined : "Contracts are not deployed yet"}>Mint digital twin</Button>
-              <Button variant="ghost" onClick={() => { setStep("capture"); setChosen(null); setOwner(null); }}>Start over</Button>
+              <Button variant="ghost" onClick={() => { setStep("pick"); setChosen(null); setOwner(null); }}>Start over</Button>
             </div>
           )}
         </CardContent>
@@ -135,8 +113,8 @@ export default function ScanPage() {
       <Card>
         <CardHeader><CardTitle>Frame</CardTitle></CardHeader>
         <CardContent className="space-y-2">
-          {/* eslint-disable-next-line @next/next/no-img-element -- data URL from the webcam */}
-          {image ? <img src={image} alt="captured" className="w-full rounded" /> : <p className="text-sm text-muted-foreground">No capture yet</p>}
+          {/* eslint-disable-next-line @next/next/no-img-element -- remote Scryfall image, not optimised */}
+          {chosen ? <img src={chosen.image} alt={chosen.name} className="w-full rounded" /> : <p className="text-sm text-muted-foreground">No card chosen yet</p>}
           {chosen && <Badge variant="secondary">{chosen.scryfallId}</Badge>}
         </CardContent>
       </Card>

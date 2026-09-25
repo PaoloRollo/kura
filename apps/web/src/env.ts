@@ -8,7 +8,6 @@ const ServerSchema = z.object({
   WORLD_RP_ID: z.string().min(1),
   WORLD_RP_SIGNING_KEY: z.string().min(1),
   WORLD_ENV: z.enum(["production", "staging", "sandbox"]),
-  ANTHROPIC_API_KEY: z.string().min(1),
   DATABASE_URL: z.string().min(1),
   ALCHEMY_HTTP_URL: z.string().url(),
   ALCHEMY_WS_URL: z.string().min(1),

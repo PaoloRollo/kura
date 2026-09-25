@@ -1,64 +1,46 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { setUserForTests } from "@/lib/auth";
+import { getDb } from "@/lib/db/client";
+import { scanDrafts } from "@/lib/db/schema";
 import deployments from "@/generated/deployments.json";
-import { runScan } from "@/lib/scan";
-import { ScryfallUnavailableError } from "@/lib/scryfall";
-import { RecognitionUnavailableError, recognizeCard } from "@/lib/vision";
+import { requireVendor } from "@/lib/scan";
+import { GET as searchRoute } from "@/app/api/scan/search/route";
 
 const vendor = deployments.vendor as `0x${string}`;
-const candidate = { scryfallId: "id1", name: "Black Lotus", printedName: null, lang: "en", set: "lea", setName: "Alpha", collectorNumber: "232", rarity: "rare", image: "i", imageSmall: "s", prices: { usd: "1", usdFoil: null, eur: null }, finishes: ["nonfoil"], slug: "black-lotus", setCode: "lea" };
-const body = { image: "data:image/jpeg;base64,AAAA", mediaType: "image/jpeg" as const };
+const alice = "0x1111111111111111111111111111111111111111" as const;
 
-describe("runScan", () => {
-  beforeEach(async () => {
-    await createTestDb();
-    setUserForTests({ did: "did:vendor", wallet: vendor });
-  });
-
-  it("recognises, resolves and stores a draft", async () => {
-    const recognize = vi.fn(async () => ({ name: "Black Lotus", setHint: "lea", collectorNumber: null, language: "en", foil: false, confidence: 0.9 }));
-    const named = vi.fn(async () => candidate);
-    const out = await runScan(body, { did: "did:vendor", wallet: vendor }, { recognize, scryfall: { named, search: vi.fn(async () => []) } });
-    expect(out.candidates).toHaveLength(1);
-    expect(out.candidates[0].slug).toBe("black-lotus");
-    expect(out.draftId).toMatch(/[0-9a-f-]{36}/);
-    expect(recognize).toHaveBeenCalledWith(expect.objectContaining({ imageBase64: "AAAA", mediaType: "image/jpeg" }));
-    expect(named).toHaveBeenCalledWith({ name: "Black Lotus", set: "lea", lang: "en" });
-  });
-
-  it("falls back to search when the pinned printing is missing, and returns empty candidates when nothing matches", async () => {
-    const recognize = vi.fn(async () => ({ name: "Black Lotus", setHint: "xyz", collectorNumber: null, language: "en", foil: false, confidence: 0.5 }));
-    const scryfall = { named: vi.fn(async () => null), search: vi.fn(async () => [candidate, candidate, candidate, candidate]) };
-    const out = await runScan(body, { did: "did:vendor", wallet: vendor }, { recognize, scryfall });
-    expect(out.candidates).toHaveLength(3);
-    expect(scryfall.search).toHaveBeenCalledWith('!"Black Lotus" unique:prints', 3);
-
-    const none = await runScan(body, { did: "did:vendor", wallet: vendor }, { recognize, scryfall: { named: vi.fn(async () => null), search: vi.fn(async () => []) } });
-    expect(none.candidates).toEqual([]);
-    expect(none.recognition.name).toBe("Black Lotus");
-  });
-
-  it("maps upstream failures to stable codes and blocks non-vendors", async () => {
-    const boom = vi.fn(async () => { throw new RecognitionUnavailableError("refused"); });
-    await expect(runScan(body, { did: "did:vendor", wallet: vendor }, { recognize: boom, scryfall: { named: vi.fn(), search: vi.fn() } })).rejects.toMatchObject({ code: "RECOGNITION_UNAVAILABLE", status: 503 });
-
-    const recognize = vi.fn(async () => ({ name: "x", setHint: null, collectorNumber: null, language: "en", foil: false, confidence: 1 }));
-    const down = { named: vi.fn(async () => { throw new ScryfallUnavailableError(); }), search: vi.fn() };
-    await expect(runScan(body, { did: "did:vendor", wallet: vendor }, { recognize, scryfall: down })).rejects.toMatchObject({ code: "SCRYFALL_UNAVAILABLE", status: 503 });
-
-    await expect(runScan(body, { did: "did:alice", wallet: "0x1111111111111111111111111111111111111111" }, { recognize, scryfall: down })).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+describe("requireVendor", () => {
+  it("accepts the vendor in any case and refuses everyone else", () => {
+    expect(() => requireVendor({ did: "did:vendor", wallet: vendor.toUpperCase().replace("0X", "0x") as `0x${string}` })).not.toThrow();
+    expect(() => requireVendor({ did: "did:alice", wallet: alice })).toThrow(expect.objectContaining({ code: "FORBIDDEN", status: 403 }));
   });
 });
 
-describe("recognizeCard", () => {
-  it("reports a missing API key as RecognitionUnavailableError without calling out", async () => {
-    const saved = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      await expect(recognizeCard({ imageBase64: "AAAA", mediaType: "image/jpeg" })).rejects.toBeInstanceOf(RecognitionUnavailableError);
-    } finally {
-      if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
-    }
+describe("GET /api/scan/search", () => {
+  beforeEach(async () => {
+    await createTestDb();
+  });
+
+  it("is vendor only and short-circuits short queries", async () => {
+    setUserForTests({ did: "did:alice", wallet: alice });
+    expect((await searchRoute(new Request("http://localhost/api/scan/search?q=black"))).status).toBe(403);
+    setUserForTests({ did: "did:vendor", wallet: vendor });
+    const res = await searchRoute(new Request("http://localhost/api/scan/search?q=b"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ candidates: [] });
+  });
+});
+
+describe("scan_drafts", () => {
+  it("records how the card was identified, defaulting to manual", async () => {
+    await createTestDb();
+    await getDb().insert(scanDrafts).values({ id: "d1", vendorWallet: vendor, candidates: [] });
+    await getDb().insert(scanDrafts).values({ id: "d2", vendorWallet: vendor, candidates: [], method: "embedding" });
+    const [d1] = await getDb().select().from(scanDrafts).where(eq(scanDrafts.id, "d1"));
+    const [d2] = await getDb().select().from(scanDrafts).where(eq(scanDrafts.id, "d2"));
+    expect(d1.method).toBe("manual");
+    expect(d2.method).toBe("embedding");
   });
 });

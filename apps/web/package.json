@@ -13,7 +13,6 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128.0",
     "@kura/shared": "workspace:*",
     "@privy-io/node": "^0.35.0",
     "@privy-io/react-auth": "^3.45.0",
