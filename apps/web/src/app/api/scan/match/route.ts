@@ -8,7 +8,7 @@ import { recordScanDraft } from "@/lib/scan-draft";
 import { requireVendor } from "@/lib/scan";
 import { ScryfallUnavailableError } from "@/lib/scryfall";
 
-// Reads the index from disk and keeps it in this server process.
+// Reads the index from disk or CARD_INDEX_URL and keeps it in this server process.
 export const runtime = "nodejs";
 
 export const POST = withAuth(async (req, user) => {
