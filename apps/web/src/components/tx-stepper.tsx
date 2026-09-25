@@ -10,7 +10,7 @@ import { explorerTx } from "@/lib/chain";
 import { shortHash } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getReceipt } from "@/lib/tx";
-import { runSteps, syncAfterTx, type Revert, type Step, type StepResult, type StepStatus } from "@/lib/tx-core";
+import { gasNote, runSteps, syncAfterTx, type Revert, type Step, type StepResult, type StepStatus, type WalletKind } from "@/lib/tx-core";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Presentational panel (hnuVb, g5bcZ)
@@ -42,10 +42,13 @@ export function TxProgress({
   retrying,
   lagging,
   onDismiss,
+  walletKind = null,
   className,
 }: {
   title: string;
   rows: TxRow[];
+  /** The sending wallet (`useSendTx().walletKind`): the footer claims gas sponsorship only for the embedded wallet. */
+  walletKind?: WalletKind | null;
   failure?: TxFailure | null;
   /** The transactions went through but the indexer has not caught up; shown until dismissed. */
   lagging?: boolean;
@@ -127,8 +130,8 @@ export function TxProgress({
         </>
       ) : (
         <p className="flex items-center gap-2.5 rounded-lg bg-surface-2 px-3.5 py-3 text-[12px] text-text-2">
-          <FuelIcon className="size-4 shrink-0 text-good" />
-          Gas sponsored. Keep this open, about 12 seconds per step.
+          <FuelIcon className={cn("size-4 shrink-0", walletKind === "embedded" ? "text-good" : "text-text-2")} />
+          {gasNote(walletKind)}
         </p>
       )}
     </div>
@@ -189,6 +192,8 @@ export type TxStepperProps = {
   backLabel?: string;
   /** False when the flow shows its own success state and toast, so a success shows exactly one toast. */
   successToast?: boolean;
+  /** The sending wallet, from `useSendTx().walletKind`; only "embedded" is described as gas sponsored. */
+  walletKind?: WalletKind | null;
   className?: string;
 };
 
@@ -214,6 +219,7 @@ export function TxStepper({
   retryable,
   backLabel,
   successToast = true,
+  walletKind = null,
   className,
 }: TxStepperProps) {
   const queryClient = useQueryClient();
@@ -323,6 +329,7 @@ export function TxStepper({
       onCancel={cancel}
       onRetry={retry}
       retrying={retrying}
+      walletKind={walletKind}
     />
   );
 

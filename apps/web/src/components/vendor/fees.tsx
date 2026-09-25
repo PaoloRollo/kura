@@ -162,7 +162,7 @@ export function FeesView({
 
 /** The fee editor, for the vault owner only: `setFee` is onlyOwner. */
 function FeeEditor({ feeBps, maxFeeBps, payout, onDone }: { feeBps: number; maxFeeBps: number; payout: `0x${string}`; onDone: () => void }) {
-  const { send } = useSendTx();
+  const { send, walletKind } = useSendTx();
   const [open, setOpen] = useState(false);
   const [pct, setPct] = useState(String(feeBps / 100));
   const bps = Math.round(Number(pct) * 100);
@@ -179,6 +179,7 @@ function FeeEditor({ feeBps, maxFeeBps, payout, onDone }: { feeBps: number; maxF
       </div>
       <TxStepper
         cta="Save fee"
+        walletKind={walletKind}
         title="Updating the fee"
         disabled={!valid || bps === feeBps}
         steps={[

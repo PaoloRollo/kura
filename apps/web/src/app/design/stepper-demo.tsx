@@ -51,6 +51,7 @@ export function StepperDemo() {
             { id: "c", label: LABELS[2], status: "running" },
             { id: "i", label: "Indexing", status: "pending" },
           ]}
+          walletKind="embedded"
         />
       </div>
       <div className="w-[346px] rounded-2xl border border-border bg-surface p-5">
@@ -95,6 +96,7 @@ export function StepperDemo() {
         <p className="text-[12px] text-text-2">Live: the bid reverts once, then the retry goes through. Below md it opens as a bottom sheet.</p>
         <TxStepper
           steps={demoSteps}
+          walletKind="embedded"
           cta="Place bid"
           title="Placing your bid"
           failedTitle="Your bid didn't go through"

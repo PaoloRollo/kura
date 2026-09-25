@@ -6,7 +6,7 @@ import { createWalletClient, custom, type Address, type Hex, type TransactionRec
 import { sepolia } from "viem/chains";
 import { publicClient } from "@/lib/chain";
 import { useKuraUser } from "@/hooks/use-kura-user";
-import { sendContractTx, sendExternalTx, type EmbeddedWallet, type ExternalWallet, type SendInput, type Sent } from "@/lib/tx-core";
+import { sendContractTx, sendExternalTx, type EmbeddedWallet, type ExternalWallet, type SendInput, type Sent, type WalletKind } from "@/lib/tx-core";
 
 export * from "@/lib/tx-core";
 
@@ -64,5 +64,7 @@ export function useSendTx() {
     [sendTransaction, address, connected],
   );
 
-  return { send, address: address ?? undefined };
+  // Only the embedded wallet's sends are sponsored; the stepper says so only then (see gasNote).
+  const walletKind: WalletKind | null = connected ? (isEmbedded(connected) ? "embedded" : "external") : null;
+  return { send, address: address ?? undefined, walletKind };
 }

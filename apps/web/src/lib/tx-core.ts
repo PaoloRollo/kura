@@ -156,6 +156,17 @@ export function decodeRevert(e: unknown): Revert {
 export type SendInput = { to: Address; abi: Abi | readonly unknown[]; functionName: string; args?: readonly unknown[]; value?: bigint };
 export type UnsignedTx = { to: Address; data: Hex; value: bigint; chainId: number };
 
+/** Which kind of wallet sends: the embedded Privy wallet (gas sponsored) or an external one (pays its own gas). */
+export type WalletKind = "embedded" | "external";
+
+/** The stepper's footer line: only an embedded wallet's sends are sponsored; an external wallet pays its own gas. */
+export function gasNote(kind: WalletKind | null | undefined): string {
+  const wait = "Keep this open, about 12 seconds per step.";
+  if (kind === "embedded") return `Gas sponsored. ${wait}`;
+  if (kind === "external") return `Paid from your wallet's Sepolia ETH. ${wait}`;
+  return wait;
+}
+
 /** A Privy embedded wallet: sends through Privy, sponsored when it can be. */
 export type EmbeddedWallet = { kind: "embedded"; sendTransaction: (tx: UnsignedTx, opts: { sponsor: boolean }) => Promise<{ hash: Hex }> };
 /** An external wallet (MetaMask...): sends unsponsored through its own EIP-1193 provider. */

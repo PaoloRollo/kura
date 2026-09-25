@@ -25,6 +25,26 @@ describe("TxProgress error card", () => {
   });
 });
 
+describe("TxProgress gas note", () => {
+  const running = [{ id: "a", label: "Bid", status: "running" as const }];
+  it("says gas is sponsored only for the embedded wallet", () => {
+    render(<TxProgress title="t" rows={running} walletKind="embedded" />);
+    expect(screen.getByText(/^Gas sponsored\./)).toBeTruthy();
+  });
+
+  it("never claims sponsorship for an external wallet, which pays its own gas", () => {
+    render(<TxProgress title="t" rows={running} walletKind="external" />);
+    expect(screen.queryByText(/sponsored/i)).toBeNull();
+    expect(screen.getByText(/^Paid from your wallet's Sepolia ETH\./)).toBeTruthy();
+  });
+
+  it("makes no gas claim when the wallet is unknown", () => {
+    render(<TxProgress title="t" rows={running} />);
+    expect(screen.queryByText(/sponsored|Paid from/i)).toBeNull();
+    expect(screen.getByText("Keep this open, about 12 seconds per step.")).toBeTruthy();
+  });
+});
+
 describe("TxProgress without a retry", () => {
   it("offers only the way back when retrying would fail the same way", () => {
     const onCancel = vi.fn();

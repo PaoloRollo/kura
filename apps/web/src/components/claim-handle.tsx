@@ -245,7 +245,7 @@ function hintsFrom(handles: Record<string, string>) {
 export function ClaimHandle() {
   const router = useRouter();
   const { address } = useKuraUser();
-  const { send } = useSendTx();
+  const { send, walletKind } = useSendTx();
   const { handles, ready } = useHandlesState();
   const [label, setLabel] = useState("");
   const [check, setCheck] = useAvailability(normalizeHandle(label), address);
@@ -305,6 +305,7 @@ export function ClaimHandle() {
       cta={
         <TxStepper
           steps={steps}
+          walletKind={walletKind}
           cta={`Claim ${label || "your handle"}${label ? `.${PARENT}` : ""}`}
           title="Claiming your handle"
           failedTitle="Your handle wasn't claimed"

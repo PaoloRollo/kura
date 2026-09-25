@@ -98,7 +98,7 @@ export type StationSeed = {
 
 export function ScanStation({ seed }: { seed?: StationSeed }) {
   const { identityToken } = useKuraUser();
-  const { send } = useSendTx();
+  const { send, walletKind } = useSendTx();
   const [step, setStep] = useState<Step>(seed?.step ?? "capture");
   // A seeded preview never loads the embedding model.
   const [model, setModel] = useState<ModelState>(seed ? { status: "ready", device: "wasm" } : { status: "loading", progress: null });
@@ -514,6 +514,7 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
             )}
             <TxStepper
               cta="Mint digital twin"
+              walletKind={walletKind}
               ctaIcon={<StampIcon />}
               ctaClassName="h-12 text-[15px]"
               title="Minting the twin"
