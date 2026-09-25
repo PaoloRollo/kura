@@ -81,10 +81,12 @@ export class TxError extends Error {
   readonly hash?: Hex;
   /** Broadcast, but no receipt yet: it may still be mined. Never re-send; poll the hash instead. */
   readonly pending: boolean;
+  /** How the broadcast transaction's gas is paid, when it was broadcast. */
+  readonly gas?: GasMode;
 
   constructor(
     message: string,
-    opts: { name?: string | null; args?: readonly unknown[]; inner?: Revert["inner"]; hash?: Hex; pending?: boolean; cause?: unknown } = {},
+    opts: { name?: string | null; args?: readonly unknown[]; inner?: Revert["inner"]; hash?: Hex; pending?: boolean; gas?: GasMode; cause?: unknown } = {},
   ) {
     super(message, { cause: opts.cause });
     this.name = "TxError";
@@ -93,6 +95,7 @@ export class TxError extends Error {
     this.inner = opts.inner;
     this.hash = opts.hash;
     this.pending = opts.pending ?? false;
+    this.gas = opts.gas;
   }
 }
 
@@ -326,7 +329,7 @@ export async function sendContractTx(input: SendInput, deps: SenderDeps): Promis
   try {
     receipt = await deps.waitForReceipt(hash);
   } catch (e) {
-    throw new TxError(`still confirming: ${hash}`, { hash, pending: true, cause: e });
+    throw new TxError(`still confirming: ${hash}`, { hash, pending: true, gas, cause: e });
   }
   if (receipt.status !== "success") throw new TxError(`transaction reverted: ${hash}`, { hash });
   return { hash, receipt, gas };
@@ -441,7 +444,7 @@ export async function runSteps(
         break;
       }
       if (receipt.status === "success") {
-        results[i] = { id: s.id, status: "done", hash, blockNumber: receipt.blockNumber };
+        results[i] = { id: s.id, status: "done", hash, blockNumber: receipt.blockNumber, ...(prior.gas ? { gas: prior.gas } : {}) };
         emit();
         continue;
       }
@@ -466,7 +469,7 @@ export async function runSteps(
     } catch (e) {
       const revert = decodeRevert(e);
       if (e instanceof TxError && e.pending && e.hash) {
-        results[i] = { id: s.id, status: "confirming", hash: e.hash, revert, cause: e };
+        results[i] = { id: s.id, status: "confirming", hash: e.hash, revert, cause: e, ...(e.gas ? { gas: e.gas } : {}) };
         emit();
         break;
       }

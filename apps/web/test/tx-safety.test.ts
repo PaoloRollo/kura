@@ -52,7 +52,7 @@ describe("sendContractTx", () => {
     const d = deps({ waitForReceipt: vi.fn(async () => { throw new Error("Timed out while waiting for transaction"); }) });
     const err = await sendContractTx(input, d).catch((e) => e);
     expect(err).toBeInstanceOf(TxError);
-    expect(err).toMatchObject({ hash: H1, pending: true });
+    expect(err).toMatchObject({ hash: H1, pending: true, gas: "sponsored" });
     expect(d.sendTransaction).toHaveBeenCalledTimes(1);
   });
 
@@ -193,6 +193,18 @@ describe("runSteps with a transaction still confirming", () => {
     expect(runA).not.toHaveBeenCalled();
     expect(results[0]).toMatchObject({ status: "done", hash: H1, blockNumber: 11n });
     expect(results[1].status).toBe("done");
+  });
+
+  it("keeps how a confirming step's gas was paid through to done", async () => {
+    const pending = await runSteps(
+      [{ id: "a", label: "A", run: async () => { throw new TxError("still confirming", { hash: H1, pending: true, gas: "self" }); } }],
+      { onStatus: vi.fn() },
+    );
+    expect(pending[0]).toMatchObject({ status: "confirming", hash: H1, gas: "self" });
+    const runA = vi.fn(ok(H2));
+    const resumed = await runSteps([{ id: "a", label: "A", run: runA }], { onStatus: vi.fn(), previous: pending, getReceipt: async () => receipt("success", 12n) });
+    expect(runA).not.toHaveBeenCalled();
+    expect(resumed[0]).toMatchObject({ status: "done", hash: H1, blockNumber: 12n, gas: "self" });
   });
 
   it("on retry re-runs it when the receipt shows a revert", async () => {
