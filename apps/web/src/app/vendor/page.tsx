@@ -21,8 +21,10 @@ export default function VendorHome() {
         <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5">
           <LandmarkIcon className="size-5 text-kin" />
           <h2 className="text-[16px] font-semibold text-text">Vault</h2>
-          <p className="text-[13px] text-text-2">Inventory, handovers and fees arrive with the contracts.</p>
-          <Button variant="disabled" size="md" className="mt-auto w-fit" aria-disabled>Coming soon</Button>
+          <p className="text-[13px] text-text-2">Inventory, handovers and the fees the vault has earned.</p>
+          <Button asChild variant="secondary" size="md" className="mt-auto w-fit">
+            <Link href="/vendor/vault">Open the inventory<ArrowRightIcon /></Link>
+          </Button>
         </div>
       </div>
     </section>
