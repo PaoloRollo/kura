@@ -4,16 +4,16 @@ import type * as React from "react";
 
 import Link from "next/link";
 import { ActivityFeed, ActivityList } from "@/components/activity-feed";
-import { CardArtColumn, CardHeader, CompactHeader, ShardedBy, type Identity } from "@/components/card-header";
-import { AuctionSummary, OwnedByPanel, OwnerPanel, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
+import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
+import { AuctionSummary, OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
 import { HoldersList, OwnershipSummary } from "@/components/holders-list";
 import { IndexerLoading } from "@/components/sync-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { CardData } from "@/hooks/use-card";
+import { ACTIVITY_LIMIT, type CardData } from "@/hooks/use-card";
 import { addresses } from "@/lib/chain";
 import { buildFeed } from "@/lib/activity-feed";
-import { CARD_TABS, agoLong, holdersView, type CardTab } from "@/lib/card-view";
+import { CARD_TABS, agoLong, dateTime, holdersView, lastBuyout, type CardTab } from "@/lib/card-view";
 import { metaCardName, metaTrait } from "@/lib/meta";
 import { cn } from "@/lib/utils";
 
@@ -52,9 +52,9 @@ export function identityOf(c: CardData): Identity {
 
 export function CardLoading() {
   return (
-    <div className="grid gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
-      <Skeleton className="aspect-[63/88] w-full rounded-3xl bg-surface" />
-      <div className="flex flex-col gap-4">
+    <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
+      <Skeleton className="mx-auto aspect-[63/88] w-full max-w-[280px] rounded-3xl bg-surface lg:max-w-none" />
+      <div className="flex min-w-0 flex-col gap-4">
         <Skeleton className="h-6 w-60 bg-surface" />
         <Skeleton className="h-14 w-96 max-w-full bg-surface" />
         <IndexerLoading title="Loading this card" className="max-w-md" />
@@ -94,6 +94,8 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   const isOwner = card.state === "whole" && !!me && card.ownerOf.toLowerCase() === me.toLowerCase();
   const shards = c.sharding && card.state !== "whole" ? c.sharding.totalShards : null;
   const revoked = released || !!c.ensName?.revokedAt;
+  const buyout = lastBuyout(card, c.allShardings, c.activities);
+  const settleOf = (token: string) => c.activities.find((a) => a.kind === "settle" && (a.meta as { shardToken?: string } | null)?.shardToken?.toLowerCase() === token.toLowerCase());
   const feed = buildFeed({ activities: c.activities, transfers: c.transfers, records: c.ensRecords, ctx: { shardings: c.allShardings, ensName: card.ensName, parties: addresses } });
 
   if (tab !== "overview") {
@@ -101,11 +103,20 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
       <div className="flex flex-col gap-7">
         <CompactHeader card={card} identity={identity} shards={shards} />
         <CardTabs tab={tab} href={tabHref} />
-        {tab === "holders" && <HoldersList view={holders} now={now} whole={card.state === "whole" || !c.sharding} />}
-        {tab === "activity" && <ActivityFeed rows={feed} now={now} />}
+        {tab === "holders" && (
+          <HoldersList
+            view={holders}
+            now={now}
+            whole={card.state === "whole" || !c.sharding}
+            buyout={buyout ? { at: buyout.redeem ? dateTime(buyout.redeem.timestamp) : null, href: tabHref("activity") } : null}
+          />
+        )}
+        {tab === "activity" && <ActivityFeed rows={feed} now={now} capped={c.activities.length >= ACTIVITY_LIMIT} />}
         {tab === "auction" && (
           c.sharding ? (
             <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
+          ) : c.allShardings[0] ? (
+            <PastAuction s={c.allShardings[0]} settledAt={(() => { const st = settleOf(c.allShardings[0].shardToken); return st ? dateTime(st.timestamp) : null; })()} />
           ) : (
             <Empty title="No auction yet" body="This card is whole. An auction starts when its owner shards it." />
           )
@@ -133,12 +144,16 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   return (
     <div className="flex flex-col gap-8">
       <CardTabs tab={tab} href={tabHref} />
-      <div className="grid gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
         <CardArtColumn identity={identity} condition={card.condition} released={released}>
           <EnsRecords records={c.ensRecords} revoked={revoked} className="max-lg:hidden" />
         </CardArtColumn>
         <div className="flex min-w-0 flex-col gap-8">
-          <CardHeader card={card} identity={identity} context={context} />
+          <div className="flex flex-col gap-2">
+            <CardHeader card={card} identity={identity} context={context} />
+            {/* Mobile (yV8eD): the credit line sits under the ENS name; on desktop it is under the art. */}
+            <Credit identity={identity} className="lg:hidden" />
+          </div>
           {panel}
           {!released && (
             <div className="grid gap-10 xl:grid-cols-2">

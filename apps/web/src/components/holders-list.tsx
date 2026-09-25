@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AddressName } from "@/components/address-name";
 import { RedemptionMeter, StatTile } from "@/components/kura";
 import { ago, pct, type HolderRow, type HoldersView, type Since } from "@/lib/card-view";
@@ -30,12 +31,24 @@ const TILE = "[&>div:nth-child(2)]:text-[18px]";
  * The Holders tab (oezcX): four stat tiles, then one row per holder with share bar, value at clearing and since.
  * `whole`: the card was never sharded, so it has one owner and no shards.
  */
-export function HoldersList({ view, now, whole }: { view: HoldersView; now: number; whole: boolean }) {
+export function HoldersList({ view, now, whole, buyout }: {
+  view: HoldersView;
+  now: number;
+  whole: boolean;
+  /** A whole card that was bought out: when, and where its activity is. */
+  buyout?: { at: string | null; href: string } | null;
+}) {
   if (whole || view.supply === 0n) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-6">
-        <h3 className="text-[16px] font-semibold text-text">Not sharded, one owner</h3>
-        <p className="mt-1 text-[13px] text-text-2">This card is whole. Holders appear once its owner splits it into shards.</p>
+        <h3 className="text-[16px] font-semibold text-text">{buyout ? "Whole, one owner" : "Not sharded, one owner"}</h3>
+        {buyout ? (
+          <Link href={buyout.href} scroll={false} className="mt-1 block text-[13px] text-text-2 underline-offset-2 hover:text-text hover:underline">
+            {`Bought out${buyout.at ? ` on ${buyout.at}` : ""} · minority holders claim payouts`}
+          </Link>
+        ) : (
+          <p className="mt-1 text-[13px] text-text-2">This card is whole. Holders appear once its owner splits it into shards.</p>
+        )}
       </div>
     );
   }
@@ -162,7 +175,12 @@ export function OwnershipSummary({ view, owner, className }: { view: HoldersView
       </div>
       {!whole && (
         <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4">
-          <RedemptionMeter value={top?.share ?? 0} label={<span className="font-semibold text-text">Distance to redemption</span>} />
+          <RedemptionMeter
+            value={top?.share ?? 0}
+            label={<span className="font-semibold text-text">Distance to redemption</span>}
+            status={top?.canRedeem ? `Eligible · ${pct(top.share)} ≥ 80%` : `${pct(top?.share ?? 0)} · needs 80%`}
+            fillClassName="bg-[linear-gradient(90deg,var(--kura-kin),var(--kura-s7))]"
+          />
           <p className="text-[12px] text-text-2">
             {top?.canRedeem
               ? `The top holder can buy out the other ${shardsFixed(others, others % 10n ** 18n === 0n ? 0 : 1)} shards and take the physical card.`

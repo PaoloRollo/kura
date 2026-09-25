@@ -19,6 +19,30 @@ export function custodians(shardings: readonly Pick<Sharding, "auction">[], vaul
   return new Set([lc(vault), ...shardings.map((s) => lc(s.auction))]);
 }
 
+/**
+ * The card's current sharding: the one its shard token points at, else the latest. None once the card is whole again
+ * (after a buyout the latest sharding's token is burned; its holders and auction are history, not the present).
+ */
+export function currentSharding<T extends { shardToken: string }>(card: { state: string; shardToken: string | null } | null, shardings: readonly T[]): T | null {
+  if (!card || card.state === "whole") return null;
+  return shardings.find((s) => card.shardToken && lc(s.shardToken) === lc(card.shardToken)) ?? shardings[0] ?? null;
+}
+
+type ActivityLike = { kind: string; timestamp: number; txHash: string; meta: unknown };
+
+/** For a whole card that was sharded before: the sharding that was bought out (latest with a redeemer) and its redeem. */
+export function lastBuyout<S extends { shardToken: string; redeemer: string | null }, A extends ActivityLike>(
+  card: { state: string },
+  shardings: readonly S[],
+  activities: readonly A[],
+): { sharding: S; redeem: A | null } | null {
+  if (card.state !== "whole") return null;
+  const sharding = shardings.find((s) => s.redeemer != null);
+  if (!sharding) return null;
+  const redeem = activities.find((a) => a.kind === "redeem" && lc(String((a.meta as { shardToken?: string } | null)?.shardToken ?? "")) === lc(sharding.shardToken)) ?? null;
+  return { sharding, redeem };
+}
+
 /** Redemption needs one holder at 80% of the supply: `balance * 5 >= supply * 4` (the contract's rule). */
 export const canRedeem = (balance: bigint, supply: bigint) => supply > 0n && balance * 5n >= supply * 4n;
 
@@ -159,6 +183,14 @@ export function agoLong(timestamp: number, now: number): string {
   if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
   const d = Math.floor(s / 86_400);
   return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+/** "Sep 26, 16:04" in the viewer's time zone. */
+export function dateTime(timestamp: number): string {
+  const d = new Date(timestamp * 1000);
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date}, ${time}`;
 }
 
 const SECONDS_PER_BLOCK = 12;

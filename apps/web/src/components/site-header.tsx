@@ -135,7 +135,9 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
   const nav = showNav ? NAV[role] : [];
   // Claim handle (D0ZWe) is a full-screen step on mobile: no top bar, wallet chip or tab bar.
   const fullScreenStep = bare === "/app/onboarding";
-  const tabs = showNav && !fullScreenStep ? TABS[role] : [];
+  // A card page (yV8eD) is a detail screen: its own CTAs pin to the bottom on mobile instead of the tab bar.
+  const detail = bare.startsWith("/app/cards/");
+  const tabs = showNav && !fullScreenStep && !detail ? TABS[role] : [];
   return (
     <>
       <TopBar

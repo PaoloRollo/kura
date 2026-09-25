@@ -8,9 +8,10 @@ import { q96ToUsdcPerShard } from "@kura/shared";
 import { AddressName } from "@/components/address-name";
 import { Button } from "@/components/kura";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import type { CardData } from "@/hooks/use-card";
+import type { CardData, ShardingRow } from "@/hooks/use-card";
 import { explorerTx } from "@/lib/chain";
 import { countdown, money, shardsFixed, shortHash } from "@/lib/format";
+import { dateTime } from "@/lib/card-view";
 import { priceSourceLabel, quoteUsdc, vsMarket } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
@@ -43,12 +44,13 @@ export function OwnerPanel({ c }: { c: CardData }) {
   const [pickup, setPickup] = useState(false);
   const id = c.card!.id.toString();
   return (
-    <Panel className="flex flex-col gap-6 p-6 md:p-7">
+    // Mobile (yV8eD): stats unboxed, the two CTAs pinned to the bottom of the screen.
+    <Panel className="flex flex-col gap-6 p-6 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0 md:p-7">
       <div className="grid grid-cols-2 gap-6">
         <Stat label="You own" value="100%" sub="Whole card, in the vault" />
         <MarketStat c={c} />
       </div>
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:border-t max-md:border-border max-md:bg-bg/95 max-md:px-4 max-md:pt-4 max-md:pb-[calc(1rem+env(safe-area-inset-bottom))] max-md:backdrop-blur sm:flex-row">
         <Button asChild variant="primary" size="md" className="sm:flex-1">
           <Link href={`/app/cards/${id}/shard`}><LayersIcon aria-hidden />Shard this card</Link>
         </Button>
@@ -139,6 +141,25 @@ export function ShardedSummary({ c }: { c: CardData }) {
   );
 }
 
+/** A bought-out sharding's auction, shown as history on a card that is whole again. */
+export function PastAuction({ s, settledAt }: { s: ShardingRow; settledAt: string | null }) {
+  const clearing = s.clearingPriceQ96 != null && s.graduated !== false ? q96ToUsdcPerShard(s.clearingPriceQ96) : null;
+  return (
+    <Panel className="flex flex-col gap-6 p-6 md:p-7">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-[14px] font-semibold text-text-2">Past auction · history</h2>
+        {settledAt && <span className="text-[12px] text-muted-foreground">settled {settledAt}</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-6 lg:grid-cols-4">
+        <Stat label="Clearing" value={clearing != null ? money(clearing, 0) : "n/a"} sub={s.graduated === false ? "Reserve not met · refunded" : "per shard"} />
+        <Stat label="Raised" value={money(s.raisedUsdc ?? 0n, 0)} sub={`fee ${money(s.feeUsdc ?? 0n)}`} />
+        <Stat label="Shards" value={String(s.totalShards)} sub={`${s.forSale} were for sale`} />
+        <Stat label="Buyout" value={s.buyoutPerShard != null ? `${money(s.buyoutPerShard, 0)} / shard` : "n/a"} sub={s.payoutUsdc != null ? `paid ${money(s.payoutUsdc, 0)}` : undefined} />
+      </div>
+    </Panel>
+  );
+}
+
 /** Released: the card left the vault. Task 8 fills in the handover details. */
 export function ReleasedSummary({ c }: { c: CardData }) {
   const s = c.sharding;
@@ -150,7 +171,7 @@ export function ReleasedSummary({ c }: { c: CardData }) {
         <div className="flex flex-col gap-1">
           <h2 className="font-display text-[26px] font-semibold text-text">This card left the vault</h2>
           <p className="inline-flex flex-wrap items-center gap-1 text-[14px] text-text-2">
-            Handed to <AddressName address={c.card!.beneficialOwner} avatar={false} copyable={false} className="[&>span]:font-sans [&>span]:text-[14px] [&>span]:text-text-2" /> at the Tokyo counter, after a Passport check.
+            Handed to <AddressName address={c.card!.beneficialOwner} avatar={false} copyable={false} className="[&>span]:font-sans [&>span]:text-[14px] [&>span]:text-text-2" /> at the Tokyo counter{release ? ` on ${dateTime(release.timestamp)}` : ""}, after a Passport check.
           </p>
         </div>
       </div>

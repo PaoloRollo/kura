@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: undefined }) }));
 
 import { CardNotFound, CardPageView } from "@/components/card-page-view";
+import { ACTIVITY_LIMIT } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
 import type { CardTab } from "@/lib/card-view";
 import { FIXTURE_HEAD, HANDLES, KENJI, PAOLO, cardFixture, type PreviewState } from "@/app/design/card/fixtures";
@@ -104,10 +105,45 @@ describe("CardPageView", () => {
     expect(screen.getAllByRole("listitem").filter((li) => li.textContent?.match(/(Bid|Claimed|Exited|Settled|Transfer|ENS record) ·/)).length).toBe(6);
   });
 
+  it("says 500+ when the activity query hit its limit", () => {
+    const c = cardFixture("sharded", NOW);
+    const many = Array.from({ length: ACTIVITY_LIMIT }, (_, i) => ({ ...c.activities[0]!, id: `0x${i}-0`, logIndex: i }));
+    render(
+      <HandlesFixture.Provider value={HANDLES}>
+        <CardPageView c={{ ...c, activities: many, transfers: [], ensRecords: [] }} me={PAOLO} now={NOW} block={FIXTURE_HEAD} tab="activity" tabHref={(t) => `?tab=${t}`} />
+      </HandlesFixture.Provider>,
+    );
+    expect(screen.getByText("Showing 1–10 of 500+ events")).toBeTruthy();
+  });
+
   it("explains an empty activity feed", () => {
     renderCard("empty", { tab: "activity" });
     expect(screen.getByText("No activity yet")).toBeTruthy();
     expect(screen.getByText("Showing 0–0 of 0 events")).toBeTruthy();
+  });
+
+  it("shows a card that is whole again after a buyout as one owner, with no redemption meter", () => {
+    renderCard("whole-after-buyout");
+    expect(screen.getByText("Whole")).toBeTruthy();
+    expect(screen.getByText("one owner")).toBeTruthy();
+    expect(screen.queryByText("Distance to redemption")).toBeNull();
+    expect(screen.queryByText(/1\.5 · 9\.4%/)).toBeNull();
+    expect(screen.getByRole("link", { name: /Shard this card/ })).toBeTruthy();
+  });
+
+  it("says a bought-out card's Holders are one owner and links the buyout to the activity", () => {
+    renderCard("whole-after-buyout", { tab: "holders" });
+    expect(screen.getByText("Whole, one owner")).toBeTruthy();
+    const link = screen.getByRole("link", { name: /^Bought out on .+ · minority holders claim payouts$/ });
+    expect(link.getAttribute("href")).toBe("/app/cards/1?tab=activity");
+    expect(screen.queryByText("can redeem")).toBeNull();
+  });
+
+  it("shows the bought-out sharding's auction as history", () => {
+    renderCard("whole-after-buyout", { tab: "auction" });
+    expect(screen.getByText("Past auction · history")).toBeTruthy();
+    expect(screen.getByText("$1,712 / shard")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open the auction" })).toBeNull();
   });
 
   it("says when a card does not exist", () => {

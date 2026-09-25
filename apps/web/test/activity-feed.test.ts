@@ -60,7 +60,7 @@ describe("buildFeed", () => {
   it("parses the tx hash and log index of a shard transfer from its id", () => {
     const t = feed.find((r) => r.key === "0xdead-7")!;
     expect(t).toMatchObject({ txHash: "0xdead", logIndex: 7, title: "Transfer" });
-    expect(text(t.who)).toBe(`<${KENJI}> → <${AIKO}>`);
+    expect(text(t.who)).toBe(`<${KENJI}>→<${AIKO}>`);
     expect(text(t.detail)).toBe("0.5 shards");
   });
 
@@ -83,11 +83,24 @@ describe("buildFeed", () => {
     expect(d("redeem")).toBe("buyout $1,712/shard · paid $5,136");
     expect(d("payout")).toBe("$2,568 for 1.5 shards");
     expect(d("named")).toBe("black-lotus-lea-1.kura.eth");
-    expect(d("mint")).toBe(`to <${PAOLO}>`);
+    expect(d("mint")).toBe(`to<${PAOLO}>`);
     expect(text(feed.find((r) => r.kind === "mint")!.who)).toBe(`vendor<${VENDOR}>`);
     expect(text(feed.find((r) => r.kind === "named")!.who)).toBe(`<${VAULT}>`);
-    expect(text(feed.find((r) => r.kind === "transfer")!.who)).toBe(`<${PAOLO}> → <${AIKO}>`);
+    expect(text(feed.find((r) => r.kind === "transfer")!.who)).toBe(`<${PAOLO}>→<${AIKO}>`);
     expect(text(feed.find((r) => r.kind === "settle")!.who)).toBe(`anyone<${KENJI}>`);
+  });
+
+  it("has a short who for the Overview list: Minted · vendor, Settled · <caller>", () => {
+    expect(text(feed.find((r) => r.kind === "mint")!.whoShort)).toBe("vendor");
+    expect(text(feed.find((r) => r.kind === "settle")!.whoShort)).toBe(`<${KENJI}>`);
+    expect(text(feed.find((r) => r.key === "record-condition")!.whoShort)).toBe("vendor");
+    expect(text(feed.find((r) => r.kind === "bid")!.whoShort)).toBe(`<${KENJI}>`);
+  });
+
+  it("orders ENS records of one block by key", () => {
+    const recs = ["url", "addr", "condition", "avatar"].map((key) => ({ key, value: "v", updatedBlock: 9n, updatedAt: 1 }));
+    const rows = buildFeed({ activities: [], transfers: [], records: recs, ctx });
+    expect(rows.map((r) => r.key)).toEqual(["record-addr", "record-avatar", "record-condition", "record-url"]);
   });
 
   it("says when the reserve was not met", () => {

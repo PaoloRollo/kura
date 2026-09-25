@@ -5,6 +5,8 @@ import {
   agoLong,
   blocksToDuration,
   canRedeem,
+  currentSharding,
+  lastBuyout,
   holdersView,
   orderRecords,
   parseLogId,
@@ -127,5 +129,30 @@ describe("formatting", () => {
     expect(parseTab("holders")).toBe("holders");
     expect(parseTab("nope")).toBe("overview");
     expect(parseTab(null)).toBe("overview");
+  });
+});
+
+describe("whole again after a buyout", () => {
+  const old = { shardToken: TOKEN, auction: AUCTION, graduated: true, clearingPriceQ96: 1n, redeemer: PAOLO, createdAt: 10 };
+  const older = { ...old, shardToken: "0x00000000000000000000000000000000000005a0" as const, auction: OLD_AUCTION, redeemer: null, createdAt: 5 };
+
+  it("has no current sharding once the card is whole", () => {
+    expect(currentSharding({ state: "whole", shardToken: null }, [old, older])).toBeNull();
+    expect(currentSharding(null, [old])).toBeNull();
+  });
+
+  it("follows the card's shard token while sharded, else the latest sharding", () => {
+    expect(currentSharding({ state: "sharded", shardToken: older.shardToken }, [old, older])).toBe(older);
+    expect(currentSharding({ state: "auctioning", shardToken: null }, [old, older])).toBe(old);
+  });
+
+  it("finds the buyout that made the card whole, with its redeem activity", () => {
+    const redeem = { kind: "redeem" as const, timestamp: 1234, txHash: "0xabc" as const, meta: { shardToken: TOKEN } };
+    const b = lastBuyout({ state: "whole" }, [old, older], [{ kind: "bid", timestamp: 1, txHash: "0x1", meta: {} }, redeem]);
+    expect(b).toEqual({ sharding: old, redeem });
+    expect(lastBuyout({ state: "sharded" }, [old], [redeem])).toBeNull();
+    expect(lastBuyout({ state: "whole" }, [], [])).toBeNull();
+    // A sharding without a redeemer (e.g. an unsold auction) is not a buyout.
+    expect(lastBuyout({ state: "whole" }, [older], [])).toBeNull();
   });
 });

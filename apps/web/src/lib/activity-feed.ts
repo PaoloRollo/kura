@@ -31,6 +31,8 @@ export type FeedRow = {
   kind: FeedKind;
   title: string;
   who: Part[];
+  /** The Overview list's shorter who ("Minted · vendor", "Settled · kenji.kura.eth"). */
+  whoShort: Part[];
   detail: Part[];
   /** Null for ENS records (the indexer keeps only the latest value, without its transaction). */
   txHash: Hex | null;
@@ -76,6 +78,14 @@ export type FeedContext = {
   parties: { vendor: string; signer: string; cardVault: string };
 };
 
+/** A role label in front ("vendor · kura.eth") is enough on its own; "anyone" (permissionless settle) is dropped. */
+function shortWho(who: Part[]): Part[] {
+  const [first, ...rest] = who;
+  if (first === "anyone") return rest;
+  if (typeof first === "string" && first !== "→") return [first];
+  return who;
+}
+
 function describe(a: Activity, ctx: FeedContext): { who: Part[]; detail: Part[] } {
   const m = (a.meta ?? {}) as Record<string, unknown>;
   const actor = { address: a.actor };
@@ -115,9 +125,9 @@ function describe(a: Activity, ctx: FeedContext): { who: Part[]; detail: Part[] 
       return { who: [{ address: ctx.parties.cardVault as Hex }], detail: [label && ctx.ensName.startsWith(`${label}.`) ? ctx.ensName : label] };
     }
     case "mint":
-      return { who: ["vendor", { address: ctx.parties.vendor as Hex }], detail: ["to ", actor] };
+      return { who: ["vendor", { address: ctx.parties.vendor as Hex }], detail: ["to", actor] };
     case "transfer":
-      return { who: [actor, " → ", ...(typeof m.to === "string" ? [{ address: m.to as Hex }] : [])], detail: ["whole card"] };
+      return { who: [actor, "→", ...(typeof m.to === "string" ? [{ address: m.to as Hex }] : [])], detail: ["whole card"] };
     case "release":
       return { who: [actor], detail: ["picked up at the vault"] };
   }
@@ -136,30 +146,34 @@ function recordWho(key: string, parties: FeedContext["parties"]): Part[] {
  * - every activity of the card;
  * - shard transfers of all its shardings' tokens, except mints, burns and moves from or to its auctions or the vault
  *   (claims, settlement and payouts already cover those);
- * - ENS records, placed at their updatedBlock after that block's logs, without a transaction.
+ * - ENS records, placed at their updatedBlock after that block's logs (by key among themselves), without a transaction.
  */
 export function buildFeed(p: { activities: readonly Activity[]; transfers: readonly Transfer[]; records: readonly Record_[]; ctx: FeedContext }): FeedRow[] {
   const excluded = custodians(p.ctx.shardings, p.ctx.parties.cardVault);
   const tokens = new Set(p.ctx.shardings.map((s) => lc(s.shardToken)));
-  const rows: FeedRow[] = p.activities.map((a) => ({
-    key: a.id, kind: a.kind, title: TITLES[a.kind], ...describe(a, p.ctx), txHash: a.txHash, blockNumber: a.blockNumber, logIndex: a.logIndex, timestamp: a.timestamp,
-  }));
+  const rows: FeedRow[] = p.activities.map((a) => {
+    const d = describe(a, p.ctx);
+    return { key: a.id, kind: a.kind, title: TITLES[a.kind], ...d, whoShort: shortWho(d.who), txHash: a.txHash, blockNumber: a.blockNumber, logIndex: a.logIndex, timestamp: a.timestamp };
+  });
   for (const t of p.transfers) {
     if (!tokens.has(lc(t.shardToken))) continue;
     if (lc(t.from) === ZERO || lc(t.to) === ZERO || excluded.has(lc(t.from)) || excluded.has(lc(t.to))) continue;
     const { txHash, logIndex } = parseLogId(t.id);
     rows.push({
-      key: t.id, kind: "shardTransfer", title: TITLES.shardTransfer, who: [{ address: t.from }, " → ", { address: t.to }], detail: [sh(t.amount)],
+      key: t.id, kind: "shardTransfer", title: TITLES.shardTransfer, who: [{ address: t.from }, "→", { address: t.to }], whoShort: [{ address: t.from }, "→", { address: t.to }], detail: [sh(t.amount)],
       txHash, blockNumber: t.blockNumber, logIndex, timestamp: t.timestamp,
     });
   }
   for (const r of p.records) {
+    const who = recordWho(r.key, p.ctx.parties);
     rows.push({
-      key: `record-${r.key}`, kind: "record", title: TITLES.record, who: recordWho(r.key, p.ctx.parties), detail: [`${r.key} = ${r.value}`],
+      key: `record-${r.key}`, kind: "record", title: TITLES.record, who, whoShort: shortWho(who), detail: [`${r.key} = ${r.value}`],
       txHash: null, blockNumber: r.updatedBlock, logIndex: Number.MAX_SAFE_INTEGER, timestamp: r.updatedAt,
     });
   }
-  return rows.sort((a, b) => (a.blockNumber === b.blockNumber ? b.logIndex - a.logIndex : a.blockNumber > b.blockNumber ? -1 : 1));
+  // Records share a block's end position; among themselves they go by key, so the order is stable.
+  return rows.sort((a, b) =>
+    a.blockNumber !== b.blockNumber ? (a.blockNumber > b.blockNumber ? -1 : 1) : b.logIndex - a.logIndex || a.key.localeCompare(b.key));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

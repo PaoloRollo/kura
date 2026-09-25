@@ -85,15 +85,22 @@ export function CardArtColumn({ identity, condition, released, children }: { ide
           <div className="mx-auto aspect-[63/88] w-full max-w-[230px] animate-pulse md:max-w-[340px] rounded-[4.5%/3.3%] bg-surface-2" />
         )}
       </div>
-      <p className="flex items-center gap-2 text-[13px] text-text-2">
+      <p className="flex items-center gap-2 text-[13px] text-text-2 max-lg:hidden">
         <ShieldCheckIcon aria-hidden className="size-4 shrink-0 text-kin" />
         {released ? "Released from the Kura vault" : "Held in the Kura vault"} · Tokyo · Verified {condition}
       </p>
-      <p className="text-[11px] text-muted-foreground">
-        {identity.artist ? `Illustrated by ${identity.artist} · ` : ""}© Wizards of the Coast · via Scryfall
-      </p>
+      <Credit identity={identity} className="max-lg:hidden" />
       {children}
     </div>
+  );
+}
+
+/** "Illustrated by <artist> · © Wizards of the Coast · via Scryfall" ("Illustrated by" left out when unknown). */
+export function Credit({ identity, className }: { identity: Identity; className?: string }) {
+  return (
+    <p className={cn("text-[11px] text-muted-foreground", className)}>
+      {identity.artist ? `Illustrated by ${identity.artist} · ` : ""}© Wizards of the Coast · via Scryfall
+    </p>
   );
 }
 

@@ -22,7 +22,7 @@ const NODE: Hex = "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1f
 const S = 10n ** 18n;
 const usd = (dollars: number) => BigInt(Math.round(dollars * 100)) * 10_000n;
 
-export const PREVIEW_STATES = ["whole-owner", "whole", "auctioning", "sharded", "released", "empty", "loading", "notfound"] as const;
+export const PREVIEW_STATES = ["whole-owner", "whole", "whole-after-buyout", "auctioning", "sharded", "released", "empty", "loading", "notfound"] as const;
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /** Blocks at 12 s: the fixture's "now" is block HEAD at `now` seconds. */
@@ -31,9 +31,13 @@ const HEAD = 7_412_880n;
 export function cardFixture(state: PreviewState, now: number): CardData {
   const at = (secondsAgo: number) => now - secondsAgo;
   const blockAgo = (secondsAgo: number) => HEAD - BigInt(Math.floor(secondsAgo / 12));
-  const whole = state === "whole" || state === "whole-owner" || state === "empty";
+  // Whole again after paolo bought out the minority holders: the sharding is history, not current.
+  const buyout = state === "whole-after-buyout";
+  const whole = state === "whole" || state === "whole-owner" || state === "empty" || buyout;
   const auctioning = state === "auctioning";
   const released = state === "released";
+  const redeemed = released || buyout;
+  const sharded = !whole || buyout; // was ever sharded
   const owner = state === "whole" ? KENJI : PAOLO;
 
   const card = {
@@ -76,9 +80,9 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     clearingUsdcPerShard: auctioning ? null : usd(1712),
     raisedUsdc: auctioning ? null : usd(5136),
     feeUsdc: auctioning ? null : usd(128.4),
-    buyoutPerShard: released ? usd(1712) : null,
-    payoutUsdc: released ? usd(5136) : null,
-    redeemer: released ? PAOLO : null,
+    buyoutPerShard: redeemed ? usd(1712) : null,
+    payoutUsdc: redeemed ? usd(5136) : null,
+    redeemer: redeemed ? PAOLO : null,
     createdAt: SHARD_AT.ts,
     updatedBlock: HEAD,
     updatedAt: at(60),
@@ -110,7 +114,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     });
   };
 
-  if (!whole) {
+  if (sharded) {
     activities.push(act("shard", PAOLO, auctioning ? 14 * 60 : 7 * 86_400, 3n * S, { totalShards: 16, forSale: 3, auction: AUCTION, shardToken: TOKEN }, SHARD_AT.b));
     tr(ZERO, PAOLO, 13n * S, auctioning ? 14 * 60 : 7 * 86_400);
     tr(ZERO, AUCTION, 3n * S, auctioning ? 14 * 60 : 7 * 86_400);
@@ -128,13 +132,13 @@ export function cardFixture(state: PreviewState, now: number): CardData {
       activities.push(act("exit", X7A3, 21 * 60, 0n, { auction: AUCTION, bidId: "2", tokensFilled: (1n * S).toString() }));
       activities.push(act("claim", X7A3, 21 * 60, 1n * S, { auction: AUCTION, bidId: "2" }));
       tr(AUCTION, X7A3, 1n * S, 21 * 60);
-      tr(KENJI, AIKO, S / 2n, 8 * 60);
+      tr(KENJI, AIKO, S / 2n, redeemed ? 18 * 60 : 8 * 60);
     }
   }
-  if (released) {
-    activities.push(act("redeem", PAOLO, 90 * 60, usd(5136), { buyoutPerShard: usd(1712).toString(), fee: usd(128.4).toString(), shardToken: TOKEN }));
-    activities.push(act("payout", KENJI, 80 * 60, usd(2568), { shardUnits: (3n * S / 2n).toString(), shardToken: TOKEN }));
-    activities.push(act("release", PAOLO, 60 * 60, null, null));
+  if (redeemed) {
+    activities.push(act("redeem", PAOLO, 15 * 60, usd(5136), { buyoutPerShard: usd(1712).toString(), fee: usd(128.4).toString(), shardToken: TOKEN }));
+    activities.push(act("payout", KENJI, 12 * 60, usd(2568), { shardUnits: (3n * S / 2n).toString(), shardToken: TOKEN }));
+    if (released) activities.push(act("release", PAOLO, 10 * 60, null, null));
   }
   activities.sort((a, b) => (a.blockNumber === b.blockNumber ? b.logIndex - a.logIndex : a.blockNumber > b.blockNumber ? -1 : 1));
 
@@ -153,7 +157,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     rec("condition", "NM", 3 * 3600),
     rec("language", "en", 7 * 86_400 + 600),
     rec("vault.state", vaultState, 60),
-    ...(whole || auctioning ? [] : [rec("vault.clearing_usdc", "1712000000", 22 * 60)]),
+    ...(!sharded || auctioning ? [] : [rec("vault.clearing_usdc", "1712000000", 22 * 60)]),
     rec("appraisal.usd", "25000.00", 2 * 86_400),
     rec("avatar", "https://cards.scryfall.io/normal/front/b/0/b0faa7f2-b547-42c4-a810-839da50dadfe.jpg", 7 * 86_400 + 600),
     rec("description", "Black Lotus, Limited Edition Alpha", 7 * 86_400 + 600),
@@ -176,7 +180,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   return {
     card,
     sharding: whole ? null : sharding,
-    allShardings: whole ? [] : [sharding],
+    allShardings: sharded ? [sharding] : [],
     meta: {
       name: "Black Lotus (LEA) #1",
       description: "Black Lotus, Limited Edition Alpha #232, NM, held in the Kura vault.",
@@ -197,7 +201,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     ensNode: NODE,
     ensName: {
       label: card.label, labelHash: hash(0x1abe1), kind: "card", node: NODE, tokenId: 1n, owner: addresses.cardNames as Hex,
-      resolver: addresses.ensResolver as Hex, cardId: 1n, expiry: null, registeredAt: MINT.ts, revokedAt: released ? at(60 * 60) : null, updatedBlock: HEAD, updatedAt: at(60),
+      resolver: addresses.ensResolver as Hex, cardId: 1n, expiry: null, registeredAt: MINT.ts, revokedAt: released ? at(10 * 60) : null, updatedBlock: HEAD, updatedAt: at(60),
     },
     ensRecords: state === "empty" ? [] : ensRecords,
     isLoading: state === "loading",

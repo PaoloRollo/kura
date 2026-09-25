@@ -30,12 +30,12 @@ function KindIcon({ kind }: { kind: FeedKind }) {
 /** Row text: strings as they are, addresses by their Kura name; parts in `who` are joined with " · ". */
 function Parts({ parts, join = "", className }: { parts: Part[]; join?: string; className?: string }) {
   return (
-    <span className={cn("inline-flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-[12px] text-text-2", className)}>
+    <span className={cn("inline-flex max-w-full min-w-0 flex-wrap items-center gap-x-1 font-mono text-[12px] text-text-2", className)}>
       {parts.map((p, i) => (
-        <span key={i} className="inline-flex min-w-0 items-center gap-x-1">
+        <span key={i} className="inline-flex max-w-full min-w-0 items-center gap-x-1">
           {i > 0 && join && <span>{join}</span>}
           {typeof p === "string" ? (
-            <span className="whitespace-pre">{p}</span>
+            <span className="min-w-0 truncate" title={p}>{p}</span>
           ) : (
             <AddressName address={p.address} avatar={false} copyable={false} maxWidthClassName="max-w-[11rem]" className="[&>span]:text-[12px] [&>span]:text-text-2" />
           )}
@@ -63,7 +63,7 @@ export function ActivityList({ rows, now, limit = 6 }: { rows: readonly FeedRow[
   return (
     <ul className="flex flex-col">
       {rows.slice(0, limit).map((r) => {
-        const w = whoParts(r.who);
+        const w = whoParts(r.whoShort);
         return (
           <li key={r.key} className="flex items-center gap-3 border-b border-border py-3 last:border-0">
             <KindIcon kind={r.kind} />
@@ -82,7 +82,12 @@ export function ActivityList({ rows, now, limit = 6 }: { rows: readonly FeedRow[
 }
 
 /** The Activity tab (gmKpU): filter pills, one row per event, and client-side pagination with a Rows selector. */
-export function ActivityFeed({ rows, now }: { rows: readonly FeedRow[]; now: number }) {
+export function ActivityFeed({ rows, now, capped = false }: {
+  rows: readonly FeedRow[];
+  now: number;
+  /** The activities query hit its limit: there may be more events than are loaded. */
+  capped?: boolean;
+}) {
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState<number>(PAGE_SIZES[0]);
@@ -133,7 +138,7 @@ export function ActivityFeed({ rows, now }: { rows: readonly FeedRow[]; now: num
           </div>
         )}
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3.5 text-[12px] text-text-2">
-          <span>Showing {p.from}–{p.to} of {p.total} events</span>
+          <span>Showing {p.from}–{p.to} of {p.total}{capped ? "+" : ""} events</span>
           <nav aria-label="Pages" className="flex items-center gap-1.5">
             <PageButton label="Previous page" disabled={p.page <= 1} onClick={() => setPage(p.page - 1)}><ChevronLeftIcon className="size-3.5" /></PageButton>
             {pageWindow(p.page, p.pages).map((n, i) =>

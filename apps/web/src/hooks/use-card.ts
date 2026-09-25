@@ -7,6 +7,7 @@ import { usePonderQuery } from "@ponder/react";
 import type { CardAttributes, CardAttributesMap } from "@/lib/card-attributes";
 import type { CardMetadata } from "@/lib/meta";
 import type { PriceQuote } from "@/lib/pricing";
+import { currentSharding } from "@/lib/card-view";
 import { schema, t, type Row } from "@/lib/ponder";
 import { useKuraUser } from "@/hooks/use-kura-user";
 
@@ -32,7 +33,7 @@ export const ACTIVITY_LIMIT = 500;
 /** Everything the card page shows about one card. `useCard` builds it live; /design previews pass fixtures. */
 export type CardData = {
   card: CardRow | null;
-  /** The card's current sharding (the latest one), or null for a card never sharded. */
+  /** The card's current sharding, or null for a whole card (never sharded, or whole again after a buyout). */
   sharding: ShardingRow | null;
   /** Every sharding of this card, newest first (payouts of earlier ones stay claimable). */
   allShardings: ShardingRow[];
@@ -73,7 +74,6 @@ export function useCard(id: bigint): CardData {
     queryFn: useCallback((db: Db) => db.select().from(t(schema.cards)).where(eq(t(schema.cards.id), id)).limit(1) as Promise<CardRow[]>, [id]),
   });
   const row = card.data?.[0] ?? null;
-  const shardToken = row?.shardToken ?? null;
 
   const shardingRows = usePonderQuery({
     queryFn: useCallback(
@@ -82,8 +82,9 @@ export function useCard(id: bigint): CardData {
     ),
   });
   const allShardings = shardingRows.data ?? [];
-  const current = allShardings.find((s) => s.shardToken === shardToken) ?? allShardings[0] ?? null;
-  const token = (shardToken ?? current?.shardToken ?? ZERO_ADDRESS) as `0x${string}`;
+  // Null once the card is whole again: a bought-out sharding's holders and auction are history (see lastBuyout).
+  const current = currentSharding(row, allShardings);
+  const token = (current?.shardToken ?? ZERO_ADDRESS) as `0x${string}`;
   const auction = (current?.auction ?? ZERO_ADDRESS) as `0x${string}`;
   const tokens = allShardings.length > 0 ? allShardings.map((s) => s.shardToken) : [ZERO_ADDRESS as `0x${string}`];
   const tokensKey = tokens.join(",");
