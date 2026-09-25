@@ -42,7 +42,17 @@ export function manifestFor(spec: EmbedSpec): Pick<CardIndexManifest, "model" | 
   };
 }
 
-/** True when an index was built with exactly this embedding recipe, so its vectors are comparable to queries. */
-export function manifestMatchesSpec(m: Pick<CardIndexManifest, "model" | "arch" | "dtype" | "dims" | "preprocessing">, spec: EmbedSpec): boolean {
+/**
+ * True when an index was built with exactly this embedding recipe, so its vectors are comparable to
+ * queries. When `spec.image` is given, the manifest's Scryfall image size (small vs normal source
+ * images) must match it too — a build from the other size is a different recipe even though the
+ * preprocessing is identical. Left unset, the image size is not checked (index-store's resume check,
+ * which only ever compares against the recipe it is about to build with).
+ */
+export function manifestMatchesSpec(
+  m: Pick<CardIndexManifest, "model" | "arch" | "dtype" | "dims" | "preprocessing" | "image">,
+  spec: EmbedSpec & { image?: CardIndexManifest["image"] },
+): boolean {
+  if (spec.image && spec.image !== m.image) return false;
   return JSON.stringify(manifestFor(spec)) === JSON.stringify({ model: m.model, arch: m.arch, dtype: m.dtype, dims: m.dims, preprocessing: m.preprocessing });
 }

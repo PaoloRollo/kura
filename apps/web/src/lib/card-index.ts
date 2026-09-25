@@ -31,8 +31,11 @@ async function load(dir: string): Promise<LoadedCardIndex> {
   } catch (e) {
     throw new IndexUnavailableError(`card index not found or unreadable in ${dir} (build it with pnpm --filter web build:index): ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (!manifestMatchesSpec(manifest, CARD_EMBED_SPEC)) {
-    throw new IndexUnavailableError(`card index in ${dir} was built with ${manifest.model} and a different recipe than the station uses (${CARD_EMBED_SPEC.model}); rebuild it`);
+  // The shipped index is built from Scryfall's `normal` images (the build script's default, and what
+  // scripts/eval-embeddings.mts measured best); a `small` build is a different recipe even though the
+  // preprocessing spec is identical.
+  if (!manifestMatchesSpec(manifest, { ...CARD_EMBED_SPEC, image: "normal" })) {
+    throw new IndexUnavailableError(`card index in ${dir} was built with ${manifest.model} (${manifest.image} images) and a different recipe than the station uses (${CARD_EMBED_SPEC.model}, normal images); rebuild it`);
   }
   const vectors = decodeVectors(new Uint8Array(bin.buffer, bin.byteOffset, bin.byteLength), manifest.dims);
   if (vectors.count !== meta.length || vectors.count !== manifest.count) {
