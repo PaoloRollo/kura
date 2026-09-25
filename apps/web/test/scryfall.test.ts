@@ -52,7 +52,7 @@ describe("Scryfall", () => {
     expect(calls[0]).toContain("set=lea");
   });
 
-  it("uses the first face image for split cards and slugs the full name", async () => {
+  it("uses the first face image for split cards and slugs the front face", async () => {
     const { fn } = fakeFetch(() => ({ status: 200, body: fireIce }));
     const s = new Scryfall({ fetchImpl: fn });
     const p = s.named({ name: "Fire // Ice" });
@@ -60,7 +60,7 @@ describe("Scryfall", () => {
     const c = await p;
     expect(c?.image).toBe("https://img/fire.jpg");
     expect(c?.imageSmall).toBe("https://img/fire-s.jpg");
-    expect(c?.slug).toBe("fire-ice");
+    expect(c?.slug).toBe("fire");
   });
 
   it("searches localized printings when lang is not en", async () => {

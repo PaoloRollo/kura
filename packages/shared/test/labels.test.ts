@@ -6,7 +6,6 @@ describe("slugify", () => {
     expect(slugify("Black Lotus")).toBe("black-lotus");
   });
   it("collapses punctuation and never leaves edge or double dashes", () => {
-    expect(slugify("Fire // Ice")).toBe("fire-ice");
     expect(slugify("Ach! Hans, Run!")).toBe("ach-hans-run");
     expect(slugify("  --Mox--Pearl--  ")).toBe("mox-pearl");
   });
@@ -21,11 +20,53 @@ describe("slugify", () => {
   });
 });
 
+describe("slugify length", () => {
+  const LABEL_PART = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+  it("slugs only the front face of a multi-face card", () => {
+    expect(slugify("Fire // Ice")).toBe("fire");
+    expect(slugify("Tamiyo, Inquisitive Student // Tamiyo, Seasoned Scholar")).toBe("tamiyo-inquisitive-student");
+    expect(slugify("Liliana, Heretical Healer // Liliana, Defiant Necromancer")).toBe("liliana-heretical-healer");
+    expect(slugify("Ojer Taq, Deepest Foundation // Temple of Civilization")).toBe("ojer-taq-deepest-foundation");
+  });
+
+  it("caps a long single face at 48 characters on a dash boundary", () => {
+    const name = "Our Market Research Shows That Players Like Really Long Card Names So We Made this Card to Have the Absolute Longest Card Name Ever Elemental";
+    const slug = slugify(name);
+    expect(slug).toBe("our-market-research-shows-that-players-like");
+    expect(slug.length).toBeLessThanOrEqual(48);
+    expect(slug).toMatch(LABEL_PART);
+  });
+
+  it("keeps a word that ends exactly at 48 characters", () => {
+    const name = `${"a".repeat(40)} ${"b".repeat(7)} tail`;
+    expect(slugify(name)).toBe(`${"a".repeat(40)}-${"b".repeat(7)}`);
+  });
+
+  it("hard-cuts one very long word", () => {
+    expect(slugify("x".repeat(60))).toBe("x".repeat(48));
+  });
+
+  it("never returns an empty string", () => {
+    for (const name of ["日本語", "", "!!!", " // Back"]) {
+      const slug = slugify(name);
+      expect(slug.length).toBeGreaterThan(0);
+      expect(slug).toMatch(LABEL_PART);
+    }
+  });
+});
+
 describe("setCode and labels", () => {
   it("normalises set codes", () => {
     expect(setCode("LEA")).toBe("lea");
     expect(setCode("2XM")).toBe("2xm");
     expect(() => setCode("le-a")).toThrow();
+    expect(() => setCode("")).toThrow();
+  });
+  it("accepts set codes up to the contract's 48-byte label limit", () => {
+    expect(setCode("PLST2024ABCDEFGH")).toBe("plst2024abcdefgh");
+    expect(setCode("A".repeat(48))).toBe("a".repeat(48));
+    expect(() => setCode("a".repeat(49))).toThrow();
   });
   it("builds the card label", () => {
     expect(cardLabel("black-lotus", "lea", 1n)).toBe("black-lotus-lea-1");
