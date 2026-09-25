@@ -91,6 +91,8 @@ describe("ClaimHandle", () => {
     expect(screen.getByRole("link", { name: /0x5e2/ }).getAttribute("href")).toContain("etherscan.io/tx/0x5e2f");
     expect(screen.getByText("Indexing…")).toBeTruthy();
     expect(state.notify).toHaveBeenCalledWith(expect.objectContaining({ title: "Handle claimed" }));
+    // The success state brings its own toast; the stepper's generic one is switched off.
+    expect(state.notify).toHaveBeenCalledTimes(1);
 
     // The indexer catches up: the collectors row appears, and the page still does not redirect.
     state.handles = { [ME]: "paolo" };

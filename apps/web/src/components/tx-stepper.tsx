@@ -187,6 +187,8 @@ export type TxStepperProps = {
   retryable?: (revert: Revert) => boolean;
   /** The failure card's only button when a revert is not retryable. */
   backLabel?: string;
+  /** False when the flow shows its own success state and toast, so a success shows exactly one toast. */
+  successToast?: boolean;
   className?: string;
 };
 
@@ -211,6 +213,7 @@ export function TxStepper({
   describeError = describeTxError,
   retryable,
   backLabel,
+  successToast = true,
   className,
 }: TxStepperProps) {
   const queryClient = useQueryClient();
@@ -268,7 +271,7 @@ export function TxStepper({
       setIndexStatus("skipped");
       await invalidate();
     }
-    notify({ title: "Transaction confirmed", body: steps.at(-1)?.label, tone: "good", icon: <CheckIcon /> });
+    if (successToast) notify({ title: "Transaction confirmed", body: steps.at(-1)?.label, tone: "good", icon: <CheckIcon /> });
     previous.current = [];
     if (indexed) reset();
     else setPhase("lagging"); // keep the skipped Indexing row up until the user dismisses it

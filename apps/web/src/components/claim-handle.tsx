@@ -313,6 +313,8 @@ export function ClaimHandle() {
           // A handle revert repeats on retry: send the user back to change the handle instead.
           retryable={(r) => !reasonFromRevert(r.inner?.name ?? r.name)}
           backLabel="Edit handle"
+          // The success state fires its own "Handle claimed" toast.
+          successToast={false}
           onDone={(results) => {
             setClaimed({ label, hash: results.find((r) => r.id === "claim")?.hash });
             notify({ title: "Handle claimed", body: `You're ${label}.${PARENT}`, tone: "good", icon: <CheckIcon /> });
