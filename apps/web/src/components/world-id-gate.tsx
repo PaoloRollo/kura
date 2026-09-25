@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { IDKitRequestWidget, passport, proofOfHuman, type RpContext } from "@worldcoin/idkit";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -26,30 +26,49 @@ export function WorldIdGate(props: { action: "bid" | "release"; signal: `0x${str
   const env = publicEnv();
   const { identityToken } = useKuraUser();
   const [open, setOpen] = useState(false);
-  const [rp, setRp] = useState<RpContext | null>(null);
+  // The rp context is single-use (nonce) and short-lived, so a fresh one is fetched on every open and dropped on close.
+  // It is tagged with the action it was signed for, so a change of `props.action` never reuses a stale context.
+  const [rp, setRp] = useState<{ action: string; ctx: RpContext } | null>(null);
+  const [starting, setStarting] = useState(false);
+  const rpContext = rp?.action === props.action ? rp.ctx : null;
 
-  useEffect(() => {
-    if (!open || rp || !identityToken) return;
-    apiFetch("/api/worldid/rp-context", { method: "POST", body: JSON.stringify({ action: props.action }), identityToken })
-      .then((r) => r.json())
-      .then((j) => setRp({ rp_id: j.rp_id, nonce: j.nonce, created_at: j.created_at, expires_at: j.expires_at, signature: j.signature }))
-      .catch(() => toast.error("Could not start verification"));
-  }, [open, rp, identityToken, props.action]);
+  async function start() {
+    if (!identityToken) return;
+    setStarting(true);
+    setRp(null);
+    try {
+      const action = props.action;
+      const r = await apiFetch("/api/worldid/rp-context", { method: "POST", body: JSON.stringify({ action }), identityToken });
+      if (!r.ok) throw new Error(`rp-context ${r.status}`);
+      const j = await r.json();
+      setRp({ action, ctx: { rp_id: j.rp_id, nonce: j.nonce, created_at: j.created_at, expires_at: j.expires_at, signature: j.signature } });
+      setOpen(true);
+    } catch {
+      toast.error("Could not start verification");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next) setRp(null);
+  }
 
   const preset = props.action === "release" ? passport({ signal: props.signal }) : proofOfHuman({ signal: props.signal });
 
   return (
     <>
-      <Button onClick={() => setOpen(true)} disabled={!identityToken}>
+      <Button onClick={start} disabled={!identityToken || starting}>
         {props.label ?? (props.action === "release" ? "Verify with Passport" : "Verify with World ID")}
       </Button>
-      {rp && (
+      {rpContext && (
         <IDKitRequestWidget
           open={open}
-          onOpenChange={setOpen}
+          onOpenChange={onOpenChange}
           app_id={env.NEXT_PUBLIC_WORLD_APP_ID as `app_${string}`}
           action={props.action}
-          rp_context={rp}
+          rp_context={rpContext}
           allow_legacy_proofs={true}
           environment={env.NEXT_PUBLIC_WORLD_ENV}
           preset={preset}

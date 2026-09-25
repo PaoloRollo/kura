@@ -7,7 +7,7 @@ import { getDb } from "@/lib/db/client";
 import { tickets, worldidVerifications } from "@/lib/db/schema";
 import { HttpError, parseBody, withAuth } from "@/lib/http";
 import { nowSec, serializeTicket, signTicket } from "@/lib/signer";
-import { verifyWorld, type IdkitResponseLike } from "@/lib/world";
+import { requireEnv, verifyWorld, type IdkitResponseLike } from "@/lib/world";
 
 const Body = z.object({
   action: z.enum(["bid", "release"]),
@@ -29,7 +29,7 @@ export const POST = withAuth(async (req, user) => {
   }
 
   const result = await verifyWorld({
-    rpId: process.env.WORLD_RP_ID!,
+    rpId: requireEnv("WORLD_RP_ID"),
     action: body.action,
     subject,
     idkitResponse: body.idkitResponse as unknown as IdkitResponseLike,
@@ -37,12 +37,15 @@ export const POST = withAuth(async (req, user) => {
   });
 
   const nullifier = result.nullifier.toString();
-  const existing = await db.select().from(worldidVerifications).where(and(eq(worldidVerifications.nullifier, nullifier), eq(worldidVerifications.action, body.action))).limit(1);
-  if (existing[0] && body.action === "bid" && existing[0].subject.toLowerCase() !== subject.toLowerCase()) {
+  // One nullifier per action is bound to one wallet (bid: the bidder; release: the card holder). Insert-first with
+  // ON CONFLICT DO NOTHING, then read back the winning row, so two concurrent requests cannot both bind.
+  await db
+    .insert(worldidVerifications)
+    .values({ id: crypto.randomUUID(), nullifier, action: body.action, subject, environment: result.environment, credential: result.credential })
+    .onConflictDoNothing({ target: [worldidVerifications.nullifier, worldidVerifications.action] });
+  const [bound] = await db.select().from(worldidVerifications).where(and(eq(worldidVerifications.nullifier, nullifier), eq(worldidVerifications.action, body.action))).limit(1);
+  if (!bound || bound.subject.toLowerCase() !== subject.toLowerCase()) {
     throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409);
-  }
-  if (!existing[0]) {
-    await db.insert(worldidVerifications).values({ id: crypto.randomUUID(), nullifier, action: body.action, subject, environment: result.environment, credential: result.credential });
   }
 
   const kind = body.action === "bid" ? TicketKind.HUMAN : TicketKind.PASSPORT;
