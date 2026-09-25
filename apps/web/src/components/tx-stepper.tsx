@@ -10,12 +10,13 @@ import { explorerTx } from "@/lib/chain";
 import { shortHash } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getReceipt } from "@/lib/tx";
-import { gasNote, runSteps, syncAfterTx, type Revert, type Step, type StepResult, type StepStatus, type WalletKind } from "@/lib/tx-core";
+import { gasNote, runSteps, syncAfterTx, type Revert, type Step, type StepResult, type StepStatus, type WalletKind, type GasMode } from "@/lib/tx-core";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Presentational panel (hnuVb, g5bcZ)
 
-export type TxRow = { id: string; label: string; status: StepStatus; hash?: string };
+/** `gas`: how the step's gas was actually paid, once it was sent. */
+export type TxRow = { id: string; label: string; status: StepStatus; hash?: string; gas?: GasMode };
 /**
  * The error card. `reverted` is the decoded error ("Expired()"); `hash` is set once the transaction was broadcast.
  * `confirming`: broadcast but not mined yet, so the card offers to check again instead of re-sending.
@@ -131,7 +132,7 @@ export function TxProgress({
       ) : (
         <p className="flex items-center gap-2.5 rounded-lg bg-surface-2 px-3.5 py-3 text-[12px] text-text-2">
           <FuelIcon className={cn("size-4 shrink-0", walletKind === "embedded" ? "text-good" : "text-text-2")} />
-          {gasNote(walletKind)}
+          {gasNote(walletKind, rows.some((r) => r.gas === "self"))}
         </p>
       )}
     </div>
@@ -313,7 +314,7 @@ export function TxStepper({
   }
 
   const rows: TxRow[] = [
-    ...steps.map((s, i) => ({ id: s.id, label: s.label, status: results[i]?.status ?? "pending", hash: results[i]?.hash })),
+    ...steps.map((s, i) => ({ id: s.id, label: s.label, status: results[i]?.status ?? "pending", hash: results[i]?.hash, gas: results[i]?.gas })),
     { id: INDEXING, label: "Indexing", status: indexStatus },
   ];
   const active = phase !== "idle";

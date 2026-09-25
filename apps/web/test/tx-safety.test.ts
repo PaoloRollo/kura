@@ -43,6 +43,7 @@ describe("sendContractTx", () => {
     const d = deps();
     const sent = await sendContractTx(input, d);
     expect(sent.hash).toBe(H1);
+    expect(sent.gas).toBe("sponsored");
     expect(d.sendTransaction).toHaveBeenCalledTimes(1);
     expect(vi.mocked(d.sendTransaction).mock.calls[0][1]).toEqual({ sponsor: true });
   });
@@ -73,6 +74,7 @@ describe("sendContractTx", () => {
     });
     const sent = await sendContractTx(input, deps({ sendTransaction: send }));
     expect(sent.hash).toBe(H2);
+    expect(sent.gas).toBe("self"); // the wallet paid: the copy must not say "Gas sponsored"
     expect(send.mock.calls.map((c) => c[1])).toEqual([{ sponsor: true }, { sponsor: false }]);
   });
 
@@ -116,6 +118,7 @@ describe("sendContractTx from an external wallet", () => {
     const d = deps({ wallet: w });
     const sent = await sendContractTx(input, d);
     expect(sent.hash).toBe(H2);
+    expect(sent.gas).toBe("self");
     expect(d.simulate).toHaveBeenCalledTimes(1);
     expect(w.sendTransaction).toHaveBeenCalledTimes(1);
     expect(w.sendTransaction.mock.calls[0]).toHaveLength(1); // no sponsor option on this path

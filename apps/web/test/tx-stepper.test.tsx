@@ -38,6 +38,12 @@ describe("TxProgress gas note", () => {
     expect(screen.getByText(/^Paid from your wallet's Sepolia ETH\./)).toBeTruthy();
   });
 
+  it("drops the sponsorship claim once an embedded send fell back to paying its own gas", () => {
+    render(<TxProgress title="t" rows={[{ id: "a", label: "Bid", status: "done", gas: "self" }, ...running]} walletKind="embedded" />);
+    expect(screen.queryByText(/Gas sponsored/)).toBeNull();
+    expect(screen.getByText(/^Sponsorship unavailable, paid from your wallet's Sepolia ETH\./)).toBeTruthy();
+  });
+
   it("makes no gas claim when the wallet is unknown", () => {
     render(<TxProgress title="t" rows={running} />);
     expect(screen.queryByText(/sponsored|Paid from/i)).toBeNull();

@@ -14,7 +14,9 @@ import {
 } from "viem";
 import { abi } from "@kura/shared";
 
-export type Sent = { hash: Hex; receipt: TransactionReceipt };
+/** How a sent transaction's gas was paid: by Privy's sponsorship, or by the sending wallet itself. */
+export type GasMode = "sponsored" | "self";
+export type Sent = { hash: Hex; receipt: TransactionReceipt; gas?: GasMode };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Hook data
@@ -159,9 +161,13 @@ export type UnsignedTx = { to: Address; data: Hex; value: bigint; chainId: numbe
 /** Which kind of wallet sends: the embedded Privy wallet (gas sponsored) or an external one (pays its own gas). */
 export type WalletKind = "embedded" | "external";
 
-/** The stepper's footer line: only an embedded wallet's sends are sponsored; an external wallet pays its own gas. */
-export function gasNote(kind: WalletKind | null | undefined): string {
+/**
+ * The stepper's footer line: only an embedded wallet's sends are sponsored; an external wallet pays its own gas.
+ * `paidSelf`: a send in this run actually paid its own gas (the embedded wallet fell back when sponsorship failed).
+ */
+export function gasNote(kind: WalletKind | null | undefined, paidSelf = false): string {
   const wait = "Keep this open, about 12 seconds per step.";
+  if (kind === "embedded" && paidSelf) return `Sponsorship unavailable, paid from your wallet's Sepolia ETH. ${wait}`;
   if (kind === "embedded") return `Gas sponsored. ${wait}`;
   if (kind === "external") return `Paid from your wallet's Sepolia ETH. ${wait}`;
   return wait;
@@ -273,21 +279,21 @@ async function ensureSepolia(wallet: ExternalWallet) {
   if ((await wallet.getChainId()) !== SEPOLIA_ID) throw new TxError(WRONG_CHAIN_MESSAGE);
 }
 
-async function broadcast(wallet: EmbeddedWallet | ExternalWallet, tx: UnsignedTx): Promise<Hex> {
+async function broadcast(wallet: EmbeddedWallet | ExternalWallet, tx: UnsignedTx): Promise<{ hash: Hex; gas: GasMode }> {
   if (wallet.kind === "external") {
     try {
-      return (await wallet.sendTransaction(tx)).hash;
+      return { hash: (await wallet.sendTransaction(tx)).hash, gas: "self" };
     } catch (e) {
       if (isInsufficientFunds(e)) throw new TxError(EXTERNAL_GAS_MESSAGE, { cause: e });
       throw e;
     }
   }
   try {
-    return (await wallet.sendTransaction(tx, { sponsor: true })).hash;
+    return { hash: (await wallet.sendTransaction(tx, { sponsor: true })).hash, gas: "sponsored" };
   } catch (sponsorErr) {
     if (!isSponsorUnavailable(sponsorErr)) throw sponsorErr;
     try {
-      return (await wallet.sendTransaction(tx, { sponsor: false })).hash;
+      return { hash: (await wallet.sendTransaction(tx, { sponsor: false })).hash, gas: "self" };
     } catch {
       throw new TxError(NO_GAS_MESSAGE, { cause: sponsorErr });
     }
@@ -314,7 +320,7 @@ export async function sendContractTx(input: SendInput, deps: SenderDeps): Promis
   }
 
   const tx: UnsignedTx = { to: input.to, data: encodeFunctionData(call as never), value: input.value ?? 0n, chainId: SEPOLIA_ID };
-  const hash = await broadcast(wallet, tx);
+  const { hash, gas } = await broadcast(wallet, tx);
 
   let receipt: TransactionReceipt;
   try {
@@ -323,7 +329,7 @@ export async function sendContractTx(input: SendInput, deps: SenderDeps): Promis
     throw new TxError(`still confirming: ${hash}`, { hash, pending: true, cause: e });
   }
   if (receipt.status !== "success") throw new TxError(`transaction reverted: ${hash}`, { hash });
-  return { hash, receipt };
+  return { hash, receipt, gas };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -398,6 +404,8 @@ export type StepResult = {
   status: StepStatus;
   hash?: Hex;
   blockNumber?: bigint;
+  /** How the step's gas was paid, when it was sent in this run. */
+  gas?: GasMode;
   error?: string;
   revert?: Revert;
   cause?: unknown;
@@ -453,7 +461,7 @@ export async function runSteps(
       results[i] = { id: s.id, status: "running" };
       emit();
       const sent = await s.run();
-      results[i] = { id: s.id, status: "done", hash: sent.hash, blockNumber: sent.receipt.blockNumber };
+      results[i] = { id: s.id, status: "done", hash: sent.hash, blockNumber: sent.receipt.blockNumber, ...(sent.gas ? { gas: sent.gas } : {}) };
       emit();
     } catch (e) {
       const revert = decodeRevert(e);

@@ -24,6 +24,16 @@ describe("encodeHookData", () => {
   });
 });
 
+describe("runSteps gas mode", () => {
+  it("records how each step's gas was paid", async () => {
+    const r = await runSteps(
+      [{ id: "a", label: "A", run: async () => ({ hash: "0x1", receipt: { blockNumber: 1n } as never, gas: "self" }) }],
+      { onStatus: () => {} },
+    );
+    expect(r[0]).toMatchObject({ status: "done", gas: "self" });
+  });
+});
+
 describe("runSteps", () => {
   it("skips steps whose skip() is true and stops at the first failure", async () => {
     const calls: string[] = [];
