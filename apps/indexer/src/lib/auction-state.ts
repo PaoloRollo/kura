@@ -1,4 +1,5 @@
 import { checkpointId } from "./ids";
+import { q96ToUsdcPerShard } from "./math";
 
 type Hex = `0x${string}`;
 
@@ -43,4 +44,19 @@ export function checkpointRow(auction: Hex, a: { blockNumber: bigint; clearingPr
     cumulativeMps: BigInt(a.cumulativeMps),
     timestamp,
   };
+}
+
+/**
+ * Live clearing price for a sharding, driven by CheckpointUpdated. Null (skip) once the sharding is settled, so the
+ * settlement's final values, including a non-graduated null clearingUsdcPerShard, are never overwritten.
+ */
+export function livePricePatch(sharding: { settled: boolean } | undefined | null, clearingPriceQ96: bigint) {
+  if (!sharding || sharding.settled) return null;
+  return { clearingPriceQ96, clearingUsdcPerShard: q96ToUsdcPerShard(clearingPriceQ96) };
+}
+
+/** Fail loud on an auction the vault never announced: indexing it with placeholder card data would hide the bug. */
+export function requireActiveAuction<T>(row: T | undefined | null, auction: Hex, handler: string): T {
+  if (!row) throw new Error(`${handler}: no active_auctions row for auction ${auction}`);
+  return row;
 }

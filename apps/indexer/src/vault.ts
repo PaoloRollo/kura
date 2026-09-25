@@ -78,6 +78,7 @@ ponder.on("CardVault:CardSharded", async ({ event, context }) => {
     auction: a.auction,
     cardId: a.id,
     shardToken: a.shardToken,
+    startBlock: a.startBlock,
     endBlock: a.endBlock,
     blockNumber: event.block.number,
     timestamp: ts,

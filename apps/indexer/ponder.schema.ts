@@ -60,6 +60,7 @@ export const activeAuctions = onchainTable("active_auctions", (t) => ({
   auction: t.hex().primaryKey(),
   cardId: t.bigint().notNull(),
   shardToken: t.hex().notNull(),
+  startBlock: t.bigint().notNull(),
   endBlock: t.bigint().notNull(),
   blockNumber: t.bigint().notNull(),
   timestamp: t.integer().notNull(),
@@ -119,10 +120,12 @@ export const auctionTicks = onchainTable("auction_ticks", (t) => ({
 export const checkpoints = onchainTable("checkpoints", (t) => ({
   id: t.text().primaryKey(), // checkpointId(auction, blockNumber)
   auction: t.hex().notNull(),
+  // Checkpoint block from the event args. It can differ from the emitting log's block (notably the END_BLOCK
+  // checkpoint, written later by the first post-end call), which is where `timestamp` comes from.
   blockNumber: t.bigint().notNull(),
   clearingPriceQ96: t.bigint().notNull(),
   cumulativeMps: t.bigint().notNull(),
-  timestamp: t.integer().notNull(),
+  timestamp: t.integer().notNull(), // emitting log's block timestamp
 }), (table) => ({ auctionIdx: index().on(table.auction) }));
 
 export const feeEvents = onchainTable("fee_events", (t) => ({

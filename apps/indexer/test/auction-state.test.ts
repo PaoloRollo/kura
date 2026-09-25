@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { balanceDeltas, checkpointRow, claimPatch, exitPatch, isSampleable } from "../src/lib/auction-state";
+import { balanceDeltas, checkpointRow, claimPatch, exitPatch, isSampleable, livePricePatch, requireActiveAuction } from "../src/lib/auction-state";
+import { q96ToUsdcPerShard } from "../src/lib/math";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const ALICE = "0x00000000000000000000000000000000000000a1";
@@ -63,5 +64,28 @@ describe("checkpointRow", () => {
       cumulativeMps: 5_000_000n,
       timestamp: 1700000000,
     });
+  });
+});
+
+describe("livePricePatch", () => {
+  const price = 3n * 2n ** 96n;
+  it("sets the live clearing price on an unsettled sharding", () => {
+    expect(livePricePatch({ settled: false }, price)).toEqual({ clearingPriceQ96: price, clearingUsdcPerShard: q96ToUsdcPerShard(price) });
+  });
+  it("never touches a settled sharding, so a non-graduated null price stays null", () => {
+    expect(livePricePatch({ settled: true }, price)).toBeNull();
+  });
+  it("skips when there is no sharding row", () => {
+    expect(livePricePatch(undefined, price)).toBeNull();
+  });
+});
+
+describe("requireActiveAuction", () => {
+  it("returns the active row", () => {
+    const row = { cardId: 1n, shardToken: "0x0000000000000000000000000000000000000011" as const };
+    expect(requireActiveAuction(row, AUCTION, "BidSubmitted")).toBe(row);
+  });
+  it("throws a clear error for an unknown auction", () => {
+    expect(() => requireActiveAuction(undefined, AUCTION, "BidSubmitted")).toThrow(/BidSubmitted.*no active_auctions row.*0x0000000000000000000000000000000000000a11/);
   });
 });

@@ -10,7 +10,7 @@ describe("schema", () => {
     expect(cols(schema.bids)).not.toContain("claimed");
   });
   it("stores block and time on every row", () => {
-    expect(cols(schema.activeAuctions)).toEqual(expect.arrayContaining(["blockNumber", "timestamp"]));
+    expect(cols(schema.activeAuctions)).toEqual(expect.arrayContaining(["blockNumber", "timestamp", "startBlock"]));
     expect(cols(schema.ensNames)).toEqual(expect.arrayContaining(["updatedBlock", "updatedAt"]));
     expect(cols(schema.collectors)).toEqual(expect.arrayContaining(["blockNumber", "registeredAt"]));
     expect(cols(schema.bidderBindings)).toEqual(expect.arrayContaining(["blockNumber", "boundAt"]));
