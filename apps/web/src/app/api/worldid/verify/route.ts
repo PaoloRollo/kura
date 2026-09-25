@@ -1,0 +1,56 @@
+import { NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { TTL, TicketKind, type Ticket } from "@kura/shared";
+import deployments from "@/generated/deployments.json";
+import { getDb } from "@/lib/db/client";
+import { tickets, worldidVerifications } from "@/lib/db/schema";
+import { HttpError, parseBody, withAuth } from "@/lib/http";
+import { nowSec, serializeTicket, signTicket } from "@/lib/signer";
+import { verifyWorld, type IdkitResponseLike } from "@/lib/world";
+
+const Body = z.object({
+  action: z.enum(["bid", "release"]),
+  subject: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  idkitResponse: z.object({ responses: z.array(z.record(z.unknown())) }).passthrough(),
+});
+
+export const POST = withAuth(async (req, user) => {
+  const body = await parseBody(Body, req);
+  const db = getDb();
+
+  let subject: `0x${string}`;
+  if (body.action === "bid") {
+    subject = user.wallet;
+  } else {
+    if (user.wallet.toLowerCase() !== deployments.vendor.toLowerCase()) throw new HttpError("FORBIDDEN", "only the vendor can request release tickets", 403);
+    if (!body.subject) throw new HttpError("BAD_REQUEST", "subject is required for release", 400);
+    subject = body.subject as `0x${string}`;
+  }
+
+  const result = await verifyWorld({
+    rpId: process.env.WORLD_RP_ID!,
+    action: body.action,
+    subject,
+    idkitResponse: body.idkitResponse as unknown as IdkitResponseLike,
+    expectedEnv: process.env.WORLD_ENV ?? "staging",
+  });
+
+  const nullifier = result.nullifier.toString();
+  const existing = await db.select().from(worldidVerifications).where(and(eq(worldidVerifications.nullifier, nullifier), eq(worldidVerifications.action, body.action))).limit(1);
+  if (existing[0] && body.action === "bid" && existing[0].subject.toLowerCase() !== subject.toLowerCase()) {
+    throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409);
+  }
+  if (!existing[0]) {
+    await db.insert(worldidVerifications).values({ id: crypto.randomUUID(), nullifier, action: body.action, subject, environment: result.environment, credential: result.credential });
+  }
+
+  const kind = body.action === "bid" ? TicketKind.HUMAN : TicketKind.PASSPORT;
+  const ttl = body.action === "bid" ? TTL.bidTicketSec : TTL.releaseTicketSec;
+  const ticket: Ticket = { kind, subject, nullifier: result.nullifier, expiresAt: nowSec() + BigInt(ttl) };
+  const domain = body.action === "bid" ? "bidgate" : "vault";
+  const signature = await signTicket(ticket, domain);
+  await db.insert(tickets).values({ id: crypto.randomUUID(), kind, subject, nullifier, expiresAt: ticket.expiresAt, signature, domain });
+
+  return NextResponse.json({ ticket: serializeTicket(ticket), signature, credential: result.credential });
+});
