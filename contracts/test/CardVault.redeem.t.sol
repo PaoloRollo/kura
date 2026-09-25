@@ -192,6 +192,16 @@ contract CardVaultRedeemTest is ForkTest {
         vault.redeem(id, b, sigB);
     }
 
+    function test_appraisalFromWrongSignerRejected() public {
+        Tickets.Appraisal memory a =
+            Tickets.Appraisal({cardId: id, shardToken: shardToken, usdcPerShard: 12e6, expiresAt: block.timestamp + 10 minutes});
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(0xBAD, vault.appraisalDigest(a));
+        _fundAndApprove(alice, 100e6);
+        vm.prank(alice);
+        vm.expectRevert(TicketVerifier.BadSignature.selector);
+        vault.redeem(id, a, abi.encodePacked(r, s, v));
+    }
+
     function test_redeemRequiresShardedState() public {
         uint256 id2 = _mintTo(alice);
         (Tickets.Appraisal memory a, bytes memory sig) = _appraisal(id2, address(0), 12e6);

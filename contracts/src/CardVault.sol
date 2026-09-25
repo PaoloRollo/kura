@@ -396,6 +396,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     /// @notice Buy out the remaining shards of a Sharded card. Caller must hold at least 80 percent of the supply.
     /// Price per shard is the higher of the auction clearing price and a fresh backend-signed appraisal; the vendor
     /// fee is charged on top. The card returns to Whole under the caller; the other holders claim USDC via claimPayout.
+    /// @dev Every check runs first, then all state writes, then the shard burn and USDC transfers.
     function redeem(uint256 id, Tickets.Appraisal calldata a, bytes calldata sig) external {
         Card storage c = _cards[id];
         if (c.state != State.Sharded) revert WrongState(id, c.state);
@@ -417,11 +418,8 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
             if (a.usdcPerShard > price) price = a.usdcPerShard;
             payoutAmount = PriceMath.payoutFor(price, supply - bal);
             fee = payoutAmount * feeBps / 10_000;
-            usdc.safeTransferFrom(msg.sender, address(this), payoutAmount + fee);
-            if (fee > 0) usdc.safeTransfer(payout, fee);
         }
 
-        token.burn(msg.sender, bal);
         s.buyoutPerShard = price;
         s.payoutPool += payoutAmount;
         s.redeemer = msg.sender;
@@ -431,6 +429,10 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         c.auction = address(0);
         c.endBlock = 0;
         c.beneficialOwner = msg.sender;
+
+        token.burn(msg.sender, bal);
+        if (payoutAmount + fee > 0) usdc.safeTransferFrom(msg.sender, address(this), payoutAmount + fee);
+        if (fee > 0) usdc.safeTransfer(payout, fee);
         _transfer(address(this), msg.sender, id);
 
         names.setState(id, "whole", address(0), address(0), price);
