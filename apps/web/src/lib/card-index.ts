@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gunzip as gunzipCb } from "node:zlib";
+import { get as blobGet } from "@vercel/blob";
 import { manifestMatchesSpec, type CardIndexManifest, type CardIndexRow } from "@/lib/card-index-format";
 import { decodeVectors, type VectorIndex } from "@/lib/card-vectors";
 import { CARD_EMBED_SPEC } from "@/lib/embed-spec";
@@ -78,14 +79,57 @@ async function loadDir(dir: string): Promise<LoadedCardIndex> {
 /** How long the whole download (all three files) may take before the load fails. */
 const URL_TIMEOUT_MS = 20_000;
 
-/** Fetch manifest.json, meta.json.gz (or meta.json when there is no .gz) and vectors.bin from `base` and check them like the disk loader does. */
+/**
+ * True when the index lives in a private Vercel Blob store: CARD_INDEX_BLOB_ACCESS=private, or a
+ * `<store>.private.blob.vercel-storage.com` URL (the host @vercel/blob gives private blobs).
+ */
+function isPrivateBlob(base: string): boolean {
+  if (process.env.CARD_INDEX_BLOB_ACCESS === "private") return true;
+  try {
+    return new URL(base).hostname.endsWith(".private.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+
+/** One file's bytes, or null when it does not exist. */
+type Fetcher = (url: string, signal: AbortSignal) => Promise<Uint8Array | null>;
+
+const fetchPublic: Fetcher = async (url, signal) => {
+  const res = await fetch(url, { signal, cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+};
+
+/** Private blobs need the store's token (Vercel injects BLOB_READ_WRITE_TOKEN when the store is connected to the project). */
+const fetchPrivate = (token: string): Fetcher => async (url, signal) => {
+  const blob = await blobGet(url, { access: "private", token, abortSignal: signal });
+  if (!blob) return null;
+  if (blob.statusCode !== 200) throw new Error(`HTTP ${blob.statusCode}`);
+  return new Uint8Array(await new Response(blob.stream).arrayBuffer());
+};
+
+/**
+ * Fetch manifest.json, meta.json.gz (or meta.json when there is no .gz) and vectors.bin from `base`
+ * and check them like the disk loader does. A private Vercel Blob store is read through
+ * @vercel/blob's `get`; anything else with plain fetch.
+ */
 export async function loadCardIndexFromUrl(base: string, timeoutMs = URL_TIMEOUT_MS): Promise<LoadedCardIndex> {
+  let fetcher = fetchPublic;
+  if (isPrivateBlob(base)) {
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!token) {
+      throw new IndexUnavailableError(`card index at ${base} is in a private Vercel Blob store, but BLOB_READ_WRITE_TOKEN is not set (connect the store to the Vercel project, or set the token)`);
+    }
+    fetcher = fetchPrivate(token);
+  }
   const signal = AbortSignal.timeout(timeoutMs);
   const get = async (name: string, fallback?: string): Promise<Uint8Array> => {
-    const res = await fetch(`${base}/${name}`, { signal, cache: "no-store" });
-    if (res.status === 404 && fallback) return get(fallback);
-    if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
-    return new Uint8Array(await res.arrayBuffer());
+    const bytes = await fetcher(`${base}/${name}`, signal).catch((e) => Promise.reject(new Error(`${name}: ${detail(e)}`)));
+    if (bytes) return bytes;
+    if (fallback) return get(fallback);
+    throw new Error(`${name}: not found`);
   };
   const text = (b: Uint8Array) => new TextDecoder().decode(b);
   let raw: RawIndex;
