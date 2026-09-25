@@ -5,6 +5,7 @@ import { buildMetadata } from "@/lib/meta";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
 import { Scryfall, ScryfallUnavailableError } from "@/lib/scryfall";
+import { vaultSiteUri } from "@/lib/vault-site-uri";
 
 /** ERC-721 metadata for card `id` (CardVault.tokenURI points here). */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -21,6 +22,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     throw e;
   }
   if (!info) return jsonError("NOT_FOUND", "card data unavailable", 404);
-  const siteBase = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  return NextResponse.json(buildMetadata(card, info, siteBase), { headers: { "cache-control": "public, max-age=60" } });
+  return NextResponse.json(buildMetadata(card, info, await vaultSiteUri()), { headers: { "cache-control": "public, max-age=60" } });
 }

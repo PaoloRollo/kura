@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isAddress, parseEventLogs } from "viem";
+import { isAddress } from "viem";
 import { toast } from "sonner";
 import { useReadContract } from "wagmi";
 import { CONDITIONS, abi, cardLabel, isDeployed, DeploymentsSchema } from "@kura/shared";
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { shortAddress } from "@/components/site-header";
-import { MintSuccess, type MintResult } from "@/components/vendor/mint-success";
+import { MintDetailsUnavailable, MintReading, MintSuccess, type MintResult } from "@/components/vendor/mint-success";
 import { Brackets, CandidateRow, HowRow, PanelHeading, ScanStage, StageChip, StationStepper } from "@/components/vendor/station";
 import { QrScanner } from "@/components/qr-scanner";
 import { TxStepper } from "@/components/tx-stepper";
@@ -25,7 +25,8 @@ import { addresses, publicClient } from "@/lib/chain";
 import { money } from "@/lib/format";
 import type { StepResult } from "@/lib/tx";
 import { useSendTx } from "@/lib/tx";
-import { describeMintError, stationStats } from "@/lib/vendor";
+import { cardPageUrl } from "@/lib/meta";
+import { describeMintError, mintOutcome, stationStats } from "@/lib/vendor";
 import { embedCard, warmUpEmbedder, type LoadProgress } from "@/lib/card-embed";
 import type { MatchCandidate } from "@/lib/card-match";
 import type { Candidate } from "@/lib/scryfall";
@@ -75,6 +76,8 @@ function CandidateTile({ c, onPick, note, highlight }: { c: Candidate; onPick: (
   return <CandidateRow image={c.imageSmall || c.image} name={c.printedName ?? c.name} meta={meta(c)} price={usd(c)} note={note} selected={highlight} onPick={onPick} />;
 }
 
+type MintView = { kind: "reading"; hash: `0x${string}` } | { kind: "unavailable"; hash?: `0x${string}`; reason: string } | { kind: "done"; result: MintResult };
+
 /** Starting state for previews (the dev-only /design/station page); the live station starts empty. */
 export type StationSeed = {
   step?: Step;
@@ -86,6 +89,8 @@ export type StationSeed = {
   owner?: `0x${string}` | null;
   manual?: string;
   minted?: MintResult | null;
+  /** Preview the terminal "minted, details unavailable" state. */
+  mintUnavailable?: { hash: `0x${string}`; reason: string };
 };
 
 export function ScanStation({ seed }: { seed?: StationSeed }) {
@@ -106,8 +111,10 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   const [owner, setOwner] = useState<`0x${string}` | null>(seed?.owner ?? null);
   const [manual, setManual] = useState(seed?.manual ?? "");
   const [searching, setSearching] = useState(false);
-  // Filled from the mint's CardMinted event; drives the Mint success screen.
-  const [minted, setMinted] = useState<MintResult | null>(seed?.minted ?? null);
+  // Set as soon as the mint confirms, and only cleared by a restart: a confirmed mint must never re-arm the Mint button.
+  const [minted, setMinted] = useState<MintView | null>(
+    seed?.minted ? { kind: "done", result: seed.minted } : seed?.mintUnavailable ? { kind: "unavailable", ...seed.mintUnavailable } : null,
+  );
   const [ownerSource, setOwnerSource] = useState<"qr" | "pasted">("pasted");
   const deployed = isDeployed(DeploymentsSchema.parse(deployments));
   // Stable identity so the QR scanner's camera effect is not restarted on every render.
@@ -222,33 +229,41 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
     functionName: "nextId",
     query: { enabled: deployed && !!chosen, refetchInterval: step === "review" ? 12_000 : false },
   }).data;
+  // Card pages are the vault's siteURI + id, for the sleeve label's QR.
+  const siteUri = useReadContract({ address: addresses.cardVault, abi: abi.cardVault, functionName: "siteURI", query: { enabled: deployed, staleTime: Infinity } }).data;
   const willMint = chosen ? `${nextId != null ? cardLabel(chosen.slug, chosen.setCode, nextId) : cardLabel(chosen.slug, chosen.setCode, 0).slice(0, -1) + "N"}.${ensParent}` : `card-set-N.${ensParent}`;
   const description = chosen ? `${chosen.name}, ${chosen.setName}${foil ? ", foil" : ""}` : "";
 
   async function onMinted(results: StepResult[]) {
-    const r = results.find((x) => x.status === "done");
-    if (!r?.hash || !chosen || !owner) return;
-    const receipt = await publicClient.getTransactionReceipt({ hash: r.hash });
-    // Filtering by the vault ABI and event name ignores the ENS logs in the same receipt.
-    const [log] = parseEventLogs({ abi: abi.cardVault, eventName: "CardMinted", logs: receipt.logs });
-    if (!log) {
-      toast.error("Minted, but the CardMinted event wasn't found", { description: r.hash });
+    if (!chosen || !owner) return;
+    const hash = results.find((x) => x.status === "done")?.hash;
+    // Lock the station first: whatever happens next, this mint is done and the inputs can't be minted again.
+    setStep("minted");
+    if (!hash) {
+      setMinted({ kind: "unavailable", reason: "The mint confirmed but its transaction hash is missing." });
       return;
     }
-    const siteBase = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+    setMinted({ kind: "reading", hash });
+    const out = await mintOutcome(hash, (h) => publicClient.getTransactionReceipt({ hash: h }));
+    if (out.status !== "minted") {
+      setMinted({ kind: "unavailable", hash, reason: out.reason });
+      return;
+    }
     setMinted({
-      image: chosen.image,
-      name: chosen.name,
-      set: `${chosen.setCode.toUpperCase()} · ${chosen.setName}`,
-      tokenId: log.args.id.toString(),
-      ensName: `${log.args.label}.${ensParent}`,
-      owner,
-      condition,
-      language,
-      block: receipt.blockNumber.toLocaleString("en-US"),
-      url: `${siteBase.replace(/\/+$/, "")}/app/cards/${log.args.id}`,
+      kind: "done",
+      result: {
+        image: chosen.image,
+        name: chosen.name,
+        set: `${chosen.setCode.toUpperCase()} · ${chosen.setName}`,
+        tokenId: out.id.toString(),
+        ensName: `${out.label}.${ensParent}`,
+        owner,
+        condition,
+        language,
+        block: out.blockNumber.toLocaleString("en-US"),
+        url: cardPageUrl(siteUri, out.id),
+      },
     });
-    setStep("minted");
   }
   const detailsOpen = step === "details" || step === "owner" || step === "review";
   // The Details/Owner/Mint block is previewed (dimmed) while the card is still being identified.
@@ -258,7 +273,11 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
   const recognised = !!chosen || (step === "pick" && confident);
   const score = chosen ? (group?.score ?? (confident ? top?.score : undefined)) : top?.score;
 
-  if (step === "minted" && minted) return <MintSuccess result={minted} onScanNext={restart} onPrint={() => window.print()} />;
+  if (step === "minted" && minted) {
+    if (minted.kind === "reading") return <MintReading hash={minted.hash} />;
+    if (minted.kind === "unavailable") return <MintDetailsUnavailable hash={minted.hash} reason={minted.reason} onScanNext={restart} />;
+    return <MintSuccess result={minted.result} onScanNext={restart} onPrint={() => window.print()} />;
+  }
 
   const searchBox = (
     <form
@@ -334,7 +353,6 @@ export function ScanStation({ seed }: { seed?: StationSeed }) {
             <HowRow icon={<QrCodeIcon />} title="Scan the owner's QR" body="From the Kura app on their phone." />
             <HowRow icon={<StampIcon />} title="Mint the twin" body="It gets an ENS name and stays in the vault." />
             <StationStats />
-            {model.status === "ready" && <p className="px-1 text-[12px] text-muted-foreground">Card matcher on {model.device === "webgpu" ? "WebGPU" : "WASM"}</p>}
           </section>
         )}
 

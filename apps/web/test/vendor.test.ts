@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { encodeAbiParameters, getAddress, encodeEventTopics, keccak256, toHex, type Hex, type Log } from "viem";
+import { abi } from "@kura/shared";
+import { addresses } from "@/lib/chain";
 import {
   age,
   awaitingHandover,
   describeMintError,
+  mintedFromLogs,
+  mintOutcome,
   feeTotals,
   feesCsv,
   feesPerDay,
@@ -96,6 +101,16 @@ describe("fees", () => {
     expect(csv.split("\n")[1]).toBe(`${new Date((now - 3600) * 1000).toISOString()},sale,1,"Black ""Lotus""",1.00,a`);
   });
 
+  it("escapes CSV cells and blocks formula injection", () => {
+    const row = (name: string) => feesCsv([{ ...fees[0], name }]).split("\n").slice(1).join("\n").split(",")[3];
+    expect(row("=HYPERLINK(1)")).toBe("'=HYPERLINK(1)");
+    expect(row("+1")).toBe("'+1");
+    expect(row("-1")).toBe("'-1");
+    expect(row("@SUM")).toBe("'@SUM");
+    expect(row("a\rb")).toBe('"a\rb"');
+    expect(row("Plain")).toBe("Plain");
+  });
+
   it("formats ages like the ledger", () => {
     expect(age(now - 30, now)).toBe("now");
     expect(age(now - 22 * 60, now)).toBe("22m");
@@ -105,11 +120,13 @@ describe("fees", () => {
 });
 
 describe("station stats", () => {
-  it("counts today's mints and fees and the cards in custody", () => {
-    const midnight = new Date(2026, 8, 26).getTime() / 1000;
+  it("counts today's mints and fees (UTC day) and the cards in custody", () => {
+    const midnight = Date.UTC(2026, 8, 26) / 1000;
     const cards = [card(1, "whole", { mintedAt: midnight + 60 }), card(2, "released", { mintedAt: midnight - 60 }), card(3, "sharded", { mintedAt: midnight - 60 })];
     const fees = [{ amountUsdc: 3n, timestamp: midnight + 5 }, { amountUsdc: 4n, timestamp: midnight - 5 }];
     expect(stationStats(cards, fees, midnight + 3600)).toEqual({ mintedToday: 1, inCustody: 2, feesToday: 3n });
+    // Just before UTC midnight, the day before still counts, whatever the local time zone.
+    expect(stationStats(cards.slice(1), [fees[1]], midnight - 1)).toEqual({ mintedToday: 2, inCustody: 1, feesToday: 4n });
   });
 });
 
@@ -127,5 +144,66 @@ describe("mint errors", () => {
     expect(describeMintError(null, revert(null, { hash: "0x1" })).title).toBe("The mint reverted");
     expect(describeMintError(null, revert(null, { message: "User rejected the request" })).title).toBe("Request cancelled");
     expect(describeMintError(null, revert(null, { message: "boom" }))).toEqual({ title: "Couldn't send the mint", body: "boom" });
+  });
+});
+
+describe("mintedFromLogs", () => {
+  const owner = "0x4f2ca0b3ae1f3d7a0b6d2f0c1e4b5a6d7c8ea81e" as const;
+  const node = keccak256(toHex("mox-sapphire-lea-2.kura.eth"));
+  const log = (address: Hex, topics: Hex[], data: Hex, logIndex: number) =>
+    ({ address, topics, data, logIndex, blockNumber: 1n, blockHash: "0x01", transactionHash: "0x02", transactionIndex: 0, removed: false }) as unknown as Log;
+  const cardMinted = (address: Hex, id: bigint, label: string, i: number) =>
+    log(
+      address,
+      encodeEventTopics({ abi: abi.cardVault, eventName: "CardMinted", args: { id, to: owner } }) as Hex[],
+      encodeAbiParameters([{ type: "string" }, { type: "string" }, { type: "string" }, { type: "string" }], ["sf-id", label, "NM", "en"]),
+      i,
+    );
+  const ensLogs = [
+    log(
+      addresses.ensRegistry,
+      encodeEventTopics({ abi: abi.ensRegistry, eventName: "LabelRegistered", args: { tokenId: 7n, labelHash: keccak256(toHex("mox-sapphire-lea-2")), sender: addresses.cardNames } }) as Hex[],
+      encodeAbiParameters([{ type: "string" }, { type: "address" }, { type: "uint64" }], ["mox-sapphire-lea-2", addresses.cardNames, 0n]),
+      0,
+    ),
+    log(
+      addresses.ensResolver,
+      encodeEventTopics({ abi: abi.ensResolver, eventName: "TextChanged", args: { node, indexedKey: "condition" } }) as Hex[],
+      encodeAbiParameters([{ type: "string" }, { type: "string" }], ["condition", "NM"]),
+      1,
+    ),
+    log(addresses.ensResolver, encodeEventTopics({ abi: abi.ensResolver, eventName: "AddrChanged", args: { node } }) as Hex[], encodeAbiParameters([{ type: "address" }], [owner]), 2),
+  ];
+
+  it("reads CardMinted from the vault's log among the ENS logs", () => {
+    const logs = [...ensLogs, cardMinted(addresses.cardVault, 2n, "mox-sapphire-lea-2", 3)];
+    expect(mintedFromLogs(logs)).toEqual({ id: 2n, label: "mox-sapphire-lea-2", to: getAddress(owner) });
+  });
+
+  it("ignores a CardMinted emitted by any other contract", () => {
+    const spoof = cardMinted("0x000000000000000000000000000000000000beef", 99n, "fake-lea-99", 0);
+    expect(mintedFromLogs([spoof, ...ensLogs])).toBeNull();
+    expect(mintedFromLogs([spoof, cardMinted(addresses.cardVault.toLowerCase() as Hex, 3n, "real-lea-3", 4)])?.id).toBe(3n);
+  });
+
+  it("returns null when there is no CardMinted", () => {
+    expect(mintedFromLogs(ensLogs)).toBeNull();
+    expect(mintedFromLogs([])).toBeNull();
+  });
+});
+
+describe("mintOutcome", () => {
+  const hash = "0xabc" as const;
+  it("reads the mint from the receipt", async () => {
+    const out = await mintOutcome(hash, async () => ({ blockNumber: 7n, logs: [] }), () => ({ id: 2n, label: "x-lea-2", to: "0x01" as `0x${string}` }));
+    expect(out).toEqual({ status: "minted", hash, blockNumber: 7n, id: 2n, label: "x-lea-2", to: "0x01" });
+  });
+  it("is terminal, with the hash, when the receipt can't be read", async () => {
+    const out = await mintOutcome(hash, async () => { throw new Error("rpc down"); });
+    expect(out).toEqual({ status: "details-unavailable", hash, reason: "rpc down" });
+  });
+  it("is terminal, with the hash, when the receipt has no CardMinted", async () => {
+    const out = await mintOutcome(hash, async () => ({ blockNumber: 7n, logs: [] }));
+    expect(out).toMatchObject({ status: "details-unavailable", hash });
   });
 });

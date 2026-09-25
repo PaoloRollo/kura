@@ -48,6 +48,17 @@ const MIN_SPACING_MS = 100;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const HEADERS = { "User-Agent": "Kura/0.1 (hackathon)", Accept: "application/json" };
 
+const reportedCacheFailures = new Set<string>();
+
+/** Logs a Scryfall cache failure once per operation and cause, so an outage doesn't log on every request. */
+export function reportCacheFailure(op: "read" | "write", e: unknown) {
+  const cause = (e as { cause?: { code?: string } })?.cause?.code ?? (e instanceof Error ? e.message.split("\n")[0] : String(e));
+  const key = `${op}:${cause}`;
+  if (reportedCacheFailures.has(key)) return;
+  reportedCacheFailures.add(key);
+  console.error(`scryfall cache ${op} failed (logged once per cause)`, e);
+}
+
 export class Scryfall {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -189,13 +200,13 @@ export class Scryfall {
   // The cache is best-effort here: a database outage must not take card lookups (and token metadata) down with it.
   async getById(id: string): Promise<Candidate | null> {
     const cached = await this.cacheGet(id).catch((e) => {
-      console.warn("scryfall cache read failed", e instanceof Error ? e.message : e);
+      reportCacheFailure("read", e);
       return null;
     });
     if (cached) return this.toCandidate(cached);
     const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(id)}`);
     if (!card) return null;
-    await this.cachePut(card).catch((e) => console.warn("scryfall cache write failed", e instanceof Error ? e.message : e));
+    await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
     return this.toCandidate(card);
   }
 

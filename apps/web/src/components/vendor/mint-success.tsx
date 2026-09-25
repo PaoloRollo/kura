@@ -1,10 +1,12 @@
 import type * as React from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { isAddress } from "viem";
-import { CircleCheckIcon, PrinterIcon, ScanLineIcon } from "lucide-react";
+import { CircleCheckIcon, ExternalLinkIcon, Loader2Icon, PrinterIcon, ScanLineIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { CardArt } from "@/components/kura";
 import { Button } from "@/components/ui/button";
+import { explorerTx } from "@/lib/chain";
+import { shortHash } from "@/lib/format";
 
 export type MintResult = {
   image: string;
@@ -76,6 +78,54 @@ export function MintSuccess({ result, onScanNext, onPrint }: { result: MintResul
         </div>
       </div>
       <SleeveLabel result={result} />
+    </section>
+  );
+}
+
+function TxLink({ hash }: { hash: string }) {
+  return (
+    <a href={explorerTx(hash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-[13px] text-kin hover:underline">
+      {shortHash(hash)}
+      <ExternalLinkIcon className="size-3.5" />
+    </a>
+  );
+}
+
+/** The mint confirmed; its receipt is being read for the token id and ENS name. */
+export function MintReading({ hash }: { hash: string }) {
+  return (
+    <section className="mx-auto flex min-h-[calc(100dvh-12rem)] max-w-[33rem] flex-col items-start justify-center gap-4 py-8">
+      <span className="inline-flex items-center gap-2 text-[14px] text-text-2">
+        <Loader2Icon className="size-4 animate-spin text-kin" />Minted. Reading the token id and ENS name…
+      </span>
+      <TxLink hash={hash} />
+    </section>
+  );
+}
+
+/**
+ * Terminal: the mint confirmed but its details (token id, ENS name) couldn't be read. The card is minted, so the only
+ * way on is a restart; nothing here can send the mint again.
+ */
+export function MintDetailsUnavailable({ hash, reason, onScanNext }: { hash?: string; reason: string; onScanNext: () => void }) {
+  return (
+    <section className="mx-auto flex min-h-[calc(100dvh-12rem)] max-w-[33rem] flex-col items-start justify-center gap-5 py-8">
+      <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-good-soft px-3 py-1 text-[12px] font-medium text-good-fg">
+        <CircleCheckIcon className="size-3.5" />Minted
+      </span>
+      <h1 className="font-display text-[36px] leading-[1.05] font-semibold text-text">Minted, details unavailable</h1>
+      <p className="text-[14px] text-text-2">
+        The mint went through, but its token id and ENS name couldn&apos;t be read. Don&apos;t mint this card again: check the
+        transaction, and the card shows up in the inventory once the indexer has it.
+      </p>
+      {hash && (
+        <div className="flex w-full items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-4 py-3">
+          <span className="text-[13px] text-text-2">Transaction</span>
+          <TxLink hash={hash} />
+        </div>
+      )}
+      <p className="font-mono text-[11px] text-muted-foreground">{reason}</p>
+      <Button variant="primary" size="md" onClick={onScanNext}><ScanLineIcon />Scan next card</Button>
     </section>
   );
 }

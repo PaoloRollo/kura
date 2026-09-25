@@ -160,13 +160,18 @@ describe("Scryfall", () => {
     const db = getDb();
     const select = vi.spyOn(db, "select").mockImplementation(() => { throw new Error("relation does not exist"); });
     const insert = vi.spyOn(db, "insert").mockImplementation(() => { throw new Error("relation does not exist"); });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const { fn } = fakeFetch(() => ({ status: 200, body: lotus }));
-    const p = new Scryfall({ fetchImpl: fn }).getById(lotus.id);
-    await vi.runAllTimersAsync();
-    expect((await p)?.name).toBe("Black Lotus");
+    const s = new Scryfall({ fetchImpl: fn });
+    for (let i = 0; i < 2; i++) {
+      const p = s.getById(lotus.id);
+      await vi.runAllTimersAsync();
+      expect((await p)?.name).toBe("Black Lotus");
+    }
+    // One error per failure type (read, write), not one per request.
+    expect(error).toHaveBeenCalledTimes(2);
     select.mockRestore();
     insert.mockRestore();
-    warn.mockRestore();
+    error.mockRestore();
   });
 });

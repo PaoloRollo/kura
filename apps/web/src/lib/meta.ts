@@ -3,14 +3,21 @@ type CardInfo = { name: string; setName: string; set: string; image: string; col
 
 export type CardMetadata = ReturnType<typeof buildMetadata>;
 
-/** ERC-721 metadata for a vault card, served at /api/meta/[id] (the vault's tokenURI). */
-export function buildMetadata(card: CardRow, info: CardInfo, siteBase: string) {
-  const base = siteBase.replace(/\/+$/, "");
+/** Where card pages live when the vault's siteURI can't be read. Never localhost: the URL goes on chain and on labels. */
+export const CARD_PAGE_FALLBACK = "https://kuravault.xyz/app/cards/";
+
+/** A card's page: the vault's siteURI followed by the id, as CardVault builds it (`string.concat(siteURI, id)`). */
+export function cardPageUrl(siteUri: string | undefined | null, id: bigint | number): string {
+  return `${siteUri || CARD_PAGE_FALLBACK}${id.toString()}`;
+}
+
+/** ERC-721 metadata for a vault card, served at /api/meta/[id] (the vault's tokenURI). `siteUri` is the vault's siteURI. */
+export function buildMetadata(card: CardRow, info: CardInfo, siteUri: string) {
   return {
     name: `${info.name} (${info.set.toUpperCase()}) #${card.id.toString()}`,
     description: `${info.name}, ${info.setName} #${info.collectorNumber}, ${card.condition}, held in the Kura vault. State: ${card.state}.`,
     image: info.image,
-    external_url: `${base}/app/cards/${card.id.toString()}`,
+    external_url: cardPageUrl(siteUri, card.id),
     attributes: [
       { trait_type: "ENS", value: card.ensName },
       { trait_type: "Set", value: info.set.toUpperCase() },

@@ -1,3 +1,6 @@
+import { isAddressEqual, parseEventLogs, type Address, type Log } from "viem";
+import { abi } from "@kura/shared";
+import { addresses } from "@/lib/chain";
 import { usdc } from "@/lib/format";
 import type { Revert } from "@/lib/tx-core";
 
@@ -97,7 +100,11 @@ export function feesPerDay(
   return out;
 }
 
-const csvCell = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+/** A CSV cell: quoted when it holds a quote, comma or line break; a leading = + - @ is defused with ' (formula injection). */
+function csvCell(raw: string): string {
+  const s = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 
 /** The fee ledger as CSV, one row per fee event. */
 export function feesCsv(rows: (Fee & { id: string; cardId: bigint; kind: string; name?: string })[]): string {
@@ -117,14 +124,13 @@ export function age(unix: number, now: number): string {
   return `${Math.floor(s / DAY)}d`;
 }
 
-/** The empty station's row (g3IDaw). "Today" starts at local midnight, the counter's day. */
+/** The empty station's row (g3IDaw). "Today" is the UTC day, as on the fees page. */
 export function stationStats(
   cards: { state: CardState; mintedAt: number }[],
   fees: Fee[],
   now: number,
 ): { mintedToday: number; inCustody: number; feesToday: bigint } {
-  const d = new Date(now * 1000);
-  const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
+  const midnight = Math.floor(now / DAY) * DAY;
   return {
     mintedToday: cards.filter((c) => c.mintedAt >= midnight).length,
     inCustody: cards.filter((c) => c.state !== "released").length,
@@ -146,4 +152,37 @@ export function describeMintError(_e: unknown, revert: Revert): { title: string;
   if (revert.hash) return { title: "The mint reverted", body: "It was mined but the vault rejected it. Nothing was minted." };
   if (/reject|denied|cancel/i.test(revert.message)) return { title: "Request cancelled", body: "The mint was not sent." };
   return { title: "Couldn't send the mint", body: revert.message };
+}
+
+/**
+ * The CardMinted event in a mint receipt, taken only from logs the vault itself emitted: the same receipt carries ENS
+ * registry and resolver logs, and any other contract could emit an event with the same signature.
+ */
+export function mintedFromLogs(logs: readonly Log[], vault: Address = addresses.cardVault): { id: bigint; label: string; to: Address } | null {
+  const own = logs.filter((l) => isAddressEqual(l.address, vault));
+  const [log] = parseEventLogs({ abi: abi.cardVault, eventName: "CardMinted", logs: own, strict: true });
+  return log ? { id: log.args.id, label: log.args.label, to: log.args.to } : null;
+}
+
+export type MintOutcome =
+  | { status: "minted"; hash: `0x${string}`; blockNumber: bigint; id: bigint; label: string; to: Address }
+  | { status: "details-unavailable"; hash: `0x${string}`; reason: string };
+
+/**
+ * What a confirmed mint produced. Always terminal: once the mint transaction is confirmed the card exists, so a failure
+ * to read its receipt or event yields "details-unavailable" with the hash, never an error the station could retry on.
+ */
+export async function mintOutcome(
+  hash: `0x${string}`,
+  getReceipt: (hash: `0x${string}`) => Promise<{ blockNumber: bigint; logs: readonly Log[] }>,
+  read: (logs: readonly Log[]) => ReturnType<typeof mintedFromLogs> = mintedFromLogs,
+): Promise<MintOutcome> {
+  try {
+    const receipt = await getReceipt(hash);
+    const minted = read(receipt.logs);
+    if (!minted) return { status: "details-unavailable", hash, reason: "The receipt has no CardMinted event from the vault." };
+    return { status: "minted", hash, blockNumber: receipt.blockNumber, ...minted };
+  } catch (e) {
+    return { status: "details-unavailable", hash, reason: e instanceof Error ? e.message : String(e) };
+  }
 }
