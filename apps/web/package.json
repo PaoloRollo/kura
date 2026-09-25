@@ -12,6 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "build:index": "tsx scripts/build-card-index.mts",
+    "upload:index": "tsx scripts/upload-card-index.mts",
     "eval:embeddings": "tsx scripts/eval-embeddings.mts"
   },
   "dependencies": {
@@ -49,6 +50,7 @@
     "@types/node": "^20.19.43",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vercel/blob": "^2.8.0",
     "@vitejs/plugin-react": "^5.2.0",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
