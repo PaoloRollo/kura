@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { CollectorPreview } from "./preview";
 
-const STATES = ["available", "checking", "taken", "reserved", "invalid", "named", "empty", "login", "shell"] as const;
+const STATES = ["available", "checking", "taken", "reserved", "invalid", "named", "empty", "claimed", "claimed-live", "login", "shell"] as const;
 export type CollectorPreviewState = (typeof STATES)[number];
 
 /** Dev-only: the collector shell, login gate and Claim handle states with fixture data, for checking against the designs. */

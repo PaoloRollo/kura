@@ -36,12 +36,14 @@ describe("ClaimHandleView", () => {
 
 const ME = "0x00000000000000000000000000000000000000aa";
 const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
-const state = vi.hoisted(() => ({ handles: {} as Record<string, string>, send: vi.fn() }));
+const state = vi.hoisted(() => ({ handles: {} as Record<string, string>, send: vi.fn(), notify: vi.fn() }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
 vi.mock("@/hooks/use-handles", () => ({ useHandlesState: () => ({ handles: state.handles, ready: true }) }));
 vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ address: ME }) }));
 vi.mock("@/hooks/use-vendor-data", () => ({ useCardMetas: () => new Map() }));
+vi.mock("@/lib/collectors", () => ({ indexerCollectors: { byAddress: async () => null, byLabel: async () => null } }));
+vi.mock("@/components/kura/toast", async (orig) => ({ ...(await orig<object>()), notify: state.notify }));
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined }) }));
 vi.mock("@/lib/tx", async () => ({ ...(await vi.importActual<object>("@/lib/tx-core")), useSendTx: () => ({ send: state.send }), getReceipt: async () => null }));
 vi.mock("@/lib/tx-core", async (orig) => ({ ...(await orig<object>()), syncAfterTx: async () => ({ indexed: true, late: Promise.resolve(true) }) }));
@@ -66,6 +68,7 @@ describe("ClaimHandle", () => {
     nav.replace.mockReset();
     state.handles = {};
     state.send = vi.fn();
+    state.notify.mockReset();
     window.matchMedia = ((q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} })) as never;
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ available: true }))));
   });
@@ -76,14 +79,31 @@ describe("ClaimHandle", () => {
     await waitFor(() => expect(screen.getByLabelText("Available")).toBeTruthy());
   }
 
-  it("claims the handle with registerCollector, then goes to /app", async () => {
-    state.send.mockResolvedValue({ hash: "0x01", receipt: { status: "success", blockNumber: 5n } });
-    renderContainer();
+  it("claims the handle, then stays on a success state that turns Live once indexed", async () => {
+    state.send.mockResolvedValue({ hash: "0x5e2f000000000000000000000000000000000000000000000000000000000c0a", receipt: { status: "success", blockNumber: 5n } });
+    const view = renderContainer();
     await typeAndWait("paolo");
     fireEvent.click(screen.getByRole("button", { name: "Claim paolo.kura.eth" }));
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/app"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /You're/ })).toBeTruthy());
     expect(state.send).toHaveBeenCalledWith(expect.objectContaining({ functionName: "registerCollector", args: ["paolo"] }));
     expect(String((fetch as unknown as { mock: { calls: string[][] } }).mock.calls[0][0])).toContain(`address=${ME}`);
+    expect(screen.getByText("Your handle is live on ENS and shows next to everything you own on Kura.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /0x5e2/ }).getAttribute("href")).toContain("etherscan.io/tx/0x5e2f");
+    expect(screen.getByText("Indexing…")).toBeTruthy();
+    expect(state.notify).toHaveBeenCalledWith(expect.objectContaining({ title: "Handle claimed" }));
+
+    // The indexer catches up: the collectors row appears, and the page still does not redirect.
+    state.handles = { [ME]: "paolo" };
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <ClaimHandle />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("Live")).toBeTruthy());
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(nav.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Explore auctions" }).getAttribute("href")).toBe("/app");
+    expect(screen.getByRole("link", { name: "View my profile" }).getAttribute("href")).toBe("/app/portfolio");
   });
 
   it("sends a wallet that already has a handle back to /app", async () => {

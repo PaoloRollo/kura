@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { CircleDollarSignIcon, UserIcon } from "lucide-react";
 import { BarChip, Button, EnsName, TabBar, TopBar } from "@/components/kura";
-import { ClaimHandleView, type CheckState } from "@/components/claim-handle";
+import { ClaimedView, ClaimHandleView, type CheckState } from "@/components/claim-handle";
 import { CollectorLogin } from "@/components/collector-login";
 import { HandleBanner } from "@/components/handle-banner";
 import { NAV } from "@/components/site-header";
@@ -60,7 +60,7 @@ export function CollectorPreview({ state, states }: { state: string; states: rea
       </div>
     );
   }
-  const claim = state !== "shell";
+  const claim = state !== "shell"; // Claim handle and its success state
   return (
     <div className="min-h-screen">
       <TopBar
@@ -80,7 +80,9 @@ export function CollectorPreview({ state, states }: { state: string; states: rea
       />
       <StateNav state={state} states={states} />
       <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-24 sm:px-6 md:pb-10 lg:px-12 lg:pt-8">
-        {state === "shell" ? (
+        {state === "claimed" || state === "claimed-live" ? (
+          <ClaimedView label="paolo" hash="0x5e2f9a1c3b7d4e6f8a0b2c4d6e8f0a1b3c5d7e9f1a2b4c6d8e0f2a4b6c8e0c0a" live={state === "claimed-live"} />
+        ) : state === "shell" ? (
           <>
             <HandleBanner forceShow />
             <h1 className="font-display text-[28px] font-semibold text-text md:text-[32px]">Live auctions</h1>

@@ -1,21 +1,23 @@
 "use client";
 
 import type * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { and, desc, eq, gt } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
-import { CircleCheckIcon, CircleXIcon, Loader2Icon } from "lucide-react";
+import { CheckIcon, CircleCheckIcon, CircleXIcon, CompassIcon, ExternalLinkIcon, Loader2Icon } from "lucide-react";
 import type { Address } from "viem";
 import { abi, RESERVED_HANDLES } from "@kura/shared";
-import { AmountInput } from "@/components/kura";
+import { useQuery } from "@tanstack/react-query";
+import { AmountInput, Button, EnsName, notify } from "@/components/kura";
 import { describeTxError, TxStepper } from "@/components/tx-stepper";
 import { useHandlesState } from "@/hooks/use-handles";
 import { useKuraUser } from "@/hooks/use-kura-user";
 import { useCardMetas } from "@/hooks/use-vendor-data";
-import { addresses, publicClient } from "@/lib/chain";
-import { shardsFixed, shortAddress } from "@/lib/format";
+import { addresses, explorerTx, publicClient } from "@/lib/chain";
+import { indexerCollectors } from "@/lib/collectors";
+import { shardsFixed, shortAddress, shortHash } from "@/lib/format";
 import { handleMessage, normalizeHandle, reasonFromRevert, type Availability } from "@/lib/handles";
 import { schema, t, type Row } from "@/lib/ponder";
 import { useSendTx, type Revert, type Step } from "@/lib/tx";
@@ -123,6 +125,56 @@ export function ClaimHandleView({
   );
 }
 
+/** After the claim (D0ZWe language, laid out like UwCiy / anR2F): the new name, its tx and whether it is indexed yet. */
+export function ClaimedView({ label, hash, live }: { label: string; hash?: string; live: boolean }) {
+  const name = `${label}.${PARENT}`;
+  return (
+    <div className="mx-auto flex min-h-[calc(100dvh-7.5rem)] w-full max-w-[420px] flex-col md:min-h-[calc(100dvh-12rem)]">
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 py-10 text-center">
+        <span className="flex size-[120px] items-center justify-center rounded-full border-[1.5px] border-good bg-good-soft text-good">
+          <CheckIcon aria-hidden className="size-12" strokeWidth={2.25} />
+        </span>
+        <h1 className="flex flex-col items-center gap-2 font-display text-[32px] leading-tight font-semibold text-text">
+          You&apos;re
+          <EnsName name={name} avatar={false} maxWidthClassName="max-w-[20rem]" className="[&>span]:text-[22px] [&>span]:font-normal" />
+        </h1>
+        <p className="max-w-[20rem] text-[14px] leading-relaxed text-text-2">Your handle is live on ENS and shows next to everything you own on Kura.</p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {hash && (
+            <a
+              href={explorerTx(hash)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full bg-surface px-3 py-1.5 font-mono text-[12px] text-text-2 hover:text-text"
+            >
+              tx {shortHash(hash)}
+              <ExternalLinkIcon aria-hidden className="size-3" />
+            </a>
+          )}
+          <span
+            aria-live="polite"
+            className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px]", live ? "bg-good-soft text-good-fg" : "bg-surface text-text-2")}
+          >
+            {live ? <CheckIcon aria-hidden className="size-3" /> : <Loader2Icon aria-hidden className="size-3 animate-spin" />}
+            {live ? "Live" : "Indexing…"}
+          </span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2.5 pt-8">
+        <Button asChild variant="primary" size="md" className="w-full">
+          <Link href="/app"><CompassIcon />Explore auctions</Link>
+        </Button>
+        <Button asChild variant="secondary" size="md" className="w-full">
+          <Link href={PROFILE_HREF}>View my profile</Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// The profile page (Task 9) doesn't exist yet; the portfolio stands in for it.
+const PROFILE_HREF = "/app/portfolio";
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Data
 
@@ -189,7 +241,7 @@ function hintsFrom(handles: Record<string, string>) {
   return [{ label: RESERVED_HANDLES[1], note: "reserved" }, ...(taken ? [{ label: taken, note: "taken" }] : [])];
 }
 
-/** The onboarding page: claim `<label>.kura.eth` with `CardNames.registerCollector`, then back to /app. */
+/** The onboarding page: claim `<label>.kura.eth` with `CardNames.registerCollector`, then confirm it on the page. */
 export function ClaimHandle() {
   const router = useRouter();
   const { address } = useKuraUser();
@@ -198,12 +250,27 @@ export function ClaimHandle() {
   const [label, setLabel] = useState("");
   const [check, setCheck] = useAvailability(normalizeHandle(label), address);
   const holding = useTopHolding(address);
-  const named = !!address && ready && !!handles[address.toLowerCase()];
+  const [claimed, setClaimed] = useState<{ label: string; hash?: string } | null>(null);
+  const me = address?.toLowerCase() ?? "";
+  const named = !!me && ready && !!handles[me];
 
-  // One handle per wallet: a wallet that has one has nothing to do here.
+  // One handle per wallet: a wallet that already has one when the page loads has nothing to do here. Decided once, on
+  // the first loaded collectors table, so the handle appearing right after a claim never skips the success state.
+  const loadChecked = useRef(false);
   useEffect(() => {
-    if (named) router.replace("/app");
-  }, [named, router]);
+    if (!me || !ready || loadChecked.current) return;
+    loadChecked.current = true;
+    if (named && !claimed) router.replace("/app");
+  }, [me, ready, named, claimed, router]);
+
+  // After the claim, poll the collectors lookup until the indexer has the row (the live query usually gets there first).
+  const polled = useQuery({
+    queryKey: ["collector-label", me],
+    queryFn: () => indexerCollectors.byAddress(me),
+    enabled: !!claimed && !!me && handles[me] !== claimed.label,
+    refetchInterval: 2000,
+  }).data;
+  const live = !!claimed && (handles[me] === claimed.label || polled === claimed.label);
 
   const available = !!check && "available" in check && check.available;
   const steps: Step[] = [
@@ -225,6 +292,8 @@ export function ClaimHandle() {
     return { title: handleMessage(result, label, PARENT), body: "Nothing was sent or charged. Pick another handle." };
   }
 
+  if (claimed) return <ClaimedView label={claimed.label} hash={claimed.hash} live={live} />;
+
   return (
     <ClaimHandleView
       label={label}
@@ -244,7 +313,10 @@ export function ClaimHandle() {
           // A handle revert repeats on retry: send the user back to change the handle instead.
           retryable={(r) => !reasonFromRevert(r.inner?.name ?? r.name)}
           backLabel="Edit handle"
-          onDone={() => router.push("/app")}
+          onDone={(results) => {
+            setClaimed({ label, hash: results.find((r) => r.id === "claim")?.hash });
+            notify({ title: "Handle claimed", body: `You're ${label}.${PARENT}`, tone: "good", icon: <CheckIcon /> });
+          }}
         />
       }
     />
