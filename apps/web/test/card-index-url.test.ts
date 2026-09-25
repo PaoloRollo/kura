@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCardIndex, IndexUnavailableError, loadCardIndexFromUrl } from "@/lib/card-index";
 import { setUserForTests } from "@/lib/auth";
@@ -64,6 +66,23 @@ describe("card index from CARD_INDEX_URL", () => {
     expect(calls).toContain(`${base}/manifest.json`);
   });
 
+  it("prefers a gzipped meta.json.gz and gunzips it", async () => {
+    const base = freshBase();
+    const { calls } = serve({ "manifest.json": fixture("manifest.json"), "meta.json.gz": gzipSync(fixture("meta.json")), "vectors.bin": fixture("vectors.bin") });
+    process.env.CARD_INDEX_URL = base;
+    const index = await getCardIndex();
+    expect(index.meta).toEqual(JSON.parse(readFileSync(join(FIXTURE, "meta.json"), "utf8")));
+    expect(calls).toContain(`${base}/meta.json.gz`);
+    expect(calls).not.toContain(`${base}/meta.json`);
+  });
+
+  it("accepts a meta.json.gz the host already decoded (Content-Encoding: gzip)", async () => {
+    process.env.CARD_INDEX_URL = freshBase();
+    serve({ "manifest.json": fixture("manifest.json"), "meta.json.gz": fixture("meta.json"), "vectors.bin": fixture("vectors.bin") });
+    const index = await getCardIndex();
+    expect(index.meta.length).toBe(index.manifest.count);
+  });
+
   it("fetches once for concurrent first callers and keeps the index in memory", async () => {
     process.env.CARD_INDEX_URL = freshBase();
     const { fetchMock } = serve(plainFiles());
@@ -105,6 +124,24 @@ describe("card index from CARD_INDEX_URL", () => {
     const manifest = JSON.parse(readFileSync(join(FIXTURE, "manifest.json"), "utf8"));
     serve({ ...plainFiles(), "manifest.json": JSON.stringify({ ...manifest, model: "someone/else" }) });
     await expect(getCardIndex()).rejects.toThrow(/different recipe/);
+  });
+});
+
+describe("card index from CARD_INDEX_DIR with a gzipped meta", () => {
+  let tmp: string;
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+    delete process.env.CARD_INDEX_DIR;
+  });
+
+  it("reads meta.json.gz when meta.json is absent", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "card-index-gz-"));
+    cpSync(FIXTURE, tmp, { recursive: true });
+    writeFileSync(join(tmp, "meta.json.gz"), gzipSync(readFileSync(join(tmp, "meta.json"))));
+    unlinkSync(join(tmp, "meta.json"));
+    process.env.CARD_INDEX_DIR = tmp;
+    const index = await getCardIndex();
+    expect(index.meta).toEqual(JSON.parse(readFileSync(join(FIXTURE, "meta.json"), "utf8")));
   });
 });
 

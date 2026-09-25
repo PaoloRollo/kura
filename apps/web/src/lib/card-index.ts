@@ -1,6 +1,8 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { gunzip as gunzipCb } from "node:zlib";
 import { manifestMatchesSpec, type CardIndexManifest, type CardIndexRow } from "@/lib/card-index-format";
 import { decodeVectors, type VectorIndex } from "@/lib/card-vectors";
 import { CARD_EMBED_SPEC } from "@/lib/embed-spec";
@@ -44,6 +46,15 @@ function check(source: string, { manifest, meta, bin }: RawIndex): LoadedCardInd
   return { source, manifest, meta, vectors };
 }
 
+const gunzip = promisify(gunzipCb);
+
+/** Parse meta.json bytes, gunzipping them first when they are gzip (meta.json.gz; a host may already have decoded it). */
+async function parseMeta(bytes: Uint8Array): Promise<CardIndexRow[]> {
+  const gz = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const plain = gz ? await gunzip(bytes) : bytes;
+  return JSON.parse(new TextDecoder().decode(plain)) as CardIndexRow[];
+}
+
 const detail = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 async function loadDir(dir: string): Promise<LoadedCardIndex> {
@@ -51,7 +62,10 @@ async function loadDir(dir: string): Promise<LoadedCardIndex> {
   try {
     const [manifest, meta, bin] = await Promise.all([
       readFile(join(dir, "manifest.json"), "utf8").then((s) => JSON.parse(s) as CardIndexManifest),
-      readFile(join(dir, "meta.json"), "utf8").then((s) => JSON.parse(s) as CardIndexRow[]),
+      // meta.json, or meta.json.gz when only the compressed copy is there.
+      readFile(join(dir, "meta.json"))
+        .catch((e: NodeJS.ErrnoException) => (e.code === "ENOENT" ? readFile(join(dir, "meta.json.gz")) : Promise.reject(e)))
+        .then(parseMeta),
       readFile(join(dir, "vectors.bin")),
     ]);
     raw = { manifest, meta, bin: new Uint8Array(bin.buffer, bin.byteOffset, bin.byteLength) };
@@ -64,11 +78,12 @@ async function loadDir(dir: string): Promise<LoadedCardIndex> {
 /** How long the whole download (all three files) may take before the load fails. */
 const URL_TIMEOUT_MS = 20_000;
 
-/** Fetch manifest.json, meta.json and vectors.bin from `base` and check them like the disk loader does. */
+/** Fetch manifest.json, meta.json.gz (or meta.json when there is no .gz) and vectors.bin from `base` and check them like the disk loader does. */
 export async function loadCardIndexFromUrl(base: string, timeoutMs = URL_TIMEOUT_MS): Promise<LoadedCardIndex> {
   const signal = AbortSignal.timeout(timeoutMs);
-  const get = async (name: string): Promise<Uint8Array> => {
+  const get = async (name: string, fallback?: string): Promise<Uint8Array> => {
     const res = await fetch(`${base}/${name}`, { signal, cache: "no-store" });
+    if (res.status === 404 && fallback) return get(fallback);
     if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());
   };
@@ -77,7 +92,7 @@ export async function loadCardIndexFromUrl(base: string, timeoutMs = URL_TIMEOUT
   try {
     const [manifest, meta, bin] = await Promise.all([
       get("manifest.json").then((b) => JSON.parse(text(b)) as CardIndexManifest),
-      get("meta.json").then((b) => JSON.parse(text(b)) as CardIndexRow[]),
+      get("meta.json.gz", "meta.json").then(parseMeta),
       get("vectors.bin"),
     ]);
     raw = { manifest, meta, bin };
