@@ -134,6 +134,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         uint256 indexed id, address indexed shardToken, address indexed redeemer, uint256 buyoutPerShard, uint256 payoutUsdc, uint256 feeUsdc
     );
     event PayoutClaimed(uint256 indexed id, address indexed shardToken, address indexed holder, uint256 shardUnits, uint256 usdc);
+    event CardReleased(uint256 indexed id, address indexed holder);
 
     error OnlyVendor();
     error FeeTooHigh();
@@ -151,6 +152,9 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     error AppraisalMismatch();
     error NotRedeemed();
     error NothingToClaim();
+    error WrongTicketKind();
+    error TicketSubjectMismatch();
+    error TicketUsed();
 
     modifier onlyVendor() {
         if (msg.sender != vendor) revert OnlyVendor();
@@ -454,6 +458,26 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         s.payoutPool -= amount; // sum of floored claims never exceeds the floored pool
         if (amount > 0) usdc.safeTransfer(msg.sender, amount);
         emit PayoutClaimed(s.cardId, shardToken, msg.sender, bal, amount);
+    }
+
+    // ---------------------------------------------------------------- release
+
+    /// @notice Record the physical handover of a Whole card to its current holder. Vendor only. Requires a single-use
+    /// backend-signed PASSPORT ticket naming the holder. Revokes the card's ENS name. Terminal.
+    function confirmRelease(uint256 id, Tickets.Ticket calldata t, bytes calldata sig) external onlyVendor {
+        Card storage c = _cards[id];
+        if (c.state != State.Whole) revert WrongState(id, c.state);
+        if (t.kind != Tickets.KIND_PASSPORT) revert WrongTicketKind();
+        address holder = ownerOf(id);
+        if (t.subject != holder) revert TicketSubjectMismatch();
+        _verifyTicket(t, sig);
+        bytes32 digest = ticketDigest(t);
+        if (usedTickets[digest]) revert TicketUsed();
+        usedTickets[digest] = true;
+
+        c.state = State.Released;
+        names.revoke(id);
+        emit CardReleased(id, holder);
     }
 
     // ---------------------------------------------------------------- internals
