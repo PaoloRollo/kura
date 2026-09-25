@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "NIXPACKS", "buildCommand": "pnpm install --frozen-lockfile && pnpm sync:deployments" },
+  "deploy": {
+    "startCommand": "pnpm --filter indexer start --schema $RAILWAY_DEPLOYMENT_ID --views-schema kura",
+    "healthcheckPath": "/ready",
+    "healthcheckTimeout": 3600,
+    "restartPolicyType": "ON_FAILURE"
+  }
+}
