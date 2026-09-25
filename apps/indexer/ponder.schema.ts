@@ -12,6 +12,8 @@ export const cards = onchainTable("cards", (t) => ({
   id: t.bigint().primaryKey(),
   state: cardState("state").notNull(),
   ownerOf: t.hex().notNull(),
+  // Holder the card belongs to (the owner while it sits in vault escrow). Intentionally keeps following the NFT holder
+  // after release, whereas the contract's stored beneficialOwner stops updating once the card is released.
   beneficialOwner: t.hex().notNull(),
   scryfallId: t.text().notNull(),
   condition: t.text().notNull(),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { q96ToUsdcPerShard, usdcPerShardToQ96 } from "../src/lib/math";
-import { redeemedCardPatch, settlementPatch, shardedCardPatch, transferPatch } from "../src/lib/vault-state";
+import { redeemedCardPatch, settlementPatch, shardActivity, shardedCardPatch, transferPatch } from "../src/lib/vault-state";
 
 const VAULT = "0xEC598d41513A15Bb17D4FAeF5e127aB47A54f1B4";
 const ALICE = "0x00000000000000000000000000000000000000a1";
@@ -16,6 +16,26 @@ describe("transferPatch", () => {
   });
   it("does not treat a release out of escrow as a user transfer", () => {
     expect(transferPatch({ beneficialOwner: ALICE, from: VAULT, to: BOB, vault: VAULT })).toEqual({ ownerOf: BOB, beneficialOwner: BOB, isUserTransfer: false });
+  });
+});
+
+describe("transferPatch across card states", () => {
+  it("follows the holder on a transfer after the card is released", () => {
+    // Released is terminal on-chain, but the NFT stays transferable; the indexer keeps tracking the holder.
+    expect(transferPatch({ beneficialOwner: ALICE, from: ALICE, to: BOB, vault: VAULT })).toMatchObject({ ownerOf: BOB, beneficialOwner: BOB });
+  });
+  it("keeps the old beneficial owner when a user sends a whole card straight to the vault", () => {
+    expect(transferPatch({ beneficialOwner: ALICE, from: ALICE, to: VAULT, vault: VAULT })).toEqual({ ownerOf: VAULT, beneficialOwner: ALICE, isUserTransfer: false });
+  });
+});
+
+describe("shardActivity", () => {
+  it("records sale shards in 18-decimal units, credited to the card owner", () => {
+    expect(shardActivity({ owner: ALICE, totalShards: 100, forSale: 60, auction: "0x0000000000000000000000000000000000000a11", shardToken: "0x0000000000000000000000000000000000000011" })).toEqual({
+      actor: ALICE,
+      amount: 60n * 10n ** 18n,
+      meta: { totalShards: 100, forSale: 60, auction: "0x0000000000000000000000000000000000000a11", shardToken: "0x0000000000000000000000000000000000000011" },
+    });
   });
 });
 

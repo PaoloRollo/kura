@@ -3,7 +3,7 @@ import { activeAuctions, cards, feeEvents, payoutClaims, shardings } from "ponde
 import deployments from "../generated/deployments.json";
 import { recordActivity } from "./lib/activity";
 import { logId } from "./lib/ids";
-import { redeemedCardPatch, settlementPatch, shardedCardPatch, transferPatch } from "./lib/vault-state";
+import { redeemedCardPatch, settlementPatch, shardActivity, shardedCardPatch, transferPatch } from "./lib/vault-state";
 
 const parent = deployments.ensParentLabel;
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -82,14 +82,9 @@ ponder.on("CardVault:CardSharded", async ({ event, context }) => {
     blockNumber: event.block.number,
     timestamp: ts,
   }).onConflictDoNothing();
-  await context.db.update(cards, { id: a.id }).set({ ...shardedCardPatch(a), updatedBlock: event.block.number, updatedAt: ts });
-  await recordActivity(context, event, {
-    kind: "shard",
-    cardId: a.id,
-    actor: event.transaction.from,
-    amount: BigInt(a.forSale),
-    meta: { totalShards: a.totalShards, forSale: a.forSale, auction: a.auction, shardToken: a.shardToken },
-  });
+  // The escrow Transfer precedes CardSharded and keeps beneficialOwner, so the returned row names the card owner.
+  const card = await context.db.update(cards, { id: a.id }).set({ ...shardedCardPatch(a), updatedBlock: event.block.number, updatedAt: ts });
+  await recordActivity(context, event, { kind: "shard", cardId: a.id, ...shardActivity({ owner: card.beneficialOwner, ...a }) });
 });
 
 ponder.on("CardVault:AuctionSettled", async ({ event, context }) => {
@@ -102,6 +97,7 @@ ponder.on("CardVault:AuctionSettled", async ({ event, context }) => {
   await recordActivity(context, event, {
     kind: "settle",
     cardId: a.id,
+    // settle is permissionless: the caller is whoever sent the tx, which under gas sponsorship may be a relayer.
     actor: event.transaction.from,
     amount: a.raisedUsdc,
     meta: {

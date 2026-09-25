@@ -41,3 +41,18 @@ export function settlementPatch(p: { graduated: boolean; clearingPriceQ96: bigin
     feeUsdc: p.feeUsdc,
   };
 }
+
+const SHARD_UNITS = 10n ** 18n;
+
+/**
+ * Shard activity: the amount is the sale supply in 18-decimal shard units (the contract's saleUnits); the whole-shard
+ * count stays in meta. The actor is the card owner (shardAndAuction requires owner == msg.sender), not
+ * transaction.from, which can be a bundler or relayer under gas sponsorship.
+ */
+export function shardActivity(p: { owner: Hex; totalShards: number; forSale: number; auction: Hex; shardToken: Hex }) {
+  return {
+    actor: p.owner,
+    amount: BigInt(p.forSale) * SHARD_UNITS,
+    meta: { totalShards: p.totalShards, forSale: p.forSale, auction: p.auction, shardToken: p.shardToken },
+  };
+}
