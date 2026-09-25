@@ -5,8 +5,9 @@ node_modules/
 .next/
 contracts/out/
 contracts/cache/
-contracts/broadcast/*/31337/
+contracts/broadcast/
 contracts/deployments/*.pending.json
+contracts/deployments/tmp/
 apps/indexer/.ponder/
 apps/indexer/generated/*.db
 .worktrees/
