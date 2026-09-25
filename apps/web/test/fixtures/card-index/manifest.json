@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "model": "Xenova/dinov2-small",
+  "arch": "dinov2",
+  "dtype": "q8",
+  "dims": 384,
+  "preprocessing": {
+    "size": 224,
+    "crop": {
+      "x": 0,
+      "y": 0,
+      "w": 1,
+      "h": 0.55
+    },
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "pooling": "mean",
+    "resample": "box"
+  },
+  "format": "int8-rowscale",
+  "count": 150,
+  "builtAt": "2026-09-25T14:27:53.969Z",
+  "image": "normal",
+  "scope": {
+    "sets": [
+      "lea"
+    ],
+    "limit": 150
+  },
+  "source": {
+    "bulk": "search: set:<code> unique:art",
+    "updatedAt": "2026-09-25T14:27:53.611Z"
+  },
+  "buildSeconds": 0
+}

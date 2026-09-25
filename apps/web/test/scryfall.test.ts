@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/migrate";
+import { getDb } from "@/lib/db/client";
+import { scryfallCache } from "@/lib/db/schema";
 import { Scryfall, ScryfallUnavailableError } from "@/lib/scryfall";
 
 const lotus = {
@@ -50,7 +52,7 @@ describe("Scryfall", () => {
     expect(calls[0]).toContain("set=lea");
   });
 
-  it("uses the first face image for split cards and slugs the full name", async () => {
+  it("uses the first face image for split cards and slugs the front face", async () => {
     const { fn } = fakeFetch(() => ({ status: 200, body: fireIce }));
     const s = new Scryfall({ fetchImpl: fn });
     const p = s.named({ name: "Fire // Ice" });
@@ -58,7 +60,7 @@ describe("Scryfall", () => {
     const c = await p;
     expect(c?.image).toBe("https://img/fire.jpg");
     expect(c?.imageSmall).toBe("https://img/fire-s.jpg");
-    expect(c?.slug).toBe("fire-ice");
+    expect(c?.slug).toBe("fire");
   });
 
   it("searches localized printings when lang is not en", async () => {
@@ -84,16 +86,62 @@ describe("Scryfall", () => {
     expect(await p2).toBeInstanceOf(ScryfallUnavailableError);
   });
 
-  it("spaces requests by at least 500 ms", async () => {
+  it("spaces requests by at least 100 ms (Scryfall asks for 50-100 ms)", async () => {
     const { fn, calls } = fakeFetch(() => ({ status: 200, body: lotus }));
     const s = new Scryfall({ fetchImpl: fn });
     const a = s.getById("a");
     const b = s.getById("b");
     await vi.advanceTimersByTimeAsync(10);
     expect(calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(80);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(20);
     expect(calls).toHaveLength(2);
     await Promise.all([a, b]);
+  });
+
+  it("treats a query Scryfall rejects (400) as no results", async () => {
+    const { fn } = fakeFetch(() => ({ status: 400, body: { object: "error", code: "bad_request" } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p = s.search("name:(((");
+    await vi.runAllTimersAsync();
+    expect(await p).toEqual([]);
+  });
+
+  it("lists every printing of a name in every language, oldest first, with illustration ids", async () => {
+    const leb = { ...lotus, id: "leb1", set: "leb", illustration_id: "ill-1" };
+    const { fn, calls } = fakeFetch(() => ({ status: 200, body: { data: [{ ...lotus, illustration_id: "ill-1" }, leb] } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p = s.printingsOf('Kongming, "Sleeping Dragon"');
+    await vi.runAllTimersAsync();
+    const cards = await p;
+    expect(cards.map((c) => [c.id, c.illustration_id])).toEqual([[lotus.id, "ill-1"], ["leb1", "ill-1"]]);
+    const q = new URL(calls[0]).searchParams;
+    // Names holding double quotes are wrapped in single quotes instead (Scryfall has no escape).
+    expect(q.get("q")).toBe(`!'Kongming, "Sleeping Dragon"' unique:prints lang:any`);
+    expect(q.get("order")).toBe("released");
+    expect(q.get("dir")).toBe("asc");
+
+    const none = new Scryfall({ fetchImpl: fakeFetch(() => ({ status: 404, body: {} })).fn });
+    const p2 = none.printingsOf("Nope");
+    await vi.runAllTimersAsync();
+    expect(await p2).toEqual([]);
+  });
+
+  it("caches every printing from printingsOf in a single batched insert", async () => {
+    const printings = Array.from({ length: 12 }, (_, i) => ({ ...lotus, id: `p${i}`, illustration_id: `ill-${i}` }));
+    const { fn } = fakeFetch(() => ({ status: 200, body: { data: printings } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const db = getDb();
+    const insertSpy = vi.spyOn(db, "insert");
+    const p = s.printingsOf("Black Lotus");
+    await vi.runAllTimersAsync();
+    const cards = await p;
+    expect(cards).toHaveLength(12);
+    // One batched insert, not one per printing.
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const rows = await db.select().from(scryfallCache);
+    expect(rows.map((r) => r.scryfallId).sort()).toEqual(printings.map((c) => c.id).sort());
   });
 
   it("serves a second lookup of the same id from the cache without fetching", async () => {

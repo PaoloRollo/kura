@@ -24,6 +24,8 @@ export const scanDrafts = app.table("scan_drafts", {
   vendorWallet: text("vendor_wallet").notNull(),
   candidates: jsonb("candidates").$type<CandidateJson[]>().notNull(),
   chosenScryfallId: text("chosen_scryfall_id"),
+  /** How the card was identified at the station. */
+  method: text("method", { enum: ["embedding", "manual"] }).notNull().default("manual"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

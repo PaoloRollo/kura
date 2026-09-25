@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { TTL, TicketKind, type Ticket } from "@kura/shared";
-import deployments from "@/generated/deployments.json";
 import { getDb } from "@/lib/db/client";
 import { tickets, worldidVerifications } from "@/lib/db/schema";
 import { HttpError, parseBody, withAuth } from "@/lib/http";
+import { requireVendor } from "@/lib/scan";
 import { nowSec, serializeTicket, signTicket } from "@/lib/signer";
 import { requireEnv, verifyWorld, type IdkitResponseLike } from "@/lib/world";
 
@@ -16,6 +16,7 @@ const Body = z.object({
 });
 
 export const POST = withAuth(async (req, user) => {
+  // The action comes from the body, so the release vendor check below cannot run before parseBody.
   const body = await parseBody(Body, req);
   const db = getDb();
 
@@ -23,7 +24,7 @@ export const POST = withAuth(async (req, user) => {
   if (body.action === "bid") {
     subject = user.wallet;
   } else {
-    if (user.wallet.toLowerCase() !== deployments.vendor.toLowerCase()) throw new HttpError("FORBIDDEN", "only the vendor can request release tickets", 403);
+    requireVendor(user);
     if (!body.subject) throw new HttpError("BAD_REQUEST", "subject is required for release", 400);
     subject = body.subject as `0x${string}`;
   }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import { createTestDb } from "@/lib/db/migrate";
 import { setUserForTests } from "@/lib/auth";
@@ -7,6 +7,8 @@ import { POST as rpContextRoute } from "@/app/api/worldid/rp-context/route";
 import { getDb } from "@/lib/db/client";
 import { worldidVerifications } from "@/lib/db/schema";
 import { setWorldFetchForTests } from "@/lib/world";
+import { privateKeyToAccount } from "viem/accounts";
+import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
 
 const alice = "0x1111111111111111111111111111111111111111" as const;
 const bob = "0x2222222222222222222222222222222222222222" as const;
@@ -41,11 +43,15 @@ describe("POST /api/worldid/verify", () => {
   beforeEach(async () => {
     await createTestDb();
     process.env.SIGNER_PRIVATE_KEY = "0x" + "a1".repeat(32);
+    // Sign with a test key: point the deployment's signer at it.
+    setDeploymentsForTests({ ...deployments(), signer: privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY as `0x${string}`).address });
     process.env.WORLD_ENV = "staging";
     process.env.WORLD_RP_ID = "rp_test";
     delete process.env.WORLD_BID_ALLOW_LEGACY;
     setUserForTests({ did: "did:privy:alice", wallet: alice });
   });
+
+  afterEach(() => resetDeploymentsForTests());
 
   it("issues a HUMAN ticket for the caller's wallet", async () => {
     setWorldFetchForTests(worldOk());

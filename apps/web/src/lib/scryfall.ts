@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import "server-only";
+import { eq, sql } from "drizzle-orm";
 import { setCode as normaliseSet, slugify } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { scryfallCache, type CandidateJson } from "@/lib/db/schema";
@@ -12,6 +13,14 @@ export class ScryfallUnavailableError extends Error {
   }
 }
 
+/** Scryfall rejected the query itself (HTTP 400), e.g. unbalanced syntax typed by the vendor. */
+export class ScryfallBadQueryError extends Error {
+  constructor(message = "Scryfall rejected the query") {
+    super(message);
+    this.name = "ScryfallBadQueryError";
+  }
+}
+
 type ImageUris = { small?: string; normal?: string; large?: string; png?: string };
 export type ScryfallCard = {
   id: string;
@@ -21,19 +30,21 @@ export type ScryfallCard = {
   set: string;
   set_name: string;
   collector_number: string;
+  illustration_id?: string;
   rarity: string;
   colors?: string[];
   type_line?: string;
   cmc?: number;
   released_at?: string;
   image_uris?: ImageUris;
-  card_faces?: { name?: string; printed_name?: string; image_uris?: ImageUris }[];
+  card_faces?: { name?: string; printed_name?: string; illustration_id?: string; image_uris?: ImageUris }[];
   prices: { usd?: string | null; usd_foil?: string | null; usd_etched?: string | null; eur?: string | null; eur_foil?: string | null };
   finishes?: string[];
 };
 
 const BASE = "https://api.scryfall.com";
-const MIN_SPACING_MS = 500;
+// Scryfall asks for 50-100 ms between requests (about 10/s).
+const MIN_SPACING_MS = 100;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const HEADERS = { "User-Agent": "Kura/0.1 (hackathon)", Accept: "application/json" };
 
@@ -62,6 +73,7 @@ export class Scryfall {
       }
       if (res.status === 404) return null;
       if (res.status === 429 || res.status >= 500) throw new ScryfallUnavailableError(`status ${res.status}`);
+      if (res.status === 400) throw new ScryfallBadQueryError();
       if (!res.ok) throw new Error(`scryfall ${res.status}`);
       return (await res.json()) as T;
     };
@@ -77,6 +89,10 @@ export class Scryfall {
   }
 
   toCandidate(card: ScryfallCard): Candidate {
+    return Scryfall.toCandidate(card);
+  }
+
+  static toCandidate(card: ScryfallCard): Candidate {
     const img = Scryfall.imageOf(card);
     return {
       scryfallId: card.id,
@@ -123,6 +139,45 @@ export class Scryfall {
       .onConflictDoUpdate({ target: scryfallCache.scryfallId, set: { prices: { usd: c.prices.usd, usd_foil: c.prices.usdFoil, eur: c.prices.eur }, raw: card, fetchedAt: new Date(this.now()) } });
   }
 
+  /** Same upsert as cachePut, batched into one insert for every card (used for a name's full printings list). */
+  private async cachePutMany(cards: ScryfallCard[]): Promise<void> {
+    if (cards.length === 0) return;
+    // A name's printings never repeat an id within one page, but stay defensive against a duplicate
+    // key in the same INSERT, which Postgres rejects ("ON CONFLICT DO UPDATE command cannot affect
+    // row a second time").
+    const byId = new Map(cards.map((card) => [card.id, card]));
+    const rows = [...byId.values()].map((card) => {
+      const c = this.toCandidate(card);
+      return {
+        scryfallId: card.id,
+        name: card.name,
+        printedName: c.printedName,
+        setCode: c.setCode,
+        setName: card.set_name,
+        collectorNumber: card.collector_number,
+        lang: card.lang,
+        rarity: card.rarity,
+        colors: card.colors ?? [],
+        typeLine: card.type_line ?? "",
+        manaValue: card.cmc?.toString() ?? null,
+        releasedAt: card.released_at ?? null,
+        imageNormal: c.image,
+        imageSmall: c.imageSmall,
+        prices: { usd: c.prices.usd, usd_foil: c.prices.usdFoil, eur: c.prices.eur },
+        finishes: c.finishes,
+        raw: card,
+        fetchedAt: new Date(this.now()),
+      };
+    });
+    await getDb()
+      .insert(scryfallCache)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: scryfallCache.scryfallId,
+        set: { prices: sql`excluded.prices`, raw: sql`excluded.raw`, fetchedAt: sql`excluded.fetched_at` },
+      });
+  }
+
   private async cacheGet(id: string): Promise<ScryfallCard | null> {
     const rows = await getDb().select().from(scryfallCache).where(eq(scryfallCache.scryfallId, id)).limit(1);
     const row = rows[0];
@@ -158,10 +213,29 @@ export class Scryfall {
     return this.toCandidate(card);
   }
 
+  /** A search Scryfall rejects as malformed is simply one with no results. */
+  private async searchCards(query: string, extra = ""): Promise<ScryfallCard[]> {
+    try {
+      const list = await this.request<{ data: ScryfallCard[] }>(`/cards/search?q=${encodeURIComponent(query)}${extra}`);
+      return list?.data ?? [];
+    } catch (e) {
+      if (e instanceof ScryfallBadQueryError) return [];
+      throw e;
+    }
+  }
+
   async search(query: string, limit = 5): Promise<Candidate[]> {
-    const list = await this.request<{ data: ScryfallCard[] }>(`/cards/search?q=${encodeURIComponent(query)}`);
-    const cards = (list?.data ?? []).slice(0, limit);
+    const cards = (await this.searchCards(query)).slice(0, limit);
     await Promise.all(cards.map((c) => this.cachePut(c)));
     return cards.map((c) => this.toCandidate(c));
+  }
+
+  /** Every printing of an exact card name, in every language, oldest first (first page: up to 175). */
+  async printingsOf(name: string): Promise<ScryfallCard[]> {
+    // Scryfall has no escape inside quotes, so a name holding double quotes goes in single quotes.
+    const exact = name.includes('"') ? `!'${name}'` : `!"${name}"`;
+    const cards = await this.searchCards(`${exact} unique:prints lang:any`, "&order=released&dir=asc");
+    await this.cachePutMany(cards);
+    return cards;
   }
 }
