@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type * as React from "react";
-import { DownloadIcon } from "lucide-react";
+import { CheckIcon, DownloadIcon, ExternalLinkIcon } from "lucide-react";
 import { abi } from "@kura/shared";
 import { IndexerLoading } from "@/components/sync-state";
 import { TxStepper } from "@/components/tx-stepper";
@@ -10,10 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useKuraUser } from "@/hooks/use-kura-user";
 import { useNow } from "@/hooks/use-now";
-import { useCardMetas, useFeeEvents, useVaultConfig } from "@/hooks/use-vendor-data";
-import { addresses, publicClient } from "@/lib/chain";
-import { money, shortAddress } from "@/lib/format";
-import { metaCardName } from "@/lib/meta";
+import { useAttributes } from "@/hooks/use-explore";
+import { useFeeEvents, useVaultCards, useVaultConfig } from "@/hooks/use-vendor-data";
+import { addresses, explorerTx, publicClient } from "@/lib/chain";
+import { money, shortAddress, shortHash } from "@/lib/format";
 import { useSendTx } from "@/lib/tx";
 import { cn } from "@/lib/utils";
 import { age, feesCsv, feesPerDay } from "@/lib/vendor";
@@ -160,13 +160,32 @@ export function FeesView({
   );
 }
 
-/** The fee editor, for the vault owner only: `setFee` is onlyOwner. */
+/** The fee change's confirmation: the new fee and its setFee tx, until the vendor closes it. */
+export function FeeSaved({ bps, hash, onClose }: { bps: number; hash?: `0x${string}`; onClose: () => void }) {
+  return (
+    <div role="status" aria-live="polite" className="flex w-full flex-col gap-2 rounded-xl border border-good/40 bg-good-soft p-3">
+      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-good-fg"><CheckIcon aria-hidden className="size-4" />Vault fee set to {bps / 100}%</span>
+      <div className="flex items-center justify-between gap-2">
+        {hash ? (
+          <a href={explorerTx(hash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-[12px] text-text-2 hover:text-text">
+            tx {shortHash(hash)}<ExternalLinkIcon aria-hidden className="size-3" />
+          </a>
+        ) : <span />}
+        <Button variant="secondary" size="compact" onClick={onClose}>Done</Button>
+      </div>
+    </div>
+  );
+}
+
+/** The fee editor, for the vault owner only: `setFee` is onlyOwner. A change ends on FeeSaved. */
 function FeeEditor({ feeBps, maxFeeBps, payout, onDone }: { feeBps: number; maxFeeBps: number; payout: `0x${string}`; onDone: () => void }) {
   const { send, walletKind } = useSendTx();
   const [open, setOpen] = useState(false);
   const [pct, setPct] = useState(String(feeBps / 100));
+  const [saved, setSaved] = useState<{ bps: number; hash?: `0x${string}` } | null>(null);
   const bps = Math.round(Number(pct) * 100);
   const valid = pct.trim() !== "" && Number.isFinite(bps) && bps >= 0 && bps <= maxFeeBps;
+  if (saved) return <FeeSaved bps={saved.bps} hash={saved.hash} onClose={() => setSaved(null)} />;
   if (!open) {
     return <Button variant="secondary" size="compact" onClick={() => setOpen(true)}>Change</Button>;
   }
@@ -190,8 +209,9 @@ function FeeEditor({ feeBps, maxFeeBps, payout, onDone }: { feeBps: number; maxF
             run: () => send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "setFee", args: [bps, payout] }),
           },
         ]}
-        onDone={() => {
+        onDone={(results) => {
           setOpen(false);
+          setSaved({ bps, hash: results.find((r) => r.id === "set-fee")?.hash as `0x${string}` | undefined });
           onDone();
         }}
       />
@@ -205,15 +225,19 @@ export function Fees() {
   const config = useVaultConfig();
   const { address } = useKuraUser();
   const now = useNow();
-  const metas = useCardMetas([...new Set((fees.data ?? []).map((f) => f.cardId))]);
+  // Names in one batched attributes request (by the cards' printings), not one /api/meta call per card.
+  const cards = useVaultCards();
+  const printingOf = new Map((cards.data ?? []).map((c) => [c.id, c.scryfallId]));
+  const feeCards = new Set((fees.data ?? []).map((f) => f.cardId));
+  const attributes = useAttributes([...feeCards].flatMap((id) => printingOf.get(id) ?? []));
 
   if (fees.error) return <p className="py-12 text-center text-[14px] text-text-2">The indexer can&apos;t be reached right now. Try again in a moment.</p>;
   if (!fees.data) return <IndexerLoading title="Loading fees" className="mx-auto w-full max-w-md" />;
 
   const isOwner = !!address && !!config.owner && address.toLowerCase() === config.owner.toLowerCase();
   const ledger: LedgerEntry[] = fees.data.map((f) => {
-    const meta = metas.get(f.cardId);
-    return { id: f.id, kind: f.kind, cardId: f.cardId, name: meta ? metaCardName(meta.name) : undefined, amountUsdc: f.amountUsdc, timestamp: f.timestamp };
+    const name = attributes[printingOf.get(f.cardId) ?? ""]?.name;
+    return { id: f.id, kind: f.kind, cardId: f.cardId, name: name || undefined, amountUsdc: f.amountUsdc, timestamp: f.timestamp };
   });
   const feeAction =
     isOwner && config.feeBps != null && config.maxFeeBps != null && config.payout ? (
