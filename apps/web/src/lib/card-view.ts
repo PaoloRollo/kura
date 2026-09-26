@@ -209,7 +209,7 @@ export const pct = (share: number, dp = 1) => `${(share * 100).toFixed(dp)}%`;
 export type RecordRole = "vendor" | "appraiser" | "vault";
 
 /**
- * Who may write a text key, from CardNames.authorizeTextRoles: the vendor writes condition and grade, the appraiser
+ * Who may write a text key, from CardNames' per-key resolver grants: the vendor writes condition and grade, the appraiser
  * the appraisal, the vault everything else. Derived from the key, never from `setBy` (a relayer under sponsorship).
  */
 export function recordRole(key: string): RecordRole {

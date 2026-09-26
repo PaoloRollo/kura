@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardLabel, HANDLE_PATTERN, isCondition, isLanguage, isValidHandle, ON_CHAIN_RESERVED_COUNT, RESERVED_HANDLES, setCode, slugify } from "../src/labels";
+import { cardLabel, dnsEncodeName, HANDLE_PATTERN, isCondition, isLanguage, isValidHandle, ON_CHAIN_RESERVED_COUNT, RESERVED_HANDLES, setCode, slugify } from "../src/labels";
 
 describe("slugify", () => {
   it("lowercases and dashes", () => {
@@ -113,5 +113,21 @@ describe("conditions and languages", () => {
     expect(isLanguage("zhs")).toBe(true);
     expect(isLanguage("EN")).toBe(false);
     expect(isLanguage("english")).toBe(false);
+  });
+});
+
+describe("dnsEncodeName", () => {
+  it("DNS wire-encodes a name, as the ENSv2 resolver setters expect", () => {
+    expect(dnsEncodeName("kura.eth")).toBe("0x046b7572610365746800");
+    expect(dnsEncodeName("black-lotus-lea-1.kura.eth")).toBe(
+      "0x11626c61636b2d6c6f7475732d6c65612d31046b7572610365746800",
+    );
+  });
+  it("encodes the root as a single zero byte", () => {
+    expect(dnsEncodeName("")).toBe("0x00");
+  });
+  it("rejects empty and over-long labels", () => {
+    expect(() => dnsEncodeName("a..eth")).toThrow();
+    expect(() => dnsEncodeName(`${"a".repeat(256)}.eth`)).toThrow();
   });
 });

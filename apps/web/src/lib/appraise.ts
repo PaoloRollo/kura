@@ -1,8 +1,8 @@
 import "server-only";
 import { and, eq } from "@ponder/client";
 import { and as dbAnd, desc, eq as dbEq, gte, isNotNull, isNull, lt, sql, type SQL } from "drizzle-orm";
-import { TransactionReceiptNotFoundError, encodeFunctionData, parseUnits, type Address, type Hex } from "viem";
-import { TTL, q96ToUsdcPerShard, type Appraisal } from "@kura/shared";
+import { TransactionReceiptNotFoundError, encodeFunctionData, namehash, parseUnits, type Address, type Hex } from "viem";
+import { TTL, abi, dnsEncodeName, q96ToUsdcPerShard, type Appraisal } from "@kura/shared";
 import { getDb, type AnyDb } from "@/lib/db/client";
 import { appraisals, ensAppraisalWrites, marketPrices, scryfallCache } from "@/lib/db/schema";
 import { HttpError } from "@/lib/http";
@@ -245,13 +245,35 @@ async function readSignerBalance(): Promise<bigint> {
   return reader.getBalance({ address: account.address });
 }
 
+/**
+ * The DNS-encoded `<label>.<parent>.eth` the ENSv2 resolver setters take, for the card name whose indexed namehash is
+ * `node`. Throws when they disagree, so a write can never land on another name's record.
+ */
+export function appraisalDnsName(label: string, node: Hex, parentLabel: string): Hex {
+  const name = `${label}.${parentLabel}.eth`;
+  if (namehash(name) !== node.toLowerCase()) throw new Error(`appraise: ${name} does not hash to the indexed node ${node}`);
+  return dnsEncodeName(name);
+}
+
+/** setText(name, appraisal.usd) and setText(name, appraisal.at) on the PermissionedResolver, as multicall entries. */
+export function appraisalTextCalls(dnsName: Hex, usd: string, at: number): Hex[] {
+  return [
+    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [dnsName, "appraisal.usd", usd] }),
+    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [dnsName, "appraisal.at", String(at)] }),
+  ];
+}
+
+/** The indexed label of the card name with namehash `node`, from ens_names. */
+async function ensLabelOf(node: Hex): Promise<string | null> {
+  const rows = (await db().select().from(t(schema.ensNames)).where(eq(t(schema.ensNames.node), node)).limit(1)) as Row<typeof schema.ensNames>[];
+  return rows[0]?.label ?? null;
+}
+
 /** Both records in one resolver multicall (one transaction, one nonce), sent with the chain's pending nonce. */
 async function writeAppraisalText(node: Hex, usd: string): Promise<Hex | "stuck"> {
-  const [{ abi }, { addresses }, { account, wallet, reader }] = await Promise.all([import("@kura/shared"), import("@/lib/chain"), signerClients()]);
-  const calls = [
-    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [node, "appraisal.usd", usd] }),
-    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [node, "appraisal.at", String(Math.floor(Date.now() / 1000))] }),
-  ];
+  const [{ addresses }, { account, wallet, reader }, label] = await Promise.all([import("@/lib/chain"), signerClients(), ensLabelOf(node)]);
+  if (!label) throw new Error(`appraise: no indexed ENS name for node ${node}`);
+  const calls = appraisalTextCalls(appraisalDnsName(label, node, addresses.ensParentLabel), usd, Math.floor(Date.now() / 1000));
   const pendingNonce = () => reader.getTransactionCount({ address: account.address, blockTag: "pending" });
   return sendUnlessStuck(
     () => sendWithFreshNonce(

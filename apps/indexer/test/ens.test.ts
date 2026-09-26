@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptCollectorRecord, ensTokenPrefix, labelHashOf, nameKindOf, sameEnsToken } from "../src/lib/ens";
+import { acceptCollectorRecord, addressRecordOf, ensTokenPrefix, isUnlink, labelHashOf, nameKindOf, sameEnsToken } from "../src/lib/ens";
 
 describe("sameEnsToken", () => {
   const base = 0xabcdefn << 32n;
@@ -56,5 +56,28 @@ describe("acceptCollectorRecord", () => {
   it("rejects an unknown resolver", () => {
     expect(acceptCollectorRecord(undefined, resolver, own)).toBe(false);
     expect(acceptCollectorRecord(collector, "0x2222222222222222222222222222222222222222", own)).toBe(false);
+  });
+});
+
+describe("addressRecordOf", () => {
+  const holder = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01";
+  it("stores the ETH address (coin type 60) under addr, lowercase", () => {
+    expect(addressRecordOf(60n, holder)).toEqual({ key: "addr", value: holder.toLowerCase() });
+  });
+  it("reads a cleared ETH address as the zero address, as addr() returns", () => {
+    expect(addressRecordOf(60n, "0x")).toEqual({ key: "addr", value: "0x0000000000000000000000000000000000000000" });
+  });
+  it("keeps other coin types under addr:<coinType>", () => {
+    expect(addressRecordOf(0x80000000n, holder)).toEqual({ key: "addr:2147483648", value: holder.toLowerCase() });
+    expect(addressRecordOf(0x80000000n, "0x")).toEqual({ key: "addr:2147483648", value: "0x0000000000000000000000000000000000000000" });
+    expect(addressRecordOf(0n, "0x00AB")).toEqual({ key: "addr:0", value: "0x00ab" });
+    expect(addressRecordOf(0n, "0x")).toEqual({ key: "addr:0", value: "0x" });
+  });
+});
+
+describe("isUnlink", () => {
+  it("is a Linked event to record 0 (linkToRecord(name, 0))", () => {
+    expect(isUnlink(0n)).toBe(true);
+    expect(isUnlink(1n)).toBe(false);
   });
 });

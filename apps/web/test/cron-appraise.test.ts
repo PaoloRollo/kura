@@ -40,7 +40,8 @@ vi.mock("@/lib/ponder-server", async () => {
       where: () => {
         const rows = table === schema.cards ? cards : [];
         return Object.assign(Promise.resolve(rows), {
-          limit: async () => (table === schema.ensNames ? [{ node: `0x${"11".repeat(32)}` }] : []),
+          // The appraisal write addresses the name by label + parent, checked against this node (namehash).
+          limit: async () => (table === schema.ensNames ? [{ label: "black-lotus-lea-1", node: "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1fa59a8" }] : []),
         });
       },
     }),

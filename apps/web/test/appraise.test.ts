@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { verifyTypedData, type Hex } from "viem";
+import { decodeFunctionData, namehash, verifyTypedData, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { APPRAISAL_TYPES, cardVaultDomain, usdcPerShardToQ96 } from "@kura/shared";
+import { APPRAISAL_TYPES, abi, cardVaultDomain, dnsEncodeName, usdcPerShardToQ96 } from "@kura/shared";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { appraisals, ensAppraisalWrites } from "@/lib/db/schema";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
-import { ENS_REWRITE_SEC, ENS_WRITE_TIMEOUT_MS, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, STALE_CLAIM_SEC, lastOldAppraisalTx, sendUnlessStuck, sendWithFreshNonce, type DbTx, type StuckCheck, type Deps, type PriceLookup } from "@/lib/appraise";
+import { ENS_REWRITE_SEC, ENS_WRITE_TIMEOUT_MS, appraisalDnsName, appraisalTextCalls, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, STALE_CLAIM_SEC, lastOldAppraisalTx, sendUnlessStuck, sendWithFreshNonce, type DbTx, type StuckCheck, type Deps, type PriceLookup } from "@/lib/appraise";
 import { marketPrices } from "@/lib/db/schema";
 import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
@@ -509,5 +509,24 @@ describe("lookupPrice", () => {
     await lookupPrice({ id: 1n, scryfallId: "ja", condition: "NM" }, null, new Scryfall({ fetchImpl }));
     const rows = await getDbForTest().select().from(marketPrices);
     expect(rows.map((r) => r.scryfallId)).toEqual(["en"]);
+  });
+});
+
+describe("appraisal ENS write calldata (ENSv2 PermissionedResolver)", () => {
+  const label = "black-lotus-lea-1";
+  const node = namehash(`${label}.kura.eth`);
+
+  it("addresses the card name by its DNS encoding, checked against the indexed node", () => {
+    expect(appraisalDnsName(label, node, "kura")).toBe(dnsEncodeName("black-lotus-lea-1.kura.eth"));
+    expect(() => appraisalDnsName(label, namehash("other.kura.eth"), "kura")).toThrow(/node/);
+  });
+
+  it("sets appraisal.usd and appraisal.at by name, for one multicall", () => {
+    const dns = dnsEncodeName(`${label}.kura.eth`);
+    const calls = appraisalTextCalls(dns, "192.00", 1_700_000_000);
+    expect(calls.map((data) => decodeFunctionData({ abi: abi.ensResolver, data }))).toEqual([
+      { functionName: "setText", args: [dns, "appraisal.usd", "192.00"] },
+      { functionName: "setText", args: [dns, "appraisal.at", "1700000000"] },
+    ]);
   });
 });

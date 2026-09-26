@@ -167,17 +167,29 @@ describe("mintedFromLogs", () => {
       encodeAbiParameters([{ type: "string" }, { type: "address" }, { type: "uint64" }], ["mox-sapphire-lea-2", addresses.cardNames, 0n]),
       0,
     ),
+    // ENSv2 PermissionedResolver: the record is created (Linked) and then written by record id.
     log(
       addresses.ensResolver,
-      encodeEventTopics({ abi: abi.ensResolver, eventName: "TextChanged", args: { node, indexedKey: "condition" } }) as Hex[],
-      encodeAbiParameters([{ type: "string" }, { type: "string" }], ["condition", "NM"]),
+      encodeEventTopics({ abi: abi.ensResolver, eventName: "Linked", args: { recordId: 1n, node } }) as Hex[],
+      encodeAbiParameters([{ type: "bytes" }], ["0x12"]),
       1,
     ),
-    log(addresses.ensResolver, encodeEventTopics({ abi: abi.ensResolver, eventName: "AddrChanged", args: { node } }) as Hex[], encodeAbiParameters([{ type: "address" }], [owner]), 2),
+    log(
+      addresses.ensResolver,
+      encodeEventTopics({ abi: abi.ensResolver, eventName: "TextUpdated", args: { recordId: 1n, keyHash: "condition" } }) as Hex[],
+      encodeAbiParameters([{ type: "string" }, { type: "string" }], ["condition", "NM"]),
+      2,
+    ),
+    log(
+      addresses.ensResolver,
+      encodeEventTopics({ abi: abi.ensResolver, eventName: "AddressUpdated", args: { recordId: 1n } }) as Hex[],
+      encodeAbiParameters([{ type: "uint256" }, { type: "bytes" }], [60n, owner]),
+      3,
+    ),
   ];
 
   it("reads CardMinted from the vault's log among the ENS logs", () => {
-    const logs = [...ensLogs, cardMinted(addresses.cardVault, 2n, "mox-sapphire-lea-2", 3)];
+    const logs = [...ensLogs, cardMinted(addresses.cardVault, 2n, "mox-sapphire-lea-2", 4)];
     expect(mintedFromLogs(logs)).toEqual({ id: 2n, label: "mox-sapphire-lea-2", to: getAddress(owner) });
   });
 
@@ -218,7 +230,7 @@ describe("shardedFromLogs", () => {
     // The CCA taking its tokens, and the factory announcing it.
     log(auction, encodeEventTopics({ abi: abi.ccaAuction, eventName: "TokensReceived" }) as Hex[], encodeAbiParameters([{ type: "uint256" }], [8n * 10n ** 18n]), 3),
     // ENS state records for the card name.
-    log(addresses.ensResolver, encodeEventTopics({ abi: abi.ensResolver, eventName: "TextChanged", args: { node: keccak256(toHex("black-lotus-lea-1.kura.eth")), indexedKey: "state" } }) as Hex[], encodeAbiParameters([{ type: "string" }, { type: "string" }], ["state", "auctioning"]), 4),
+    log(addresses.ensResolver, encodeEventTopics({ abi: abi.ensResolver, eventName: "TextUpdated", args: { recordId: 1n, keyHash: "vault.state" } }) as Hex[], encodeAbiParameters([{ type: "string" }, { type: "string" }], ["vault.state", "auctioning"]), 4),
   ];
 
   it("reads CardSharded from the vault's log among the token, auction and ENS logs", () => {
