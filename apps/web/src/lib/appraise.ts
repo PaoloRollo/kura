@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "@ponder/client";
-import { and as dbAnd, eq as dbEq, type SQL } from "drizzle-orm";
-import { parseUnits, type Address, type Hex } from "viem";
+import { and as dbAnd, eq as dbEq, sql, type SQL } from "drizzle-orm";
+import { encodeFunctionData, parseUnits, type Address, type Hex } from "viem";
 import { TTL, q96ToUsdcPerShard, type Appraisal } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { appraisals, marketPrices, scryfallCache } from "@/lib/db/schema";
@@ -48,10 +48,13 @@ export async function lookupPrice(card: { id: bigint; scryfallId: string; condit
   try {
     const quote = await marketPriceForCard(card, client, { description });
     if (!quote?.usd) return { quote, source: null, pricedAt: null };
-    const row = await cachedById(quote.source.printingId ?? card.scryfallId).catch(() => null);
+    // The price is the priced printing's (the English one on a fallback), so it is recorded under that printing's id.
+    const printingId = quote.source.printingId ?? card.scryfallId;
+    const row = await cachedById(printingId).catch(() => null);
     const date = new Date().toISOString().slice(0, 10);
-    const column = quote.source.finish === "foil" ? { usdFoil: quote.usd } : quote.source.finish === "nonfoil" ? { usd: quote.usd } : null;
-    if (column) await getDb().insert(marketPrices).values({ scryfallId: card.scryfallId, date, ...column }).onConflictDoNothing().catch(() => undefined);
+    const f = quote.source.finish;
+    const column = f === "foil" ? { usdFoil: quote.usd } : f === "etched" ? { usdEtched: quote.usd } : { usd: quote.usd };
+    await getDb().insert(marketPrices).values({ scryfallId: printingId, date, ...column }).onConflictDoNothing().catch(() => undefined);
     return { quote, source: "scryfall", pricedAt: row ? sec(row.fetchedAt) : nowS };
   } catch (e) {
     if (!(e instanceof ScryfallUnavailableError)) throw e;
@@ -92,9 +95,32 @@ export type Deps = {
   loadEnsText: (node: Hex, key: string) => Promise<string | null>;
   price: (card: CardRow, description: string | null) => Promise<PriceLookup>;
   writeEnsRecord: (node: Hex, usd: string) => Promise<void>;
+  /** APPRAISER_WRITE_ENS: whether appraisals are published on the card's ENS name at all. */
+  ensWritesEnabled: () => boolean;
+  /**
+   * Runs `fn` holding the card's cross-instance write lock; false (and `fn` not run) when another instance holds it.
+   * See pgEnsWriteLock.
+   */
+  ensWriteLock: (cardId: bigint, fn: () => Promise<void>) => Promise<boolean>;
 };
 
 const db = () => ponderServer().db;
+
+/**
+ * The card's ENS write lock across serverless instances: `pg_try_advisory_xact_lock` in a short transaction, so it is
+ * released at commit (or when Postgres ends the session: an instance frozen mid-write can't hold it past the idle timeout).
+ */
+export async function pgEnsWriteLock(cardId: bigint, fn: () => Promise<void>): Promise<boolean> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`set local idle_in_transaction_session_timeout = '60s'`);
+    const res = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtext('appraisal-ens:' || ${cardId.toString()})) as locked`);
+    // postgres-js answers the rows, PGlite (tests) an object holding them.
+    const rows = (Array.isArray(res) ? res : (res as { rows: unknown[] }).rows) as { locked: boolean }[];
+    if (!rows[0]?.locked) return false;
+    await fn();
+    return true;
+  });
+}
 
 export const defaultDeps: Deps = {
   loadCard: async (id) => ((await db().select().from(t(schema.cards)).where(eq(t(schema.cards.id), id)).limit(1)) as Row<typeof schema.cards>[])[0] ?? null,
@@ -105,25 +131,61 @@ export const defaultDeps: Deps = {
   loadEnsText: async (node, key) =>
     ((await db().select().from(t(schema.ensRecords)).where(and(eq(t(schema.ensRecords.node), node), eq(t(schema.ensRecords.key), key))).limit(1)) as Row<typeof schema.ensRecords>[])[0]?.value ?? null,
   price: (card, description) => lookupPrice(card, description),
-  // One signer, one nonce sequence: writes for different cards queue behind each other.
+  // One signer, one nonce sequence: this instance's writes queue behind each other (other instances: sendWithFreshNonce).
   writeEnsRecord: (node, usd) => {
-    if (process.env.APPRAISER_WRITE_ENS !== "true") return Promise.resolve();
     const run = ensQueue.then(() => writeAppraisalText(node, usd));
     ensQueue = run.catch(() => undefined);
     return run;
   },
+  ensWritesEnabled: () => process.env.APPRAISER_WRITE_ENS === "true",
+  ensWriteLock: pgEnsWriteLock,
 };
 
 let ensQueue: Promise<unknown> = Promise.resolve();
 
+const NONCE_ERROR = /nonce|replacement|already known/i;
+
+/** Every message on an error and its causes (viem nests the node's reason). */
+function errorText(e: unknown): string {
+  const parts: string[] = [];
+  for (let cur = e, i = 0; cur && i < 5; cur = (cur as { cause?: unknown }).cause, i++) {
+    const x = cur as { name?: string; message?: string; details?: string; shortMessage?: string };
+    parts.push(x.name ?? "", x.shortMessage ?? "", x.message ?? "", x.details ?? "");
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Sends a transaction with the signer's pending nonce read from the chain (other instances share the key, so a local
+ * nonce counter would collide), and once more with a fresh nonce if the node refuses it as a nonce or replacement clash.
+ */
+export async function sendWithFreshNonce(send: (nonce: number) => Promise<Hex>, pendingNonce: () => Promise<number>): Promise<Hex> {
+  try {
+    return await send(await pendingNonce());
+  } catch (e) {
+    if (!NONCE_ERROR.test(errorText(e))) throw e;
+    console.warn("appraise: nonce clash on the ENS write, retrying once with a fresh nonce");
+    return send(await pendingNonce());
+  }
+}
+
+/** Both records in one resolver multicall (one transaction, one nonce), sent with the chain's pending nonce. */
 async function writeAppraisalText(node: Hex, usd: string) {
-  const [{ createWalletClient, http }, { privateKeyToAccount }, { sepolia }, { abi }, { addresses }, { serverEnv }] = await Promise.all([
+  const [{ createWalletClient, createPublicClient, http }, { privateKeyToAccount }, { sepolia }, { abi }, { addresses }, { serverEnv }] = await Promise.all([
     import("viem"), import("viem/accounts"), import("viem/chains"), import("@kura/shared"), import("@/lib/chain"), import("@/env"),
   ]);
   const account = privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY as Hex);
-  const wallet = createWalletClient({ account, chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) });
-  await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.usd", usd] });
-  await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.at", String(Math.floor(Date.now() / 1000))] });
+  const transport = http(serverEnv().ALCHEMY_HTTP_URL);
+  const wallet = createWalletClient({ account, chain: sepolia, transport });
+  const reader = createPublicClient({ chain: sepolia, transport });
+  const calls = [
+    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [node, "appraisal.usd", usd] }),
+    encodeFunctionData({ abi: abi.ensResolver, functionName: "setText", args: [node, "appraisal.at", String(Math.floor(Date.now() / 1000))] }),
+  ];
+  await sendWithFreshNonce(
+    (nonce) => wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "multicall", args: [calls], nonce }),
+    () => reader.getTransactionCount({ address: account.address, blockTag: "pending" }),
+  );
 }
 
 export type AppraiseResult = {
@@ -154,6 +216,7 @@ const inFlight = new Map<string, Promise<void>>();
 export function resetAppraisalWritesForTests() {
   lastWrite.clear();
   inFlight.clear();
+  recentByDid.clear();
 }
 
 /** Whether `appraisal.usd` needs writing: a different price, or the same one published over ENS_REWRITE_SEC ago. */
@@ -164,21 +227,25 @@ export function needsEnsWrite(current: { usd: string | null; at: number | null }
 
 /**
  * Publishes the appraisal on the card's ENS name (appraisal.usd / appraisal.at), deduplicated per card: skipped while a
- * write for the card is in flight, and when neither the indexed record nor this instance's last write needs replacing.
- * Awaited with a short timeout, so a serverless request never leaves the write running unobserved.
+ * write for the card is in flight here (registered before any await), while another instance holds the card's lock, and
+ * when neither the indexed record nor this instance's last write needs replacing. Awaited with a short timeout, so a
+ * serverless request never leaves the write running unobserved.
  */
 async function publishAppraisalRecord(id: bigint, node: Hex, usd: string, deps: Deps) {
   const key = id.toString();
-  if (inFlight.has(key)) return;
+  if (!deps.ensWritesEnabled() || inFlight.has(key)) return;
   const now = Math.floor(Date.now() / 1000);
-  const mem = lastWrite.get(key);
-  if (mem && !needsEnsWrite(mem, usd, now)) return;
-  const [cur, at] = await Promise.all([deps.loadEnsText(node, "appraisal.usd"), deps.loadEnsText(node, "appraisal.at")]).catch(() => [null, null] as const);
-  if (!needsEnsWrite({ usd: cur, at: at && /^\d+$/.test(at) ? Number(at) : null }, usd, now)) return;
-  const write = deps.writeEnsRecord(node, usd).then(
-    () => { lastWrite.set(key, { usd, at: now }); },
-    (e) => { console.error("appraise: ENS record write failed", e); },
-  ).finally(() => inFlight.delete(key));
+  const write = (async () => {
+    const mem = lastWrite.get(key);
+    if (mem && !needsEnsWrite(mem, usd, now)) return;
+    const acquired = await deps.ensWriteLock(id, async () => {
+      const [cur, at] = await Promise.all([deps.loadEnsText(node, "appraisal.usd"), deps.loadEnsText(node, "appraisal.at")]).catch(() => [null, null] as const);
+      if (!needsEnsWrite({ usd: cur, at: at && /^\d+$/.test(at) ? Number(at) : null }, usd, now)) return;
+      await deps.writeEnsRecord(node, usd);
+      lastWrite.set(key, { usd, at: now });
+    });
+    if (!acquired) console.info(`appraise: card ${key}'s ENS write is running on another instance, skipped`);
+  })().catch((e) => { console.error("appraise: ENS record write failed", e); }).finally(() => inFlight.delete(key));
   inFlight.set(key, write);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<void>((r) => { timer = setTimeout(() => { console.error(`appraise: ENS write for card ${key} still pending after ${ENS_WRITE_TIMEOUT_MS} ms`); r(); }, ENS_WRITE_TIMEOUT_MS); });
@@ -224,4 +291,27 @@ export async function runAppraise(body: { cardId: string }, deps: Deps = default
     pricedAt,
     clearingUsdcPerShard: q96ToUsdcPerShard(sharding.clearingPriceQ96 ?? 0n).toString(),
   };
+}
+
+/** One signed (and stored) appraisal per DID per this long; a repeat inside it gets the same appraisal back. */
+export const APPRAISE_DID_INTERVAL_MS = 10_000;
+const recentByDid = new Map<string, { at: number; cardId: string; result: Promise<AppraiseResult> }>();
+
+/**
+ * runAppraise throttled per user (DID) in this instance: within APPRAISE_DID_INTERVAL_MS of the last one, the same card
+ * answers the same appraisal (still valid for minutes) without signing or storing a new one, another card RATE_LIMITED.
+ */
+export async function runAppraiseFor(did: string, body: { cardId: string }, deps: Deps = defaultDeps, now = Date.now()): Promise<AppraiseResult> {
+  const cardId = BigInt(body.cardId).toString();
+  const recent = recentByDid.get(did);
+  if (recent && now - recent.at < APPRAISE_DID_INTERVAL_MS) {
+    if (recent.cardId === cardId) return recent.result;
+    throw new HttpError("RATE_LIMITED", "One appraisal every 10 seconds, try again shortly", 429);
+  }
+  if (recentByDid.size > 1000) for (const [k, v] of recentByDid) if (now - v.at >= APPRAISE_DID_INTERVAL_MS) recentByDid.delete(k);
+  const result = runAppraise(body, deps);
+  recentByDid.set(did, { at: now, cardId, result });
+  // A failed attempt doesn't count against the user.
+  result.catch(() => { if (recentByDid.get(did)?.result === result) recentByDid.delete(did); });
+  return result;
 }

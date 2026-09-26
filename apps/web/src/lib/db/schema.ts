@@ -116,6 +116,7 @@ export const marketPrices = app.table(
     date: text("date").notNull(), // YYYY-MM-DD
     usd: numeric("usd"),
     usdFoil: numeric("usd_foil"),
+    usdEtched: numeric("usd_etched"),
     eur: numeric("eur"),
   },
   (t) => [primaryKey({ columns: [t.scryfallId, t.date] })],

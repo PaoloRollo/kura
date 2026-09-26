@@ -29,6 +29,13 @@
       "when": 1790390213341,
       "tag": "0003_release_tickets",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790395056933,
+      "tag": "0004_market_price_etched",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "app"."market_prices" ADD COLUMN "usd_etched" numeric;

@@ -6,12 +6,13 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { appraisals } from "@/lib/db/schema";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
-import { ENS_REWRITE_SEC, computeUsdcPerShard, lookupPrice, needsEnsWrite, resetAppraisalWritesForTests, runAppraise, type Deps, type PriceLookup } from "@/lib/appraise";
+import { ENS_REWRITE_SEC, computeUsdcPerShard, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendWithFreshNonce, type Deps, type PriceLookup } from "@/lib/appraise";
+import { marketPrices } from "@/lib/db/schema";
 import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
 import { Scryfall } from "@/lib/scryfall";
 import { marketPriceForCard } from "@/lib/market-price";
-import type { AnyDb } from "@/lib/db/client";
+import { getDb as getDbForTest, type AnyDb } from "@/lib/db/client";
 
 const KEY = ("0x" + "a1".repeat(32)) as Hex;
 const shardToken = "0x3333333333333333333333333333333333333333" as const;
@@ -31,6 +32,8 @@ function deps(over: Partial<Deps> = {}): Deps {
     loadEnsText: vi.fn(async () => null),
     price: vi.fn(async () => priced(quote("192.00"))),
     writeEnsRecord: vi.fn(async () => undefined),
+    ensWritesEnabled: () => true,
+    ensWriteLock: vi.fn(async (_id: bigint, fn: () => Promise<void>) => { await fn(); return true; }),
     ...over,
   };
 }
@@ -133,6 +136,43 @@ describe("appraise", () => {
     errSpy.mockRestore();
   });
 
+  it("registers the write in flight before any await, so concurrent requests write once", async () => {
+    const d = deps({
+      loadEnsNode: vi.fn(async () => "0xabc" as Hex),
+      loadEnsText: vi.fn(async (_n: Hex, k: string) => { if (k.startsWith("appraisal.")) await new Promise((r) => setTimeout(r, 20)); return null; }),
+    });
+    await Promise.all([runAppraise({ cardId: "1" }, d), runAppraise({ cardId: "1" }, d), runAppraise({ cardId: "1" }, d)]);
+    expect(d.writeEnsRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the write when another instance holds the card's lock, and when writes are off", async () => {
+    const locked = deps({ loadEnsNode: vi.fn(async () => "0xabc" as Hex), ensWriteLock: vi.fn(async () => false) });
+    await expect(runAppraise({ cardId: "1" }, locked)).resolves.toMatchObject({ marketUsd: "192.00" });
+    expect(locked.ensWriteLock).toHaveBeenCalledWith(1n, expect.any(Function));
+    expect(locked.writeEnsRecord).not.toHaveBeenCalled();
+    const off = deps({ loadEnsNode: vi.fn(async () => "0xabc" as Hex), ensWritesEnabled: () => false });
+    await runAppraise({ cardId: "1" }, off);
+    expect(off.ensWriteLock).not.toHaveBeenCalled();
+    expect(off.writeEnsRecord).not.toHaveBeenCalled();
+  });
+
+  it("takes the Postgres advisory lock in a transaction", async () => {
+    const fn = vi.fn(async () => undefined);
+    await expect(pgEnsWriteLock(7n, fn)).resolves.toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers the same appraisal to a DID asking again within 10 s, without a new row", async () => {
+    const d = deps();
+    const first = await runAppraiseFor("did:1", { cardId: "1" }, d, 1_000_000);
+    const again = await runAppraiseFor("did:1", { cardId: "1" }, d, 1_005_000);
+    expect(again).toBe(first);
+    await expect(runAppraiseFor("did:1", { cardId: "2" }, d, 1_006_000)).rejects.toMatchObject({ code: "RATE_LIMITED", status: 429 });
+    await runAppraiseFor("did:2", { cardId: "1" }, d, 1_006_000);
+    await runAppraiseFor("did:1", { cardId: "1" }, d, 1_010_001);
+    expect(await db.select().from(appraisals)).toHaveLength(3);
+  });
+
   it("fails cleanly without a price, without a sharding, or after redemption", async () => {
     await expect(runAppraise({ cardId: "1" }, deps({ price: vi.fn(async () => ({ quote: quote(null), source: null, pricedAt: null })) }))).rejects.toMatchObject({ code: "NO_PRICE", status: 400 });
     await expect(runAppraise({ cardId: "1" }, deps({ price: vi.fn(async () => priced(quote("0.00"))) }))).rejects.toMatchObject({ code: "NO_PRICE" });
@@ -141,6 +181,25 @@ describe("appraise", () => {
     await expect(runAppraise({ cardId: "1" }, deps({ loadCard: vi.fn(async () => ({ ...card, shardToken: null })) }))).rejects.toMatchObject({ code: "NOT_SHARDED" });
     await expect(runAppraise({ cardId: "1" }, deps({ loadSharding: vi.fn(async () => ({ ...sharding, redeemer: "0x0000000000000000000000000000000000000001" as const })) }))).rejects.toMatchObject({ code: "ALREADY_REDEEMED", status: 409 });
     await expect(runAppraise({ cardId: "1" }, deps({ loadCard: vi.fn(async () => null) }))).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+  });
+});
+
+describe("sendWithFreshNonce", () => {
+  it("sends with the pending nonce, and retries once with a fresh one on a nonce error", async () => {
+    const nonces = [4, 5];
+    const pendingNonce = vi.fn(async () => nonces.shift()!);
+    const send = vi.fn(async (nonce: number) => { if (nonce === 4) throw new Error("nonce too low: next nonce 5, tx nonce 4"); return "0xhash" as Hex; });
+    await expect(sendWithFreshNonce(send, pendingNonce)).resolves.toBe("0xhash");
+    expect(send.mock.calls.map((c) => c[0])).toEqual([4, 5]);
+  });
+
+  it("retries a replacement error once, and never retries anything else", async () => {
+    const underpriced = vi.fn(async () => { throw new Error("replacement transaction underpriced"); });
+    await expect(sendWithFreshNonce(underpriced, async () => 1)).rejects.toThrow(/replacement/);
+    expect(underpriced).toHaveBeenCalledTimes(2);
+    const broke = vi.fn(async () => { throw new Error("insufficient funds for gas"); });
+    await expect(sendWithFreshNonce(broke, async () => 1)).rejects.toThrow(/insufficient/);
+    expect(broke).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -208,5 +267,24 @@ describe("lookupPrice", () => {
     expect(display?.source.finish).toBe("foil");
     expect(display?.adjustedUsd).toBe("40");
     expect(appraised.quote).toEqual(display);
+  });
+
+  it("records the market price under the priced printing's id, etched included", async () => {
+    const etched = { ...lotus, id: "etched", finishes: ["etched"], prices: { usd: null, usd_foil: null, usd_etched: "12.50", eur: null } };
+    const { s } = client(etched);
+    await lookupPrice({ id: 1n, scryfallId: "etched", condition: "NM" }, "Sol Ring, Commander Legends, etched", s);
+    const rows = await getDbForTest().select().from(marketPrices);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ scryfallId: "etched" });
+    expect(Number(rows[0]!.usdEtched)).toBe(12.5);
+  });
+
+  it("records an English-fallback price under the English printing", async () => {
+    const ja = { ...lotus, id: "ja", lang: "ja", prices: { usd: null, usd_foil: null, eur: null } };
+    const en = { ...lotus, id: "en" };
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => new Response(JSON.stringify(String(u).includes("/lea/232/en") ? en : ja))) as unknown as typeof fetch;
+    await lookupPrice({ id: 1n, scryfallId: "ja", condition: "NM" }, null, new Scryfall({ fetchImpl }));
+    const rows = await getDbForTest().select().from(marketPrices);
+    expect(rows.map((r) => r.scryfallId)).toEqual(["en"]);
   });
 });
