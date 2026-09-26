@@ -1,10 +1,10 @@
 "use client";
 
-import { GlobeIcon, MailIcon, WalletIcon } from "lucide-react";
+import { MailIcon, WalletIcon } from "lucide-react";
 import { CardFan } from "@/components/card-fan";
 import { Button } from "@/components/kura";
 
-export type LoginMethod = "email" | "google" | "wallet";
+export type LoginMethod = "email" | "wallet";
 
 /**
  * Mobile · Login (OoX90), full screen with no top bar: the card fan and wordmark centred, one button per login method
@@ -24,9 +24,8 @@ export function CollectorLogin({ onLogin }: { onLogin: (method: LoginMethod) => 
       </div>
       <div className="flex w-full flex-col gap-2.5">
         <Button variant="inverse" size="md" className="w-full" onClick={() => onLogin("email")}><MailIcon />Continue with email</Button>
-        <Button variant="secondary" size="md" className="w-full" onClick={() => onLogin("google")}><GlobeIcon />Continue with Google</Button>
         <Button variant="secondary" size="md" className="w-full" onClick={() => onLogin("wallet")}><WalletIcon />Connect a wallet</Button>
-        <p className="pt-1 text-[12px] text-muted-foreground">With email or Google a wallet is created for you. No seed phrase, no gas fees.</p>
+        <p className="pt-1 text-[12px] text-muted-foreground">With email a wallet is created for you. No seed phrase, no gas fees.</p>
         <p className="text-[12px] text-muted-foreground">A connected wallet pays its own gas in Sepolia ETH.</p>
       </div>
     </section>

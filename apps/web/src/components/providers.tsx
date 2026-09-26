@@ -23,7 +23,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={env.NEXT_PUBLIC_PRIVY_APP_ID}
       config={{
-        loginMethods: ["email", "google", "wallet"],
+        loginMethods: ["email", "wallet"],
         embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
         defaultChain: sepolia,
         supportedChains: [sepolia],
