@@ -754,11 +754,6 @@ export const cardVaultAbi = [
             "internalType": "uint16"
           },
           {
-            "name": "forSale",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
             "name": "floorUsdcPerShard",
             "type": "uint256",
             "internalType": "uint256"
