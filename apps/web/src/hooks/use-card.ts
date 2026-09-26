@@ -8,7 +8,7 @@ import type { CardAttributes, CardAttributesMap } from "@/lib/card-attributes";
 import type { CardMetadata } from "@/lib/meta";
 import type { PriceQuote } from "@/lib/pricing";
 import { currentSharding } from "@/lib/card-view";
-import { loadPool, loadSwaps, type PoolRow, type SwapRow } from "@/lib/market";
+import { loadPool, loadSwaps, poolOfSharding, type PoolRow, type SwapRow } from "@/lib/market";
 import { schema, t, type Row } from "@/lib/ponder";
 import { useKuraUser } from "@/hooks/use-kura-user";
 
@@ -186,7 +186,9 @@ export function useCard(id: bigint): CardData {
     ensNode,
     ensName: names.data?.[0] ?? null,
     ensRecords: ensRecords.data ?? [],
-    pool: pool.data?.[0] ?? null,
+    // The latest sharding's pool: after a buyout that is the frozen pool (trading closed, the LP's payout); once the
+    // card is sharded again it is hidden until the new auction seeds its own.
+    pool: poolOfSharding(pool.data?.[0] ?? null, (current ?? allShardings[0])?.shardToken),
     swaps: swaps.data ?? [],
     poolLoading: pool.isLoading,
     isLoading: card.isLoading,
