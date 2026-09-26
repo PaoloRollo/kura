@@ -23,6 +23,7 @@ import {
   isTradable,
   livePrice,
   marketPrice,
+  maxAmountText,
   pctDelta,
   poolKeyOf,
   quoteExactIn,
@@ -213,6 +214,7 @@ function TradeForm({ c, pool, me, io, price }: { c: CardData; pool: PoolRow; me:
   const fresh = debounced === amountIn;
   const q = fresh ? plan.data : undefined;
   const over = amountIn != null && balance != null && amountIn > balance;
+  const maxText = maxAmountText(side, balance);
   const invalid = text !== "" && amountIn == null;
 
   if (done) {
@@ -262,6 +264,11 @@ function TradeForm({ c, pool, me, io, price }: { c: CardData; pool: PoolRow; me:
         placeholder={side === "buy" ? "100.00" : "1.0"}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        trailing={maxText && (
+          <button type="button" onClick={() => setText(maxText)} className="rounded-md bg-surface-2 px-2 py-1 font-mono text-[11px] text-text-2 hover:text-text">
+            Max
+          </button>
+        )}
         tone={over || invalid ? "shu" : "default"}
         hint={
           invalid ? `Enter an amount in ${unit}.`

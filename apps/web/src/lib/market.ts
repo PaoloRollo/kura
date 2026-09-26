@@ -2,7 +2,7 @@
 // live price from StateView, quotes from the V4 Quoter and the swap steps through Permit2 and the Universal Router.
 // Chain access is injected (`MarketChain`), so node tests cover all of it.
 import { desc, eq } from "@ponder/client";
-import { isAddressEqual, maxUint160, maxUint256, parseEventLogs, type Abi, type Address, type Hex, type Log } from "viem";
+import { formatUnits, isAddressEqual, maxUint160, maxUint256, parseEventLogs, type Abi, type Address, type Hex, type Log } from "viem";
 import {
   KURA_POOL_FEE,
   KURA_TICK_SPACING,
@@ -69,6 +69,15 @@ export function loadPool(db: Db, cardId: bigint): Promise<PoolRow[]> {
 export function loadSwaps(db: Db, cardId: bigint, limit: number): Promise<SwapRow[]> {
   const q = db.select() as Query<SwapRow>;
   return q.from(t(schema.swaps)).where(t(eq(t(schema.swaps.cardId), cardId))).orderBy(t(desc(t(schema.swaps.blockNumber)))).limit(limit);
+}
+
+/**
+ * The market form's Max: the whole wallet balance of what the side spends (USDC on a buy, shards on a sell), as an
+ * input value that parses back to exactly that balance, so a max sell leaves no dust behind. Null without a balance.
+ */
+export function maxAmountText(side: SwapSide, balance: bigint | null): string | null {
+  if (balance == null || balance <= 0n) return null;
+  return formatUnits(balance, side === "buy" ? 6 : 18);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -113,6 +113,21 @@ describe("MarketPanel", () => {
     expect((screen.getByRole("button", { name: /Sell shards/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("Max fills the whole shard balance on a sell and the whole USDC balance on a buy", async () => {
+    renderPanel(withPool(), KENJI);
+    fireEvent.click(await screen.findByRole("button", { name: "Max" }));
+    expect((screen.getByLabelText("You pay") as HTMLInputElement).value).toBe("10000");
+    fireEvent.click(screen.getByRole("radio", { name: "Sell" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Max" }));
+    expect((screen.getByLabelText("You sell") as HTMLInputElement).value).toBe("3");
+    await waitFor(() => expect((screen.getByRole("button", { name: /Sell shards/ }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("shows no Max to a logged-out viewer, who has no balance", () => {
+    renderPanel(withPool(), null);
+    expect(screen.queryByRole("button", { name: "Max" })).toBeNull();
+  });
+
   it("asks a logged-out viewer to log in, and still quotes", async () => {
     renderPanel(withPool(), null);
     fireEvent.change(screen.getByLabelText("You pay"), { target: { value: "100" } });
