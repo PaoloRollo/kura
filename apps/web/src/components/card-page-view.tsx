@@ -31,7 +31,7 @@ const CardAnalytics = dynamic(() => import("@/components/card-analytics").then((
 /** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
 export function CardTabs({ tab, href }: { tab: CardTab; href: (t: CardTab) => string }) {
   return (
-    <nav aria-label="Card sections" className="flex gap-8 overflow-x-auto border-b border-border">
+    <nav aria-label="Card sections" className="flex gap-8 overflow-x-auto overflow-y-hidden border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {CARD_TABS.map((t) => (
         <Link
           key={t.value}
@@ -149,7 +149,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPa
       <MobileNav className="-mt-2 -mb-4" />
       <CardTabs tab={tab} href={tabHref} />
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
-        <CardArtColumn identity={identity} condition={card.condition} released={released}>
+        <CardArtColumn identity={identity} condition={card.condition} language={card.language} ensName={card.ensName} finish={c.price?.source.finish} released={released}>
           <EnsRecords records={c.ensRecords} revoked={revoked} className="max-lg:hidden" />
         </CardArtColumn>
         <div className="flex min-w-0 flex-col gap-8">
