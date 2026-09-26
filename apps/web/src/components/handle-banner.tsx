@@ -44,6 +44,8 @@ export function HandleBanner({ forceShow = false }: { forceShow?: boolean }) {
         <Link href="/app/onboarding" className="font-medium text-shu hover:underline">
           Claim your .{addresses.ensParentLabel}.eth handle
         </Link>
+        {" · "}
+        <Link href="/app/profile#qr" className="font-medium text-text hover:underline">Show my QR</Link>
       </p>
       <button
         type="button"

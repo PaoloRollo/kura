@@ -4,12 +4,20 @@ import type * as React from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { AtSignIcon, BadgeCheckIcon, CheckIcon, CopyIcon, ExternalLinkIcon, KeyRoundIcon, LogOutIcon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { getAddress } from "viem";
 import { AddressName } from "@/components/address-name";
 import { Button } from "@/components/kura";
 import { shortAddress, usdc } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const FAUCET_URL = "https://faucet.circle.com";
+
+/**
+ * What the collector QR encodes: the plain checksummed wallet address, exactly what the vendor station's QrScanner
+ * accepts (it strips an optional "ethereum:" prefix, checks isAddress and takes getAddress).
+ */
+export const collectorQrPayload = (me: `0x${string}`) => getAddress(me);
 
 export type ProfileViewProps = {
   me: `0x${string}`;
@@ -65,6 +73,16 @@ export function ProfileView({ me, handle, usdc: balance, verified, wallet, embed
         <p className="text-[12px] text-text-2">
           {empty ? "You need USDC to bid. " : ""}From faucet.circle.com. {embedded ? "Gas is always covered by Kura." : "Your wallet pays its own gas."}
         </p>
+      </section>
+
+      {/* The vendor scans this at the station to mint a card straight to this wallet. */}
+      <section id="qr" className="flex scroll-mt-24 flex-col items-center gap-3 rounded-2xl border border-border bg-surface p-5 text-center">
+        <span className="self-start text-[12px] text-text-2">Your collector QR</span>
+        <div role="img" aria-label={`Collector QR code for ${collectorQrPayload(me)}`} data-payload={collectorQrPayload(me)} className="rounded-xl bg-white p-3">
+          <QRCodeSVG value={collectorQrPayload(me)} size={176} level="M" marginSize={0} aria-hidden />
+        </div>
+        <span className={cn("max-w-full truncate font-mono text-[15px]", handle ? "text-kin" : "text-text-2")}>{handle ?? shortAddress(me)}</span>
+        <p className="text-[12px] text-text-2">Show this at the vendor&apos;s station: the card you hand in is minted straight to your wallet.</p>
       </section>
 
       <div className="flex flex-col">

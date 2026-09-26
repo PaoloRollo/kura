@@ -6,7 +6,7 @@ import Link from "next/link";
 import { asc, eq } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
 import {
-  AtSignIcon, BadgeCheckIcon, BoxIcon, ChevronRightIcon, LandmarkIcon, CircleDollarSignIcon, CompassIcon, GavelIcon, LayersIcon, PackageCheckIcon, PackageIcon, TrendingDownIcon, TrendingUpIcon,
+  AtSignIcon, BadgeCheckIcon, BoxIcon, ChevronRightIcon, LandmarkIcon, CircleDollarSignIcon, CompassIcon, GavelIcon, LayersIcon, PackageCheckIcon, PackageIcon, QrCodeIcon, TrendingDownIcon, TrendingUpIcon,
 } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { Button, CardArt, Pill } from "@/components/kura";
@@ -414,7 +414,19 @@ export function PortfolioView({ d, tab, onTab }: PortfolioViewProps) {
       {d.isLoading ? (
         <IndexerLoading title="Loading your portfolio" className="max-w-md" />
       ) : empty ? (
-        <Empty className="md:m-0" icon={<BoxIcon />} label="Empty portfolio" title="No shards yet" body="Browse live auctions to own a piece of a card." cta={<Button asChild variant="secondary" size="compact"><Link href="/app"><CompassIcon aria-hidden />Explore auctions</Link></Button>} />
+        <Empty
+          className="md:m-0"
+          icon={<BoxIcon />}
+          label="Empty portfolio"
+          title="No shards yet"
+          body="Browse live auctions to own a piece of a card, or bring a card to the vendor: they scan your QR and mint it to you."
+          cta={
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="secondary" size="compact"><Link href="/app"><CompassIcon aria-hidden />Explore auctions</Link></Button>
+              <Button asChild variant="secondary" size="compact"><Link href="/app/profile#qr"><QrCodeIcon aria-hidden />Show my QR</Link></Button>
+            </div>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="flex flex-col gap-4 md:rounded-2xl md:border md:border-border md:bg-surface">
