@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ArrowRightIcon, BoxIcon, GavelIcon, LayersIcon, ScanFaceIcon, ScanLineIcon, StoreIcon } from "lucide-react";
-import { CardArt } from "@/components/kura";
+import { ArrowRightIcon, BoxIcon, LayersIcon, ScanFaceIcon, ScanLineIcon, StoreIcon } from "lucide-react";
+import { HeroCards } from "@/components/hero-cards";
 import { BuiltOn, LandingFooter, LandingTopBar } from "@/components/landing";
 import { Button } from "@/components/ui/button";
 
@@ -34,34 +34,6 @@ const STEPS = [
     proof: "81.3% ≥ 80%",
   },
 ] as const;
-
-/** The hero's fanned cards, a live bid on top and the 蔵 seal glowing behind. */
-function HeroCards() {
-  return (
-    <div aria-hidden className="relative mx-auto h-[24rem] w-full max-w-[34rem] sm:h-[30rem] lg:mx-0 lg:h-[34rem] lg:max-w-none">
-      <span
-        lang="ja"
-        className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-[30%] -translate-y-1/2 font-display text-[22rem] leading-none text-shu/[0.12] select-none sm:text-[30rem] lg:text-[36rem]"
-      >
-        蔵
-      </span>
-      <div className="absolute top-1/2 left-1/2 w-[clamp(9.5rem,17vw,15.5rem)] -translate-x-[95%] -translate-y-[40%] -rotate-[16deg]">
-        <CardArt src="/cards/time-walk.webp" alt="" loading="eager" className="w-full brightness-90" />
-      </div>
-      <div className="absolute top-1/2 left-1/2 w-[clamp(9.5rem,17vw,15.5rem)] translate-x-[18%] -translate-y-[52%] rotate-[14deg]">
-        <CardArt src="/cards/mox-sapphire.webp" alt="" loading="eager" className="w-full brightness-90" />
-      </div>
-      <div className="absolute top-1/2 left-1/2 w-[clamp(10.5rem,18vw,15.5rem)] -translate-x-[42%] -translate-y-[62%]">
-        <CardArt src="/cards/black-lotus.webp" alt="" loading="eager" className="w-full shadow-[0_30px_70px_#000000c0]" />
-      </div>
-      <div className="absolute top-[72%] left-1/2 flex -translate-x-[48%] items-center gap-2.5 rounded-lg border border-border bg-bg/90 px-3.5 py-2 text-[13px] whitespace-nowrap text-text shadow-toast backdrop-blur">
-        <GavelIcon className="size-4 text-kin" />
-        <span className="font-mono text-[12px]">kenji.kura.eth</span> bid $1,712 per shard
-        <span className="text-[11px] text-muted-foreground">2s</span>
-      </div>
-    </div>
-  );
-}
 
 export default function Home() {
   return (
