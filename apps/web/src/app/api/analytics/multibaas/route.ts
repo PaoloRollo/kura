@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
  * volume, amounts as decimal strings). 503 UNCONFIGURED without MULTIBAAS_URL / MULTIBAAS_API_KEY; 503 RANGE_UNSUPPORTED
  * for 7d and all, without calling MultiBaas (its plan keeps only the last MB_RETENTION_HOURS of events); 503
  * UNAVAILABLE when MultiBaas is down, slow (over MULTIBAAS_BUDGET_MS in all), on another chain, unlinked, still
- * syncing, behind, missing a query, or answers rows of another shape (logged). The dashboard then shows the indexer's
- * figures. The API key never leaves the server.
+ * syncing, linked too recently to cover the window, missing a query, or answers rows of another shape (logged, and
+ * reused for FAILURE_TTL_MS). The dashboard then shows the indexer's figures. The API key never leaves the server.
  */
 export async function GET(req: Request) {
   const range = parseRange(new URL(req.url).searchParams.get("range"));

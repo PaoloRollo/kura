@@ -21,9 +21,6 @@ export function multibaasConfig(env: Record<string, string | undefined> = proces
   return { url: url.replace(/\/+$/, ""), apiKey };
 }
 
-/** Blocks MultiBaas's CardVault index may trail the chain head before its figures count as stale (about 1 h). */
-export const MAX_SYNC_LAG_BLOCKS = 300;
-
 /**
  * What the MultiBaas plan keeps (GET /api/v0/plan on the deployment): event logs for event_logging_retention_hours = 72,
  * past logs only past_logs_max_depth = 100 blocks back from when a contract is linked, event_query_max_results = 50
@@ -46,7 +43,11 @@ export const BLOCK_SEC = 12;
  */
 export const MULTIBAAS_BUDGET_MS = 4_500;
 
-type IndexingStatus = { isProcessingPastLogs: boolean; latestBlockNumber: number; startBlockNumber: number };
+/**
+ * The linked contract's indexing status. Its `latestBlockNumber` is not read: live, it stays at the link-time block
+ * while the contract emits nothing, so a head-minus-latest lag would call a quiet, healthy vault stale (plan U6).
+ */
+type IndexingStatus = { isProcessingPastLogs: boolean; startBlockNumber: number };
 type ChainStatus = { chainID: number; blockNumber: number };
 
 const blockNumber = (v: unknown, field: string): number => {
@@ -54,43 +55,48 @@ const blockNumber = (v: unknown, field: string): number => {
   throw new MbShapeError(`${field}: expected a block number, got ${typeof v}`);
 };
 
+/**
+ * Two phases, to spend the plan's 30,000 calls a month: the chain status and the vault's indexing status first (2
+ * calls), and the four list queries only once those pass. A guard failure costs 2 calls, not 6, and its reason is the
+ * one logged, not a query's 404 that happened to lose the race.
+ */
 async function load(cfg: MbConfig, range: MultibaasRange, now: number, f: MbFetch): Promise<MultibaasFigures> {
   const opts = { fetch: f };
   const statusPath = `/chains/ethereum/addresses/${MB.addressAlias}/contracts/${MB.contractLabel}/status`;
-  const [chain, status, settles, redeems, mints, fees] = await Promise.all([
+  const [chain, status] = await Promise.all([
     mbRequest<ChainStatus>(cfg, "GET", "/chains/ethereum/status", opts),
     // Live, while the kura_vault alias doesn't exist this answers 400 "invalid address", not 404.
     mbRequest<IndexingStatus>(cfg, "GET", statusPath, opts).catch((e: unknown) => {
       if (e instanceof MultibaasError && e.status === 400) return null;
       throw e;
     }),
-    mbQueryRows(cfg, MB_QUERIES.settles, opts),
-    mbQueryRows(cfg, MB_QUERIES.redeems, opts),
-    mbQueryRows(cfg, MB_QUERIES.mints, opts),
-    mbQueryRows(cfg, MB_QUERIES.fees, opts),
   ]);
   if (!chain) throw new MultibaasError(404, "MultiBaas answered no chain status");
   const vault = deployments();
   if (chain.chainID !== vault.chainId) throw new MultibaasError(null, `MultiBaas is on chain ${String(chain.chainID)}, the vault on ${vault.chainId}`);
   if (!status) throw new MultibaasError(404, "the CardVault is not linked in MultiBaas (run scripts/multibaas-setup.ts --apply)");
   if (status.isProcessingPastLogs) throw new MultibaasError(503, "MultiBaas is still syncing past CardVault events");
-  const head = blockNumber(chain.blockNumber, "blockNumber");
-  const lag = head - blockNumber(status.latestBlockNumber, "latestBlockNumber");
-  if (lag > MAX_SYNC_LAG_BLOCKS) throw new MultibaasError(503, `MultiBaas's CardVault index is ${lag} blocks behind the chain`);
   // The linked contract's own history must reach back over the whole window (or to the vault's deployment): linked
   // with a recent startingBlock, MultiBaas holds nothing before it, and the window's figures would read as too low.
+  const head = blockNumber(chain.blockNumber, "blockNumber");
   const start = blockNumber(status.startBlockNumber, "startBlockNumber");
   const need = Math.ceil((now - rangeWindow(range, now, null).from) / BLOCK_SEC);
   if (start > vault.deployBlock && head - start < need)
     throw new MultibaasError(503, `MultiBaas has indexed the CardVault since block ${start}, not the whole ${range} window (${need} blocks)`);
+  const [settles, redeems, mints, fees] = await Promise.all([
+    mbQueryRows(cfg, MB_QUERIES.settles, opts),
+    mbQueryRows(cfg, MB_QUERIES.redeems, opts),
+    mbQueryRows(cfg, MB_QUERIES.mints, opts),
+    mbQueryRows(cfg, MB_QUERIES.fees, opts),
+  ]);
   return figuresFromRows({ settles, redeems, mints, fees, raisedTotal: [], feesTotal: [] }, range, now);
 }
 
 /**
- * The dashboard's 24h MultiBaas figures: the chain head and the vault's indexing status, then the four list Event Queries,
- * all in parallel (each request capped at MB_TIMEOUT_MS, the whole load at `budgetMs`). Throws MultibaasError when
- * MultiBaas is down, slow, on another chain, the vault is not linked, still syncing past logs, over MAX_SYNC_LAG_BLOCKS
- * behind or linked too recently to cover the window, or a query is missing; MbShapeError when a row isn't what the queries select. On any
+ * The dashboard's 24h MultiBaas figures: the chain head and the vault's indexing status, then (only if those pass) the
+ * four list Event Queries (each request capped at MB_TIMEOUT_MS, the whole load at `budgetMs`). Throws MultibaasError
+ * when MultiBaas is down, slow, on another chain, the vault is not linked, still syncing past logs or linked too
+ * recently to cover the window, or a query is missing; MbShapeError when a row isn't what the queries select. On any
  * failure the requests still in flight (other queries' later pages) are aborted.
  */
 export async function loadMultibaasFigures(
@@ -119,22 +125,47 @@ export async function loadMultibaasFigures(
   }
 }
 
-/** How long one range's answer is reused: every dashboard polls, MultiBaas sees at most one burst per range per 15 s. */
-export const FIGURES_TTL_MS = 15_000;
-const memo = new Map<MultibaasRange, { at: number; value: Promise<MultibaasFigures> }>();
+/**
+ * How long a good answer is reused, counted from when its load resolved. The plan allows 30,000 calls a month (about
+ * 1,000 a day) and a load costs 6+: at one load per 10 min that is about 900 a day however many tabs poll. Vault events
+ * reset it sooner through invalidateMultibaasFigures (the MultiBaas webhook).
+ */
+export const FIGURES_TTL_MS = 10 * 60_000;
+/** How long a failure is reused (the route still answers 503, logging the same cause): 2 calls every 2 min at most. */
+export const FAILURE_TTL_MS = 120_000;
 
-export function resetMultibaasMemo() {
+type Entry = { value: Promise<MultibaasFigures>; settled: null | { at: number; ok: boolean } };
+const memo = new Map<MultibaasRange, Entry>();
+let generation = 0;
+
+/**
+ * Drops every memoised answer, good or failed, so the next request loads afresh: for the webhook route, when MultiBaas
+ * reports a new CardVault event. A load already in flight still answers its callers but is not kept.
+ */
+export function invalidateMultibaasFigures() {
+  generation += 1;
   memo.clear();
 }
 
-/** loadMultibaasFigures memoised per range for FIGURES_TTL_MS, concurrent callers sharing one load; failures are dropped. */
-export function cachedMultibaasFigures(cfg: MbConfig, range: MultibaasRange, nowMs = Date.now()): Promise<MultibaasFigures> {
+/**
+ * loadMultibaasFigures memoised per range: concurrent callers share one load; a good answer is reused for
+ * FIGURES_TTL_MS and a failure (its error rethrown, so the route logs the cause) for FAILURE_TTL_MS, both counted
+ * from when the load settled.
+ */
+export function cachedMultibaasFigures(cfg: MbConfig, range: MultibaasRange): Promise<MultibaasFigures> {
+  const nowMs = Date.now();
   const hit = memo.get(range);
-  if (hit && nowMs - hit.at < FIGURES_TTL_MS) return hit.value;
+  if (hit && (!hit.settled || nowMs - hit.settled.at < (hit.settled.ok ? FIGURES_TTL_MS : FAILURE_TTL_MS))) return hit.value;
+  const gen = generation;
   const value = loadMultibaasFigures(cfg, range, Math.floor(nowMs / 1000));
-  memo.set(range, { at: nowMs, value });
-  value.catch(() => {
-    if (memo.get(range)?.value === value) memo.delete(range);
-  });
+  const entry: Entry = { value, settled: null };
+  memo.set(range, entry);
+  const settle = (ok: boolean) => {
+    if (gen === generation && memo.get(range) === entry) entry.settled = { at: Date.now(), ok };
+  };
+  value.then(
+    () => settle(true),
+    () => settle(false),
+  );
   return value;
 }

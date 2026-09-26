@@ -2,14 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MB_QUERIES, MultibaasError } from "@kura/shared";
 import { GET } from "@/app/api/analytics/multibaas/route";
 import { deployments } from "@/lib/deployments";
-import { MAX_SYNC_LAG_BLOCKS, MULTIBAAS_BUDGET_MS, loadMultibaasFigures, multibaasConfig, resetMultibaasMemo } from "@/lib/multibaas/server";
+import {
+  FAILURE_TTL_MS,
+  FIGURES_TTL_MS,
+  MULTIBAAS_BUDGET_MS,
+  invalidateMultibaasFigures,
+  loadMultibaasFigures,
+  multibaasConfig,
+} from "@/lib/multibaas/server";
 
 const KEY = "test-key-SECRET";
 const now = Math.floor(Date.now() / 1000);
 const iso = (t: number) => new Date(t * 1000).toISOString();
 const HEAD = deployments().deployBlock + 100_000;
 type Status = { isProcessingPastLogs: boolean; latestBlockNumber: number; startBlockNumber: number };
-const linked = (): Status => ({ isProcessingPastLogs: false, latestBlockNumber: HEAD, startBlockNumber: HEAD - 10_000 });
+// live: latestBlockNumber stays at the link-time block while the contract emits nothing; the loader ignores it
+const linked = (): Status => ({ isProcessingPastLogs: false, latestBlockNumber: HEAD - 10_000, startBlockNumber: HEAD - 10_000 });
 const mb = {
   head: HEAD,
   chainID: 11155111,
@@ -17,12 +25,16 @@ const mb = {
   rows: {} as Record<string, unknown[]>,
   fail: null as null | string,
   calls: [] as { url: string; auth: string | undefined }[],
+  /** ms the fake clock moves on each request, so a load resolves later than it starts */
+  tick: 0,
 };
+let clock = 0;
 const reply = (status: number, result?: unknown) =>
   new Response(JSON.stringify({ status, message: status === 200 ? "success" : "nope", ...(result === undefined ? {} : { result }) }), { status });
 
 async function fakeFetch(url: string, init: RequestInit): Promise<Response> {
   mb.calls.push({ url, auth: (init.headers as Record<string, string>).authorization });
+  clock += mb.tick;
   if (mb.fail === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
   const u = new URL(url);
   const path = u.pathname.replace(/^\/api\/v0/, "");
@@ -48,6 +60,7 @@ function arrange() {
   mb.status = linked();
   mb.fail = null;
   mb.calls = [];
+  mb.tick = 0;
   mb.rows = {
     [MB_QUERIES.settles]: [{ at: iso(now - 3600), block: HEAD - 300, tx: "0x1", card: "1", raised: "5136000000", fee: "128400000", graduated: true }],
     [MB_QUERIES.redeems]: [],
@@ -62,9 +75,11 @@ describe("GET /api/analytics/multibaas", () => {
   beforeEach(() => {
     process.env.MULTIBAAS_URL = "https://mb.test";
     process.env.MULTIBAAS_API_KEY = KEY;
-    resetMultibaasMemo();
+    invalidateMultibaasFigures();
     arrange();
     vi.stubGlobal("fetch", vi.fn(fakeFetch));
+    clock = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -81,7 +96,7 @@ describe("GET /api/analytics/multibaas", () => {
     expect(body).toMatchObject({ source: "multibaas", range: "24h", raised: "5136000000", raisedAuctions: 1, fees: "128400000", mintedInRange: 1, totalMints: 1 });
     expect(body.volume).toHaveLength(24);
     expect(JSON.stringify(body)).not.toContain(KEY);
-    expect(mb.calls.length).toBeGreaterThan(0);
+    expect(mb.calls).toHaveLength(6); // chain status, indexing status, then the four list queries
     for (const c of mb.calls) {
       expect(c.url.startsWith("https://mb.test/api/v0/")).toBe(true);
       expect(c.auth).toBe(`Bearer ${KEY}`);
@@ -110,30 +125,40 @@ describe("GET /api/analytics/multibaas", () => {
     expect(multibaasConfig({ MULTIBAAS_URL: " https://mb.test/ ", MULTIBAAS_API_KEY: " k " })).toEqual({ url: "https://mb.test", apiKey: "k" });
   });
 
-  it("answers 503 UNAVAILABLE when MultiBaas errors, times out, is unlinked, still syncing, behind, too new, or lacks a query", async () => {
+  it("answers 503 UNAVAILABLE when MultiBaas errors, times out, is unlinked, still syncing, too new, or lacks a query", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const cases: [string, () => void][] = [
-      ["a failing query", () => { mb.fail = `/queries/${MB_QUERIES.settles}`; }],
-      ["a timeout", () => { mb.fail = "timeout"; }],
-      ["an unlinked vault", () => { mb.status = null; }],
-      ["an unaliased vault", () => { mb.status = "unaliased"; }],
-      ["another chain", () => { mb.chainID = 1; }],
-      ["a sync in progress", () => { mb.status = { ...linked(), isProcessingPastLogs: true }; }],
-      ["an index behind the chain", () => { mb.head = HEAD + MAX_SYNC_LAG_BLOCKS + 1; }],
-      ["a link newer than the window", () => { mb.status = { ...linked(), startBlockNumber: HEAD - 95 }; }],
-      ["a status without its start block", () => { mb.status = { isProcessingPastLogs: false, latestBlockNumber: HEAD } as Status; }],
-      ["a missing saved query", () => { delete mb.rows[MB_QUERIES.mints]; }],
+    // [name, change, calls spent, the cause logged]: a guard failure never reaches the four queries
+    const cases: [string, () => void, number, RegExp][] = [
+      ["a failing query", () => { mb.fail = `/queries/${MB_QUERIES.settles}`; }, 6, /500/],
+      ["a timeout", () => { mb.fail = "timeout"; }, 2, /./],
+      ["a failing chain status", () => { mb.fail = "/chains/ethereum/status"; }, 2, /500/],
+      ["an unlinked vault", () => { mb.status = null; }, 2, /not linked/],
+      ["an unaliased vault", () => { mb.status = "unaliased"; }, 2, /not linked/],
+      ["another chain", () => { mb.chainID = 1; }, 2, /on chain 1/],
+      ["a sync in progress", () => { mb.status = { ...linked(), isProcessingPastLogs: true }; }, 2, /still syncing/],
+      ["a link newer than the window", () => { mb.status = { ...linked(), startBlockNumber: HEAD - 95 }; }, 2, /not the whole 24h window/],
+      ["a status without its start block", () => { mb.status = { isProcessingPastLogs: false, latestBlockNumber: HEAD } as Status; }, 2, /startBlockNumber/],
+      ["a missing saved query", () => { delete mb.rows[MB_QUERIES.mints]; }, 6, /kura_mints is missing/],
     ];
-    for (const [name, change] of cases) {
-      resetMultibaasMemo();
+    for (const [name, change, calls, cause] of cases) {
+      invalidateMultibaasFigures();
       arrange();
       change();
+      warn.mockClear();
       const res = await call();
       expect(res.status, name).toBe(503);
       expect((await res.json()).error.code, name).toBe("UNAVAILABLE");
+      expect(mb.calls, name).toHaveLength(calls);
+      expect(warn, name).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0]), name).toMatch(cause);
+      expect(String(warn.mock.calls[0]![0]), name).not.toContain(KEY);
     }
-    expect(warn).toHaveBeenCalledTimes(cases.length);
-    for (const [msg] of warn.mock.calls) expect(String(msg)).not.toContain(KEY);
+  });
+
+  it("serves a quiet vault whose indexing status still shows the link-time block", async () => {
+    mb.head = HEAD + 50_000;
+    mb.status = { isProcessingPastLogs: false, latestBlockNumber: HEAD - 10_000, startBlockNumber: HEAD - 10_000 };
+    expect((await call()).status).toBe(200);
   });
 
   it("serves a vault younger than the window once MultiBaas indexed it from its deployment", async () => {
@@ -146,23 +171,75 @@ describe("GET /api/analytics/multibaas", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     mb.rows[MB_QUERIES.settles] = [{ at: iso(now - 3600), block: 900, tx: "0x1", card: "1", raised: "5136.000000", fee: "0", graduated: true }];
     expect((await call()).status).toBe(503);
-    resetMultibaasMemo();
+    invalidateMultibaasFigures();
     mb.rows[MB_QUERIES.settles] = [{ at: iso(now - 3600), block: 900, tx: "0x1", card: "1", raised: 1e21, fee: "0", graduated: true }];
     expect((await call()).status).toBe(503);
   });
 
-  it("memoises a good answer for 15 s, never a failure", async () => {
-    await call();
-    const n = mb.calls.length;
-    await call();
-    expect(mb.calls.length).toBe(n);
+  it("reuses a good answer for FIGURES_TTL_MS (10 min), counted from when its load resolved", async () => {
+    expect(FIGURES_TTL_MS).toBe(600_000);
+    mb.tick = 30_000; // six requests: the load resolves 3 min after it started
+    const t0 = clock;
+    expect((await call()).status).toBe(200);
+    expect(clock).toBe(t0 + 180_000);
+    mb.tick = 0;
+    clock = t0 + FIGURES_TTL_MS + 60_000; // past the TTL from the start, inside it from the resolve
+    expect((await call()).status).toBe(200);
+    expect(mb.calls).toHaveLength(6);
+    clock = t0 + 180_000 + FIGURES_TTL_MS;
+    expect((await call()).status).toBe(200);
+    expect(mb.calls).toHaveLength(12);
+  });
 
+  it("shares one load between concurrent requests", async () => {
+    const answers = await Promise.all([call(), call(), call()]);
+    expect(answers.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(mb.calls).toHaveLength(6);
+  });
+
+  it("reuses a failure for FAILURE_TTL_MS (2 min), still answering 503 and logging its cause", async () => {
+    expect(FAILURE_TTL_MS).toBe(120_000);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mb.status = null;
+    expect((await call()).status).toBe(503);
+    expect(mb.calls).toHaveLength(2);
+    mb.status = linked(); // fixed, but the failure is still reused
+    clock += FAILURE_TTL_MS - 1;
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe("UNAVAILABLE");
+    expect(mb.calls).toHaveLength(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+    for (const [msg] of warn.mock.calls) expect(String(msg)).toMatch(/not linked/);
+    clock += 1;
+    expect((await call()).status).toBe(200);
+    expect(mb.calls).toHaveLength(8);
+  });
+
+  it("invalidateMultibaasFigures drops a good answer and a failure, and never keeps a load it overtook", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    resetMultibaasMemo();
+    await call();
+    invalidateMultibaasFigures();
+    await call();
+    expect(mb.calls).toHaveLength(12);
+
+    invalidateMultibaasFigures();
+    mb.calls = [];
     mb.fail = "timeout";
     expect((await call()).status).toBe(503);
     mb.fail = null;
+    invalidateMultibaasFigures();
     expect((await call()).status).toBe(200);
+    expect(mb.calls).toHaveLength(8);
+
+    // an event arrives while a load is in flight: that load answers its caller but the next request loads afresh
+    invalidateMultibaasFigures();
+    mb.calls = [];
+    const inFlight = call();
+    invalidateMultibaasFigures();
+    expect((await inFlight).status).toBe(200);
+    expect((await call()).status).toBe(200);
+    expect(mb.calls).toHaveLength(12);
   });
 
   it("reads a query past MB_PAGE rows page by page, 50 at a time", async () => {
@@ -196,7 +273,7 @@ describe("loadMultibaasFigures's overall budget", () => {
     expect(err).toBeInstanceOf(MultibaasError);
     expect((err as Error).message).toMatch(/took over 50 ms/);
     expect(Date.now() - t0).toBeLessThan(1_000);
-    expect(signals).toHaveLength(6);
+    expect(signals).toHaveLength(2); // the queries wait for the two status calls
     expect(signals.every((s) => s.aborted)).toBe(true);
   });
 
