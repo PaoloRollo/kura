@@ -72,6 +72,15 @@ export function loadSwaps(db: Db, cardId: bigint, limit: number): Promise<SwapRo
 }
 
 /**
+ * The card's pool, only when it belongs to the given sharding (the card's latest). Pools are one row per card, so a card
+ * that was bought out and sharded again keeps the earlier sharding's frozen pool until its new auction seeds a new one.
+ */
+export function poolOfSharding(pool: PoolRow | null, shardToken: string | null | undefined): PoolRow | null {
+  if (!pool || !shardToken) return null;
+  return pool.shardToken.toLowerCase() === shardToken.toLowerCase() ? pool : null;
+}
+
+/**
  * The market form's Max: the whole wallet balance of what the side spends (USDC on a buy, shards on a sell), as an
  * input value that parses back to exactly that balance, so a max sell leaves no dust behind. Null without a balance.
  */

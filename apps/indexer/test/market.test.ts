@@ -158,3 +158,10 @@ describe("traderFromLogs", () => {
     expect(traderFromLogs({ logs: undefined, side: "buy", shardToken: undefined, poolManager: POOL_MANAGER, fallback: RELAYER })).toBe(RELAYER);
   });
 });
+
+describe("seededPoolRow on a re-sharded card", () => {
+  it("is a fresh, live pool: the earlier sharding's freeze, counters and fees don't carry over", () => {
+    const row = seededPoolRow({ cardId: 1n, poolId: POOL_ID, shardToken: SHARD_TOKEN, sqrtPriceX96: Q96, shardIsCurrency0: true, shardAmount: SHARD, usdcAmount: USDC, lpOwner: ALICE, timestamp: 1n });
+    expect(row).toMatchObject({ frozen: false, swapCount: 0, volumeUsdc: 0n, feesShards: 0n, feesUsdc: 0n, lastSwapAt: null, shardToken: SHARD_TOKEN });
+  });
+});

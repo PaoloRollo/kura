@@ -10,6 +10,7 @@ import {
   livePrice,
   loadPool,
   maxAmountText,
+  poolOfSharding,
   loadSwaps,
   marketPrice,
   pctDelta,
@@ -292,5 +293,20 @@ describe("maxAmountText", () => {
   it("offers no max without a balance", () => {
     expect(maxAmountText("buy", null)).toBeNull();
     expect(maxAmountText("sell", 0n)).toBeNull();
+  });
+});
+
+describe("poolOfSharding", () => {
+  // A bought-out and re-sharded card keeps its earlier sharding's frozen pool row until the new auction seeds one.
+  it("is the pool only when it belongs to the card's latest sharding", () => {
+    const p = pool(LOW);
+    expect(poolOfSharding(p, LOW)).toBe(p);
+    expect(poolOfSharding(p, LOW.toUpperCase().replace("0X", "0x"))).toBe(p);
+    expect(poolOfSharding(p, HIGH)).toBeNull();
+  });
+
+  it("is null without a pool or without a sharding", () => {
+    expect(poolOfSharding(null, LOW)).toBeNull();
+    expect(poolOfSharding(pool(LOW), null)).toBeNull();
   });
 });
