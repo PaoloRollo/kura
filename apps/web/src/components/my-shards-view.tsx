@@ -13,6 +13,7 @@ import { Credit } from "@/components/card-header";
 import { Button, CardArt, EnsName, RedemptionMeter } from "@/components/kura";
 import { MobileNav } from "@/components/mobile-nav";
 import { SendShardsSheet } from "@/components/send-shards";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useVaultIo } from "@/components/vault-io";
 import type { CardData } from "@/hooks/use-card";
 import { shardsShort } from "@/lib/buyout";
@@ -110,7 +111,10 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** My live balanceOf and the token's totalSupply, for the send sheet; the indexer's values until they load. */
+/**
+ * My live balanceOf and the token's totalSupply; the indexer's values until they load. `pending` while the live read is
+ * in flight (the indexer's values may then be unknown too, see CardData.holdersLoading).
+ */
 function useLiveBalance(token: Address | null, me: Address | null, fallback: { balance: bigint; supply: bigint }) {
   const io = useVaultIo();
   const q = useQuery({
@@ -125,7 +129,7 @@ function useLiveBalance(token: Address | null, me: Address | null, fallback: { b
     enabled: !!token && !!me,
     refetchInterval: 12_000,
   });
-  return q.data ?? fallback;
+  return { ...(q.data ?? fallback), live: !!q.data, pending: !!token && !!me && q.isPending };
 }
 
 export type MyShardsViewProps = {
@@ -159,14 +163,27 @@ export function MyShardsView({ c, me, now, block, binding, feeBps }: MyShardsVie
         </div>
       </div>
   );
+  // Neither "not sharded" nor "holds none" is known until the shardings, and the live read or the token's holders, load.
+  if (c.shardingsLoading || (s && live.pending && c.holdersLoading)) {
+    return (
+      <div className="mx-auto flex w-full max-w-[560px] flex-col gap-5">
+        {nav}
+        <div aria-label="Loading your shards" className="flex flex-col gap-4">
+          <Skeleton className="aspect-square w-full rounded-2xl bg-surface-2" />
+          <Skeleton className="h-9 w-2/3 bg-surface-2" />
+          <Skeleton className="h-40 w-full rounded-2xl bg-surface-2" />
+        </div>
+      </div>
+    );
+  }
   if (!s || live.balance === 0n) return notHolding;
 
   // One rule with the portfolio's rows (holdings): cost, reference price, value, gain and live / awaiting settle.
   const pos = positionOf({ me, balance: live.balance, sharding: s, bids: c.bids, activities: c.activities, block: block ?? 0n, ident: identity });
   if (!pos) return notHolding;
   const { balance, cost, price, value, gain, share } = pos;
-  // The sharding's supply, as the portfolio row; the send sheet gets the live totalSupply.
-  const supply = BigInt(s.totalShards) * SHARD;
+  // The live totalSupply once read (a buyout burns shards), else the sharding's.
+  const supply = live.live && live.supply > 0n ? live.supply : BigInt(s.totalShards) * SHARD;
   const seller = pos.seller;
   const avg = pos.costKind === "avg";
   const eligible = pos.redeemable;
@@ -248,7 +265,7 @@ export function MyShardsView({ c, me, now, block, binding, feeBps }: MyShardsVie
         </div>
       </section>
 
-      <SendShardsSheet open={sending} onOpenChange={setSending} cardName={identity.name} shardToken={s.shardToken} balance={balance} supply={live.supply > 0n ? live.supply : supply} />
+      <SendShardsSheet open={sending} onOpenChange={setSending} cardName={identity.name} shardToken={s.shardToken} balance={balance} supply={supply} />
     </div>
   );
 }

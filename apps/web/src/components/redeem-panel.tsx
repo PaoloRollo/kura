@@ -382,7 +382,8 @@ export function RedeemPanel({ c, me, fallback = null }: { c: CardData; me: Addre
   const id = c.card!.id.toString();
   if (!me || !c.sharding) return <>{fallback}</>;
   // Gated on the live balanceOf: the indexer's balance only decides what shows while the chain read loads.
-  if (!s.chain) return c.myBalance > 0n ? <Panel className="p-6 md:p-7"><SkeletonRows /></Panel> : <>{fallback}</>;
+  // While the token's holders load too, a zero indexer balance is "unknown", not "not a holder".
+  if (!s.chain) return c.myBalance > 0n || c.holdersLoading ? <Panel className="p-6 md:p-7"><SkeletonRows /></Panel> : <>{fallback}</>;
   if (s.chain.balance === 0n) return <>{fallback}</>;
   const send = (
     <SendShardsSheet open={sending} onOpenChange={setSending} cardName={cardName(c)} shardToken={c.sharding.shardToken} balance={s.chain.balance} supply={s.chain.supply} />
@@ -455,6 +456,7 @@ export function RedeemPage({ c, me, identity }: { c: CardData; me: Address | nul
   const s = useRedeem(c, me);
   const id = c.card!.id.toString();
   if (!me) return <p className="text-[14px] text-text-2">Log in to redeem.</p>;
+  if (c.shardingsLoading) return <SkeletonRows />;
   if (!c.sharding) return <p className="text-[14px] text-text-2">This card isn&apos;t sharded.</p>;
   if (!s.chain) return <SkeletonRows />;
   if (!s.eligible) return <BelowThresholdCard c={c} balance={s.chain.balance} supply={s.chain.supply} holdersHref={`/app/cards/${id}?tab=holders`} />;

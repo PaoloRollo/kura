@@ -58,6 +58,10 @@ export type CardData = {
   ensName: EnsNameRow | null;
   ensRecords: EnsRecordRow[];
   isLoading: boolean;
+  /** The card's shardings haven't loaded yet: `sharding` null means "not known", not "not sharded". */
+  shardingsLoading?: boolean;
+  /** The current shard token's balances haven't loaded yet: `myBalance` 0 means "not known", not "holds none". */
+  holdersLoading?: boolean;
 };
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -160,5 +164,7 @@ export function useCard(id: bigint): CardData {
     ensName: names.data?.[0] ?? null,
     ensRecords: ensRecords.data ?? [],
     isLoading: card.isLoading,
+    shardingsLoading: shardingRows.isLoading,
+    holdersLoading: shardingRows.isLoading || (!!current && holders.isLoading),
   };
 }
