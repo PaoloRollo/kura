@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 export type KpiTone = "default" | "pos" | "neg" | "kin";
 export type Kpi = {
   label: string;
+  /** The phone label when it differs ("Collectors" for "Verified collectors" in WABQw). */
+  shortLabel?: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   /** Value colour: premium + is s1-fg, premium − is s2-fg, "eligible" is kin. */
@@ -38,7 +40,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
             "rounded-2xl border border-border bg-surface p-4 lg:rounded-none lg:border-0 lg:bg-transparent lg:px-5 lg:py-[22px]",
             k.hideOnMobile && "max-lg:hidden",
           )}
-          label={k.label}
+          label={k.shortLabel ? <><span className="lg:hidden">{k.shortLabel}</span><span className="max-lg:hidden">{k.label}</span></> : k.label}
           value={<span className={cn("text-[22px] leading-tight lg:text-[26px]", TONE[k.tone ?? "default"])}>{k.value}</span>}
           sub={k.sub && <span className="max-lg:hidden">{k.sub}</span>}
         />

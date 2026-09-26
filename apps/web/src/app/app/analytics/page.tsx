@@ -1,28 +1,31 @@
-import Link from "next/link";
-import { ChartColumnIcon, CompassIcon, WalletIcon } from "lucide-react";
-import { Button } from "@/components/kura";
-import { MobilePageTitle } from "@/components/page-title";
+"use client";
 
-/** Collector · Analytics: a placeholder until the analytics dashboard (plan 5) lands. */
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { AnalyticsDashboard } from "@/components/analytics-dashboard";
+import { IndexerLoading } from "@/components/sync-state";
+import { useAnalytics } from "@/hooks/use-analytics";
+import { DEFAULT_RANGE, parseRange, type AnalyticsRange } from "@/lib/analytics-view";
+
+function Analytics() {
+  const params = useSearchParams();
+  const [range, setRange] = useState<AnalyticsRange>(() => parseRange(params.get("range")));
+  const data = useAnalytics(range);
+  const onRange = (r: AnalyticsRange) => {
+    setRange(r);
+    // The range lives in ?range= (7d, the default, is left out) without a navigation.
+    const next = `${window.location.pathname}${r === DEFAULT_RANGE ? "" : `?range=${r}`}`;
+    window.history.replaceState(null, "", next);
+  };
+  return <AnalyticsDashboard {...data} range={range} onRange={onRange} />;
+}
+
+/** Collector · Analytics: the vault-wide dashboard, live from the indexer. */
 export default function AnalyticsPage() {
+  // useSearchParams needs a Suspense boundary so the page can still prerender.
   return (
-    <div className="flex flex-col gap-5">
-      <MobilePageTitle title="Analytics" />
-      <section className="flex max-w-md flex-col items-start gap-3 rounded-2xl border border-border bg-surface p-5">
-        <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold tracking-[1px] text-text-2 uppercase">Coming soon</span>
-        <span className="flex size-11 items-center justify-center rounded-lg bg-kin-soft text-kin [&_svg]:size-5"><ChartColumnIcon aria-hidden /></span>
-        <div className="flex flex-col gap-1.5">
-          <h1 className="font-display text-[22px] leading-tight font-semibold text-text">Vault analytics are on their way</h1>
-          <p className="text-[13px] text-text-2">
-            Price history, clearing prices and holder trends for every card in the vault. Until then, live auctions are on
-            Explore and your shards and bids are in your portfolio.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="primary" size="compact"><Link href="/app"><CompassIcon aria-hidden />Explore auctions</Link></Button>
-          <Button asChild variant="secondary" size="compact"><Link href="/app/portfolio"><WalletIcon aria-hidden />Your portfolio</Link></Button>
-        </div>
-      </section>
-    </div>
+    <Suspense fallback={<IndexerLoading title="Loading the vault's analytics" className="max-w-md" />}>
+      <Analytics />
+    </Suspense>
   );
 }

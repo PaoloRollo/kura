@@ -81,15 +81,26 @@ function Gradient() {
 function Tile({ item, rect, hero }: { item: TreemapItem; rect: Rect; hero: boolean }) {
   const small = rect.w < 120 || rect.h < 80;
   const thumb = item.thumb && !small;
+  const link = {
+    href: item.href,
+    "data-premium": item.premium ?? "n/a",
+    title: `${item.name}: ${usd(item.value)}, ${premiumLabel(item.premium)}`,
+    "aria-label": `${item.name}, ${usd(item.value)}, premium ${premiumLabel(item.premium)}`,
+    style: { background: premiumFill(item.premium) },
+  };
+  const base = "flex size-full min-w-0 overflow-hidden rounded-lg transition-[filter] hover:brightness-125 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none";
+  // Slivers (a $96 card next to a $38k one): the colour alone, or just the name when it fits one line; the title,
+  // aria-label and Table view carry the numbers.
+  if (rect.w < 44 || rect.h < 30) return <Link {...link} className={base} />;
+  if (rect.w < 88 || rect.h < 64) {
+    return (
+      <Link {...link} className={cn(base, "items-start p-2")}>
+        <span className="truncate text-[11px] font-semibold text-text">{item.name}</span>
+      </Link>
+    );
+  }
   return (
-    <Link
-      href={item.href}
-      data-premium={item.premium ?? "n/a"}
-      title={`${item.name}: ${usd(item.value)}, ${premiumLabel(item.premium)}`}
-      aria-label={`${item.name}, ${usd(item.value)}, premium ${premiumLabel(item.premium)}`}
-      className="flex size-full min-w-0 flex-col justify-between overflow-hidden rounded-lg p-3 transition-[filter] hover:brightness-125 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
-      style={{ background: premiumFill(item.premium) }}
-    >
+    <Link {...link} className={cn(base, "flex-col justify-between p-3")}>
       <div className={cn("flex min-w-0 items-start", hero ? "gap-3 p-2" : "gap-2.5")}>
         {thumb && <CardArt src={item.thumb!} alt="" className={cn("shrink-0 shadow-none", hero ? "w-[52px]" : "w-6")} />}
         <div className="flex min-w-0 flex-col gap-1">
