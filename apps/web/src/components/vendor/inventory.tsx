@@ -10,10 +10,10 @@ import { ReleasePanel } from "@/components/release-panel";
 import { IndexerLoading } from "@/components/sync-state";
 import { Button } from "@/components/ui/button";
 import { useNow } from "@/hooks/use-now";
-import { useCardMetas, useFeeEvents, useShardBalances, useShardings, useVaultCards } from "@/hooks/use-vendor-data";
+import { useAttributes } from "@/hooks/use-explore";
+import { useFeeEvents, useShardBalances, useShardings, useVaultCards } from "@/hooks/use-vendor-data";
 import { addresses } from "@/lib/chain";
 import { money } from "@/lib/format";
-import { metaCardName, metaTrait } from "@/lib/meta";
 import { cn } from "@/lib/utils";
 import {
   INVENTORY_TABS,
@@ -29,7 +29,7 @@ import {
 
 export type InventoryItem = {
   id: bigint;
-  /** Card name and art, from /api/meta/[id]; missing while it loads. */
+  /** Card name and art, from the batched /api/cards/attributes; missing while it loads. */
   name?: string;
   image?: string;
   set: string;
@@ -241,7 +241,8 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
   const shardings = useShardings();
   const balances = useShardBalances();
   const now = useNow();
-  const metas = useCardMetas((cards.data ?? []).map((c) => c.id));
+  // Names, art and set in one batched attributes request, not one /api/meta call per card.
+  const attributes = useAttributes((cards.data ?? []).map((c) => c.scryfallId));
 
   if (cards.error) return <p className="py-12 text-center text-[14px] text-text-2">The indexer can&apos;t be reached right now. Try again in a moment.</p>;
   if (!cards.data) return <IndexerLoading title="Loading the vault" className="mx-auto w-full max-w-md" />;
@@ -249,13 +250,13 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
   const holders = holderCounts(cards.data, balances.data ?? [], addresses.cardVault);
   const awaiting = redeemedAt(cards.data, shardings.data ?? []);
   const items: InventoryItem[] = cards.data.map((c) => {
-    const meta = metas.get(c.id);
+    const a = attributes[c.scryfallId];
     const shardedState = c.state === "auctioning" || c.state === "sharded";
     return {
       id: c.id,
-      name: meta ? metaCardName(meta.name) : undefined,
-      image: meta?.image,
-      set: (meta && metaTrait(meta, "Set")) || labelSet(c.label),
+      name: a?.name || undefined,
+      image: a?.image || undefined,
+      set: a?.set?.toUpperCase() || labelSet(c.label),
       condition: c.condition,
       ensName: c.ensName,
       state: c.state,
