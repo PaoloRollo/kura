@@ -35,6 +35,20 @@ describe("HeroCards", () => {
     for (const c of ["time-walk", "black-lotus", "mox-sapphire"]) expect(srcs.some((s) => s.includes(c))).toBe(true);
   });
 
+  it("shows a feed of live-market notifications: a bid, a pool trade, a World ID check and a buyout", () => {
+    setReducedMotion(false);
+    const { container } = render(<HeroCards />);
+    const notes = [...container.querySelectorAll('[data-slot="hero-note"]')].map((n) => n.textContent ?? "");
+    expect(notes.length).toBe(4);
+    expect(notes.some((t) => /bid .* per shard/.test(t))).toBe(true);
+    expect(notes.some((t) => /bought .* shards/.test(t))).toBe(true);
+    expect(notes.some((t) => /verified as human/.test(t))).toBe(true);
+    expect(notes.some((t) => /bought out/.test(t))).toBe(true);
+    // Phones keep two, so the cards stay visible.
+    const always = container.querySelectorAll('[data-slot="hero-note"]:not(.hidden)');
+    expect(always.length).toBe(2);
+  });
+
   it("fans out as the page scrolls down and back in as it scrolls up", () => {
     setReducedMotion(false);
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });

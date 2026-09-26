@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type CSSProperties } from "react";
-import { GavelIcon } from "lucide-react";
+import { ArrowLeftRightIcon, GavelIcon, KeyRoundIcon, ScanFaceIcon, type LucideIcon } from "lucide-react";
 import { CardArt } from "@/components/kura";
 
 /** Pixels of scroll over which the hero cards go from their resting fan to fully spread. */
@@ -23,6 +23,43 @@ const spread = {
 } as const;
 
 const fanned = (transform: string): CSSProperties => ({ transform, willChange: "transform", transition: "transform 120ms linear" });
+
+type Note = {
+  id: string;
+  icon: LucideIcon;
+  iconClass: string;
+  who: string;
+  what: string;
+  when: string;
+  /** Where the note rests, as Tailwind position classes; `hidden sm:flex` keeps phones to two notes. */
+  place: string;
+  /** Horizontal drift at full fan, so notes move outward with the cards. */
+  drift: string;
+  delay: string;
+};
+
+/** Illustrative live-market events, one of each kind Kura produces. */
+const NOTES: readonly Note[] = [
+  { id: "bid", icon: GavelIcon, iconClass: "text-kin", who: "kenji.kura.eth", what: "bid $1.70 per shard", when: "2s", place: "top-[72%] left-1/2 -translate-x-[48%] flex", drift: "0%", delay: "[animation-delay:-1s]" },
+  { id: "swap", icon: ArrowLeftRightIcon, iconClass: "text-good", who: "mei.kura.eth", what: "bought 2.5 shards · $1.06", when: "14s", place: "top-[6%] right-0 sm:right-[2%] flex", drift: "18%", delay: "[animation-delay:-3s]" },
+  { id: "human", icon: ScanFaceIcon, iconClass: "text-text-2", who: "yuki.kura.eth", what: "verified as human", when: "31s", place: "top-[38%] -left-[2%] hidden sm:flex", drift: "-18%", delay: "[animation-delay:-5s]" },
+  { id: "buyout", icon: KeyRoundIcon, iconClass: "text-shu", who: "Lightning Bolt", what: "bought out · 80%", when: "1m", place: "top-[88%] right-[4%] hidden sm:flex", drift: "14%", delay: "[animation-delay:-2s]" },
+];
+
+/** One floating notification over the hero cards. */
+function HeroNote({ icon: Icon, iconClass, who, what, when, place, drift, delay }: Note) {
+  return (
+    <div data-slot="hero-note" className={`absolute z-10 ${place}`}>
+      <div style={fanned(`translateX(calc(var(--fan) * ${drift}))`)}>
+        <div className={`kura-float ${delay} flex items-center gap-2.5 rounded-lg border border-border bg-bg/90 px-3.5 py-2 text-[13px] whitespace-nowrap text-text shadow-toast backdrop-blur`}>
+          <Icon className={`size-4 shrink-0 ${iconClass}`} />
+          <span className="font-mono text-[12px]">{who}</span> {what}
+          <span className="text-[11px] text-muted-foreground">{when}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * The landing hero's three cards (Time Walk, Black Lotus, Mox Sapphire) with a live bid on top and the 蔵 seal behind.
@@ -96,11 +133,9 @@ export function HeroCards() {
           </div>
         </div>
       </div>
-      <div className="absolute top-[72%] left-1/2 flex -translate-x-[48%] items-center gap-2.5 rounded-lg border border-border bg-bg/90 px-3.5 py-2 text-[13px] whitespace-nowrap text-text shadow-toast backdrop-blur">
-        <GavelIcon className="size-4 text-kin" />
-        <span className="font-mono text-[12px]">kenji.kura.eth</span> bid $1,712 per shard
-        <span className="text-[11px] text-muted-foreground">2s</span>
-      </div>
+      {NOTES.map((n) => (
+        <HeroNote key={n.id} {...n} />
+      ))}
     </div>
   );
 }
