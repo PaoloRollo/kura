@@ -65,7 +65,7 @@ describe("Analytics dashboard (Y1eNn)", () => {
     render(<DailyBars points={points} label="Volume, USDC" unit="hour" />);
     expect(screen.getAllByText("14:00").length).toBeGreaterThan(0);
     expect(screen.queryByText("Sat")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show table" }));
     expect(screen.getByText("Hour (UTC)")).toBeTruthy();
     expect(screen.getByText("2026-09-26 14:00")).toBeTruthy();
   });
