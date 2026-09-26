@@ -12,7 +12,7 @@ import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
 import { Scryfall } from "@/lib/scryfall";
 import { marketPriceForCard } from "@/lib/market-price";
-import { getDb as getDbForTest, type AnyDb } from "@/lib/db/client";
+import { getDb as getDbForTest, setDbForTests, type AnyDb } from "@/lib/db/client";
 
 const KEY = ("0x" + "a1".repeat(32)) as Hex;
 const shardToken = "0x3333333333333333333333333333333333333333" as const;
@@ -23,6 +23,22 @@ function quote(usd: string | null, m = 1, adjusted = usd): PriceQuote {
   return { usd, source: { finish: "nonfoil", lang: "en", printingId: usd ? "x" : null, englishFallback: false }, conditionMultiplier: m, adjustedUsd: adjusted };
 }
 const priced = (q: PriceQuote, source: PriceLookup["source"] = "scryfall"): PriceLookup => ({ quote: q, source, pricedAt: 1_700_000_000 });
+
+/** A fake `getDb()` whose `.transaction()` only ever grants the lock, so we can observe how long it stays open. */
+function fakeLockDb() {
+  let open = 0;
+  let maxOpen = 0;
+  const transaction = async (cb: (tx: { execute: (q: unknown) => Promise<{ rows: { locked: boolean }[] }> }) => Promise<unknown>) => {
+    open++;
+    maxOpen = Math.max(maxOpen, open);
+    try {
+      return await cb({ execute: async () => ({ rows: [{ locked: true }] }) });
+    } finally {
+      open--;
+    }
+  };
+  return { db: { transaction } as unknown as AnyDb, isOpen: () => open > 0, maxOpen: () => maxOpen };
+}
 
 function deps(over: Partial<Deps> = {}): Deps {
   return {
@@ -162,6 +178,34 @@ describe("appraise", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it("queues a write behind another instead of holding a DB transaction open while it waits", async () => {
+    const { db: fakeDb, isOpen, maxOpen } = fakeLockDb();
+    setDbForTests(fakeDb);
+    try {
+      let releaseFirst!: () => void;
+      const first = vi.fn(() => new Promise<void>((r) => { releaseFirst = r; }));
+      const second = vi.fn(async () => undefined);
+
+      const p1 = pgEnsWriteLock(1n, first);
+      await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+      // Card 1's lock-check transaction already committed before its (still-pending) write runs.
+      expect(isOpen()).toBe(false);
+
+      const p2 = pgEnsWriteLock(2n, second);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(second).not.toHaveBeenCalled(); // queued behind card 1's still-pending write
+      expect(isOpen()).toBe(false); // and holds no DB transaction while it waits its turn
+
+      releaseFirst();
+      await expect(p1).resolves.toBe(true);
+      await expect(p2).resolves.toBe(true);
+      expect(second).toHaveBeenCalledTimes(1);
+      expect(maxOpen()).toBe(1); // never more than one lock-check transaction open at a time
+    } finally {
+      await createTestDb();
+    }
+  });
+
   it("answers the same appraisal to a DID asking again within 10 s, without a new row", async () => {
     const d = deps();
     const first = await runAppraiseFor("did:1", { cardId: "1" }, d, 1_000_000);
@@ -185,18 +229,47 @@ describe("appraise", () => {
 });
 
 describe("sendWithFreshNonce", () => {
-  it("sends with the pending nonce, and retries once with a fresh one on a nonce error", async () => {
+  // Shaped like viem's BaseError: `.message` is the full formatted dump (Request Arguments included) and always
+  // mentions the nonce, so the retry check must never look at it — only at name/shortMessage/details, walking `cause`.
+  function viemError(name: string, shortMessage: string, opts: { details?: string; cause?: unknown } = {}): Error {
+    const err = new Error(`${name}: ${shortMessage}\n\nRequest Arguments:\n  nonce:  5\n`) as Error & { shortMessage: string; details?: string; cause?: unknown };
+    err.name = name;
+    err.shortMessage = shortMessage;
+    err.details = opts.details;
+    err.cause = opts.cause;
+    return err;
+  }
+  const txExecutionError = (cause: unknown) => viemError("TransactionExecutionError", "An error occurred while executing the transaction.", { cause });
+
+  it("retries once with a fresh nonce when the cause is NonceTooLow", async () => {
     const nonces = [4, 5];
     const pendingNonce = vi.fn(async () => nonces.shift()!);
-    const send = vi.fn(async (nonce: number) => { if (nonce === 4) throw new Error("nonce too low: next nonce 5, tx nonce 4"); return "0xhash" as Hex; });
+    const cause = viemError("NonceTooLowError", "Nonce provided for the transaction is lower than the current nonce of the account.", { details: "nonce too low: next nonce 5, tx nonce 4" });
+    const send = vi.fn(async (nonce: number) => { if (nonce === 4) throw txExecutionError(cause); return "0xhash" as Hex; });
     await expect(sendWithFreshNonce(send, pendingNonce)).resolves.toBe("0xhash");
     expect(send.mock.calls.map((c) => c[0])).toEqual([4, 5]);
   });
 
-  it("retries a replacement error once, and never retries anything else", async () => {
-    const underpriced = vi.fn(async () => { throw new Error("replacement transaction underpriced"); });
-    await expect(sendWithFreshNonce(underpriced, async () => 1)).rejects.toThrow(/replacement/);
+  it("does not retry a revert, even though the formatted message mentions the nonce", async () => {
+    const cause = viemError("ContractFunctionRevertedError", "Execution reverted for an unknown reason.", { details: "execution reverted" });
+    const send = vi.fn(async () => { throw txExecutionError(cause); });
+    await expect(sendWithFreshNonce(send, async () => 5)).rejects.toThrow(/TransactionExecutionError/);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a replacement-underpriced or already-known error once, and never anything else", async () => {
+    const underpriced = vi.fn(async () => {
+      throw txExecutionError(viemError("TransactionUnderpricedError", "Replacement transaction is underpriced.", { details: "replacement transaction underpriced" }));
+    });
+    await expect(sendWithFreshNonce(underpriced, async () => 1)).rejects.toThrow();
     expect(underpriced).toHaveBeenCalledTimes(2);
+
+    const alreadyKnown = vi.fn(async () => {
+      throw txExecutionError(viemError("InternalRpcError", "An internal error was received.", { details: "already known" }));
+    });
+    await expect(sendWithFreshNonce(alreadyKnown, async () => 1)).rejects.toThrow();
+    expect(alreadyKnown).toHaveBeenCalledTimes(2);
+
     const broke = vi.fn(async () => { throw new Error("insufficient funds for gas"); });
     await expect(sendWithFreshNonce(broke, async () => 1)).rejects.toThrow(/insufficient/);
     expect(broke).toHaveBeenCalledTimes(1);

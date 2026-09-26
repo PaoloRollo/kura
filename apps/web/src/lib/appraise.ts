@@ -106,20 +106,36 @@ export type Deps = {
 
 const db = () => ponderServer().db;
 
+// One signer, one nonce sequence: all of this instance's ENS writes queue behind each other (other instances:
+// sendWithFreshNonce). A caller reserves its turn synchronously, before any await, so a write queued behind another
+// holds no DB connection while it waits — see pgEnsWriteLock.
+let ensQueue: Promise<void> = Promise.resolve();
+
 /**
- * The card's ENS write lock across serverless instances: `pg_try_advisory_xact_lock` in a short transaction, so it is
- * released at commit (or when Postgres ends the session: an instance frozen mid-write can't hold it past the idle timeout).
+ * The card's ENS write lock across serverless instances: enters the in-process write queue first, so a write queued
+ * behind another holds no DB connection while it waits its turn. Once it is this call's turn, `pg_try_advisory_xact_lock`
+ * is taken in a short transaction holding only the lock check — committed (and the lock released) before `fn` (the
+ * chain send) runs, never around it. False (and `fn` not run) when another instance holds the lock.
  */
 export async function pgEnsWriteLock(cardId: bigint, fn: () => Promise<void>): Promise<boolean> {
-  return getDb().transaction(async (tx) => {
-    await tx.execute(sql`set local idle_in_transaction_session_timeout = '60s'`);
-    const res = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtext('appraisal-ens:' || ${cardId.toString()})) as locked`);
-    // postgres-js answers the rows, PGlite (tests) an object holding them.
-    const rows = (Array.isArray(res) ? res : (res as { rows: unknown[] }).rows) as { locked: boolean }[];
-    if (!rows[0]?.locked) return false;
+  const turn = ensQueue;
+  let releaseTurn!: () => void;
+  ensQueue = new Promise<void>((resolve) => { releaseTurn = resolve; });
+  await turn.catch(() => undefined);
+  try {
+    const locked = await getDb().transaction(async (tx) => {
+      await tx.execute(sql`set local idle_in_transaction_session_timeout = '60s'`);
+      const res = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtext('appraisal-ens:' || ${cardId.toString()})) as locked`);
+      // postgres-js answers the rows, PGlite (tests) an object holding them.
+      const rows = (Array.isArray(res) ? res : (res as { rows: unknown[] }).rows) as { locked: boolean }[];
+      return !!rows[0]?.locked;
+    });
+    if (!locked) return false;
     await fn();
     return true;
-  });
+  } finally {
+    releaseTurn();
+  }
 }
 
 export const defaultDeps: Deps = {
@@ -131,26 +147,23 @@ export const defaultDeps: Deps = {
   loadEnsText: async (node, key) =>
     ((await db().select().from(t(schema.ensRecords)).where(and(eq(t(schema.ensRecords.node), node), eq(t(schema.ensRecords.key), key))).limit(1)) as Row<typeof schema.ensRecords>[])[0]?.value ?? null,
   price: (card, description) => lookupPrice(card, description),
-  // One signer, one nonce sequence: this instance's writes queue behind each other (other instances: sendWithFreshNonce).
-  writeEnsRecord: (node, usd) => {
-    const run = ensQueue.then(() => writeAppraisalText(node, usd));
-    ensQueue = run.catch(() => undefined);
-    return run;
-  },
+  writeEnsRecord: (node, usd) => writeAppraisalText(node, usd),
   ensWritesEnabled: () => process.env.APPRAISER_WRITE_ENS === "true",
   ensWriteLock: pgEnsWriteLock,
 };
 
-let ensQueue: Promise<unknown> = Promise.resolve();
+const NONCE_ERROR = /nonce too (low|high)|replacement transaction underpriced|already known/i;
 
-const NONCE_ERROR = /nonce|replacement|already known/i;
-
-/** Every message on an error and its causes (viem nests the node's reason). */
-function errorText(e: unknown): string {
+/**
+ * name/shortMessage/details across an error and its causes — never `.message`: viem's formatted message always dumps
+ * the request arguments (the nonce included), so matching on it would retry every failure, an RPC timeout after the
+ * node already accepted the transaction included.
+ */
+function errorSignals(e: unknown): string {
   const parts: string[] = [];
   for (let cur = e, i = 0; cur && i < 5; cur = (cur as { cause?: unknown }).cause, i++) {
-    const x = cur as { name?: string; message?: string; details?: string; shortMessage?: string };
-    parts.push(x.name ?? "", x.shortMessage ?? "", x.message ?? "", x.details ?? "");
+    const x = cur as { name?: string; shortMessage?: string; details?: string };
+    parts.push(x.name ?? "", x.shortMessage ?? "", x.details ?? "");
   }
   return parts.join(" ");
 }
@@ -163,7 +176,7 @@ export async function sendWithFreshNonce(send: (nonce: number) => Promise<Hex>, 
   try {
     return await send(await pendingNonce());
   } catch (e) {
-    if (!NONCE_ERROR.test(errorText(e))) throw e;
+    if (!NONCE_ERROR.test(errorSignals(e))) throw e;
     console.warn("appraise: nonce clash on the ENS write, retrying once with a fresh nonce");
     return send(await pendingNonce());
   }
