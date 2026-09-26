@@ -5,7 +5,11 @@ import { cn } from "@/lib/utils";
 import { ChartFrame } from "./chart-frame";
 
 export type LeaderboardTone = "pos" | "neg" | "neutral";
-export type LeaderboardRow = { rank: number; thumb?: string; label: string; value: string; tone?: LeaderboardTone; href?: string };
+export type LeaderboardRow = {
+  rank: number; thumb?: string; label: string; value: string; tone?: LeaderboardTone; href?: string;
+  /** The value is from a live auction's latest clearing, not a settled one: a muted "live" before it. */
+  live?: boolean;
+};
 
 const TONE: Record<LeaderboardTone, string> = { pos: "text-s1-fg", neg: "text-s2-fg", neutral: "text-muted-foreground" };
 
@@ -17,7 +21,7 @@ export function Leaderboard({ title, subtitle, rows, valueLabel = "Value" }: {
   valueLabel?: string;
 }) {
   return (
-    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Card", valueLabel], rows: rows.map((r) => [`${r.rank}. ${r.label}`, r.value]) }}>
+    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Card", valueLabel], rows: rows.map((r) => [`${r.rank}. ${r.label}`, r.live ? `${r.value} (live)` : r.value]) }}>
       <ol className="flex flex-col gap-3">
         {rows.map((r) => {
           const body: React.ReactNode = (
@@ -29,6 +33,7 @@ export function Leaderboard({ title, subtitle, rows, valueLabel = "Value" }: {
                 <span aria-hidden className="aspect-[63/88] w-6 shrink-0 rounded-[2px] bg-surface-2" />
               )}
               <span className="min-w-0 flex-1 truncate text-[13px] text-text">{r.label}</span>
+              {r.live && <span className="shrink-0 text-[11px] text-muted-foreground">live</span>}
               <span className={cn("font-mono text-[12px]", TONE[r.tone ?? "neutral"])}>{r.value}</span>
             </>
           );

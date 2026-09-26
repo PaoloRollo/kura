@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { ChartFrame } from "@/components/charts/chart-frame";
 import { DemandBars, demandRows } from "@/components/charts/demand-bars";
 import { KpiStrip } from "@/components/charts/kpi-strip";
+import { Leaderboard } from "@/components/charts/leaderboard";
 import { squarify } from "@/components/charts/market-treemap";
 import { ownershipRows } from "@/components/charts/ownership-bar";
 import { priceDomain, priceScale } from "@/components/charts/price-bars";
@@ -140,5 +141,17 @@ describe("layouts", () => {
     expect(screen.getByText("+9.6%").className).toContain("text-s1-fg");
     expect(screen.getByText("eligible").className).toContain("text-kin");
     expect(container.querySelectorAll("[data-slot=stat-tile]")).toHaveLength(2);
+  });
+});
+
+describe("Leaderboard", () => {
+  it("marks a live auction's premium, in the list and the table", () => {
+    render(<Leaderboard title="Richest premiums" rows={[{ rank: 1, label: "Black Lotus", value: "+9.6%", tone: "pos" }, { rank: 2, label: "Mox Pearl", value: "+3.1%", tone: "pos", live: true }]} />);
+    const items = screen.getAllByRole("listitem");
+    expect(within(items[0]!).queryByText("live")).toBeNull();
+    expect(within(items[1]!).getByText("live")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    expect(screen.getByText("+3.1% (live)")).toBeTruthy();
+    expect(screen.getByText("+9.6%")).toBeTruthy();
   });
 });

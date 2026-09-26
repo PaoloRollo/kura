@@ -16,6 +16,8 @@ export type TreemapItem = {
   sizedByMarket?: boolean;
   /** Premium to the Scryfall price as a fraction (0.096 = +9.6%); null when there is no market price. */
   premium: number | null;
+  /** Priced at a live auction's latest clearing: the tooltip and label say "live". */
+  live?: boolean;
   /** `/app/cards/[id]?tab=analytics`. */
   href: string;
   thumb?: string;
@@ -83,11 +85,12 @@ function Gradient() {
 function Tile({ item, rect, hero }: { item: TreemapItem; rect: Rect; hero: boolean }) {
   const small = rect.w < 120 || rect.h < 80;
   const thumb = item.thumb && !small;
+  const live = item.live ? " (live)" : "";
   const link = {
     href: item.href,
     "data-premium": item.premium ?? "n/a",
-    title: `${item.name}: ${usd(item.value)}, ${premiumLabel(item.premium)}`,
-    "aria-label": `${item.name}, ${usd(item.value)}, premium ${premiumLabel(item.premium)}`,
+    title: `${item.name}: ${usd(item.value)}, ${premiumLabel(item.premium)}${live}`,
+    "aria-label": `${item.name}, ${usd(item.value)}, premium ${premiumLabel(item.premium)}${live}`,
     style: { background: premiumFill(item.premium) },
   };
   const base = "flex size-full min-w-0 overflow-hidden rounded-lg transition-[filter] hover:brightness-125 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none";

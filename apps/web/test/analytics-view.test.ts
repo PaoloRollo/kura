@@ -55,7 +55,10 @@ describe("analytics view", () => {
     const v = analyticsView(input());
     expect(v.premiums.map((r) => r.label)).toEqual(["Black Lotus", "card-3"]);
     expect(v.premiums[0]).toMatchObject({ rank: 1, value: "+9.6%", tone: "pos", href: "/app/cards/1?tab=analytics", thumb: "/cards/black-lotus.webp" });
-    expect(v.premiums[1]).toMatchObject({ value: "+3.1%", tone: "pos" });
+    expect(v.premiums[1]).toMatchObject({ value: "+3.1%", tone: "pos", live: true });
+    expect(v.premiums[0]!.live).toBe(false);
+    // The live auction's tile says so; the settled ones and the n/a one don't.
+    expect(v.treemap.filter((i) => i.live).map((i) => i.id)).toEqual(["3"]);
     const na = v.treemap.find((i) => i.id === "2")!;
     expect(na).toMatchObject({ premium: null, value: 900, sizedByMarket: true, href: "/app/cards/2?tab=analytics" });
     // No market price: still mapped at its implied value, premium n/a.

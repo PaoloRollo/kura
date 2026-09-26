@@ -119,7 +119,7 @@ function latestClearing(checkpoints: readonly AnalyticsCheckpoint[]): Map<string
   return new Map([...best].map(([k, c]) => [k, c.clearingPriceQ96]));
 }
 
-type Entry = { card: AnalyticsCard; implied: bigint | null; market: bigint | null; premium: number | null; name: string; thumb?: string };
+type Entry = { card: AnalyticsCard; implied: bigint | null; market: bigint | null; premium: number | null; name: string; thumb?: string; live: boolean };
 
 export function analyticsView(p: AnalyticsInput): AnalyticsView {
   const inVault = p.cards.filter((c) => c.state !== "released");
@@ -145,7 +145,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     const implied = impliedValueUsdc(s, s.graduated === null ? (live.get(lc(s.auction)) ?? null) : null);
     const market = p.markets.get(card.id.toString()) ?? null;
     const a = p.attributes[card.scryfallId];
-    entries.push({ card, implied, market, premium: premium(implied, market), name: a?.name || card.label, thumb: a?.image || undefined });
+    entries.push({ card, implied, market, premium: premium(implied, market), name: a?.name || card.label, thumb: a?.image || undefined, live: s.graduated === null });
   }
 
   // n/a (no implied value: not graduated, or no clearing yet) is sized by the market so the tile still exists.
@@ -154,7 +154,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     if (size == null || size === 0n) return [];
     return [{
       id: e.card.id.toString(), name: e.name, value: toUsd(size), premium: e.implied == null ? null : e.premium, sizedByMarket: e.implied == null,
-      href: cardHref(e.card.id), thumb: e.thumb, ensName: e.card.ensName,
+      href: cardHref(e.card.id), thumb: e.thumb, ensName: e.card.ensName, live: e.live && e.implied != null,
     }];
   });
 
@@ -163,7 +163,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     .sort((a, b) => b.premium - a.premium)
     .slice(0, PREMIUM_ROWS)
     .map((e, i) => ({
-      rank: i + 1, label: e.name, thumb: e.thumb, href: cardHref(e.card.id), value: premiumLabel(e.premium),
+      rank: i + 1, label: e.name, thumb: e.thumb, href: cardHref(e.card.id), value: premiumLabel(e.premium), live: e.live,
       tone: Math.abs(e.premium) < PREMIUM_NEUTRAL ? "neutral" : e.premium > 0 ? "pos" : "neg",
     }));
 

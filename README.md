@@ -120,7 +120,7 @@ These roles and external contracts are used by the deployment:
 
 | Metric | Rule |
 |---|---|
-| Implied value | Price per shard × total shards. For a settled auction the price is its clearing price, and a sharding whose auction **did not graduate** reads **n/a** (the contract still records a clearing price then, so n/a is decided from `graduated`, never from a zero price). A live auction uses its latest checkpoint's clearing price, labelled "live". |
+| Implied value | Price per shard × total shards. For a settled auction the price is its clearing price, and a sharding whose auction **did not graduate** reads **n/a** (the contract still records a clearing price then, so n/a is decided from `graduated`, never from a zero price). A live auction uses its latest checkpoint's clearing price, labelled "live" on the card page and in the dashboard's premiums and market map. |
 | Premium | Implied value ÷ market price − 1. n/a when either is missing. |
 | Concentration (HHI) | Σ share² over the holders who aren't custodians (the auction and the vault). 1.0 means one owner. |
 | Distance to redemption | How far the top holder is from the 80% rule, measured against the **full** `ShardToken.totalSupply()` (shards still in the auction count, as `redeem` counts them). Shown as "eligible" or "N.N shards short": 10 of 16 shards is 2.8 shards short, since 80% of 16 is 12.8. |
