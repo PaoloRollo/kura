@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { desc } from "@ponder/client";
 import { usePonderQuery, usePonderStatus } from "@ponder/react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import type { CardAttributesMap } from "@/lib/card-attributes";
 import { buildAuctionItems, inTab, type AuctionItem, type ExploreTab } from "@/lib/explore";
 import { quoteUsdc, type PriceQuote } from "@/lib/pricing";
