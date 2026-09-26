@@ -70,11 +70,6 @@ ponder.on("CardNames:CollectorNamed", async ({ event, context }) => {
   await recordActivity(context, event, { kind: "named", actor: event.args.collector, meta: { label: event.args.label, handle: true } });
 });
 
-// A handle claimed through an earlier deployment's adapter (src/lib/legacy.ts): imported state, so no activity row.
-ponder.on("LegacyCardNames:CollectorNamed", async ({ event, context }) => {
-  await indexCollectorNamed(context, event);
-});
-
 // Registry events add token ids, owners and expiries; the label is in the event. The row's labelHash comes from the
 // event too, because the tokenId differs from it in the low 32 bits (ENSv2 version).
 ponder.on("EnsRegistry:LabelRegistered", async ({ event, context }) => {
@@ -137,7 +132,7 @@ async function isOwnCollectorRecord(context: Context, resolver: Hex, node: Hex):
   return false;
 }
 
-for (const source of ["CollectorResolver", "LegacyCollectorResolver"] as const) {
+for (const source of ["CollectorResolver"] as const) {
   ponder.on(`${source}:TextChanged`, async ({ event, context }) => {
     if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
     await upsertRecord(context, event, event.args.node, event.args.key, event.args.value);
