@@ -137,7 +137,13 @@ function resolverStore(context: Context, source: ResolverSource): ResolverRecord
       return rows.map((r) => r.node);
     },
     recordValues: async (resolver, recordId) =>
-      context.db.sql.select().from(ensResolverRecords)
+      context.db.sql.select({
+        key: ensResolverRecords.key,
+        value: ensResolverRecords.value,
+        setBy: ensResolverRecords.setBy,
+        updatedBlock: ensResolverRecords.updatedBlock,
+        updatedAt: ensResolverRecords.updatedAt,
+      }).from(ensResolverRecords)
         .where(and(eq(ensResolverRecords.resolver, lc(resolver)), eq(ensResolverRecords.recordId, recordId))),
     putRecordValue: async (resolver, recordId, key, v) => {
       await context.db.insert(ensResolverRecords).values({ resolver: lc(resolver), recordId, key, ...v }).onConflictDoUpdate(v);
