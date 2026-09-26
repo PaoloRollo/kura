@@ -4,9 +4,9 @@ import { privateKeyToAccount } from "viem/accounts";
 import { APPRAISAL_TYPES, cardVaultDomain, usdcPerShardToQ96 } from "@kura/shared";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
-import { appraisals } from "@/lib/db/schema";
+import { appraisals, ensAppraisalWrites } from "@/lib/db/schema";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
-import { ENS_REWRITE_SEC, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendWithFreshNonce, type Deps, type PriceLookup } from "@/lib/appraise";
+import { ENS_REWRITE_SEC, ENS_WRITE_TIMEOUT_MS, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendUnlessStuck, sendWithFreshNonce, type DbTx, type Deps, type PriceLookup } from "@/lib/appraise";
 import { marketPrices } from "@/lib/db/schema";
 import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
@@ -49,7 +49,13 @@ function deps(over: Partial<Deps> = {}): Deps {
     price: vi.fn(async () => priced(quote("192.00"))),
     writeEnsRecord: vi.fn(async () => undefined),
     ensWritesEnabled: () => true,
-    ensWriteLock: vi.fn(async (_id: bigint, fn: () => Promise<void>) => { await fn(); return true; }),
+    signerBalance: vi.fn(async () => 10n ** 17n),
+    // The claim runs against the test database, as pgEnsWriteLock runs it inside its transaction.
+    ensWriteLock: vi.fn(async (_id: bigint, fn: () => Promise<void>, claim?: (tx: DbTx) => Promise<boolean>) => {
+      if (claim && !(await claim(getDbForTest() as unknown as DbTx))) return true;
+      await fn();
+      return true;
+    }),
     ...over,
   };
 }
@@ -164,7 +170,7 @@ describe("appraise", () => {
   it("skips the write when another instance holds the card's lock, and when writes are off", async () => {
     const locked = deps({ loadEnsNode: vi.fn(async () => "0xabc" as Hex), ensWriteLock: vi.fn(async () => false) });
     await expect(runAppraise({ cardId: "1" }, locked)).resolves.toMatchObject({ marketUsd: "192.00" });
-    expect(locked.ensWriteLock).toHaveBeenCalledWith(1n, expect.any(Function));
+    expect(locked.ensWriteLock).toHaveBeenCalledWith(1n, expect.any(Function), expect.any(Function));
     expect(locked.writeEnsRecord).not.toHaveBeenCalled();
     const off = deps({ loadEnsNode: vi.fn(async () => "0xabc" as Hex), ensWritesEnabled: () => false });
     await runAppraise({ cardId: "1" }, off);
@@ -183,6 +189,69 @@ describe("appraise", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await publishAppraisalRecord(7n, "0xabc", "8.50", deps({ writeEnsRecord: vi.fn(async () => { throw new Error("no gas"); }) }))).toBe("failed");
     err.mockRestore();
+  });
+
+  it("claims the write in Postgres, so a second instance (nothing in memory) doesn't send it again", async () => {
+    const TX = `0x${"ab".repeat(32)}` as Hex;
+    const a = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => TX) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", a)).toBe("written");
+    expect(await db.select().from(ensAppraisalWrites)).toMatchObject([{ cardId: 5n, usd: "8.50", txHash: TX }]);
+    // Another instance (or an overlapping cron run): its memory is empty and the indexer hasn't caught up.
+    resetAppraisalWritesForTests();
+    const b = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => TX) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", b)).toBe("unchanged");
+    expect(b.writeEnsRecord).not.toHaveBeenCalled();
+    // A new price is claimed and sent.
+    expect(await publishAppraisalRecord(5n, "0xabc", "9.00", b)).toBe("written");
+    expect(b.writeEnsRecord).toHaveBeenCalledWith("0xabc", "9.00");
+  });
+
+  it("puts the claim back when the send fails or the signer is stuck, so the next attempt can send", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const TX = `0x${"cd".repeat(32)}` as Hex;
+    await publishAppraisalRecord(5n, "0xabc", "8.50", deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => TX) }));
+    resetAppraisalWritesForTests();
+    const failing = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => { throw new Error("socket hang up"); }) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "9.00", failing)).toBe("failed");
+    expect(await db.select().from(ensAppraisalWrites)).toMatchObject([{ usd: "8.50", txHash: TX }]);
+    const broke = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => { throw Object.assign(new Error("x"), { shortMessage: "insufficient funds for gas * price + value" }); }) });
+    expect(await publishAppraisalRecord(6n, "0xabc", "9.00", broke)).toBe("no-funds");
+    expect(await db.select().from(ensAppraisalWrites).where(eq(ensAppraisalWrites.cardId, 6n))).toEqual([]);
+    const stuck = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => "stuck" as const) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "9.00", stuck)).toBe("stuck");
+    expect(await db.select().from(ensAppraisalWrites)).toMatchObject([{ usd: "8.50", txHash: TX }]);
+    const ok = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => TX) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "9.00", ok)).toBe("written");
+    err.mockRestore();
+  });
+
+  it("skips a send while the signer has a transaction pending", async () => {
+    const send = vi.fn(async () => "0x01" as Hex);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await sendUnlessStuck(send, async () => ({ pending: 12, latest: 11 }))).toBe("stuck");
+    expect(send).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+    expect(await sendUnlessStuck(send, async () => ({ pending: 12, latest: 12 }))).toBe("0x01");
+  });
+
+  it("answers busy to a concurrent publish of the same card, and timeout when the send outlasts the wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let release!: () => void;
+      const slow = deps({ writeEnsRecord: vi.fn(() => new Promise<void>((r) => { release = r; })) });
+      const first = publishAppraisalRecord(5n, "0xabc", "8.50", slow);
+      expect(await publishAppraisalRecord(5n, "0xabc", "8.50", slow)).toBe("busy");
+      await vi.waitFor(() => expect(slow.writeEnsRecord).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(ENS_WRITE_TIMEOUT_MS);
+      expect(await first).toBe("timeout");
+      release();
+      await vi.runAllTimersAsync();
+    } finally {
+      err.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("takes the Postgres advisory lock in a transaction", async () => {

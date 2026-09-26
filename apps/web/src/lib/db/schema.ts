@@ -122,6 +122,18 @@ export const marketPrices = app.table(
   (t) => [primaryKey({ columns: [t.scryfallId, t.date] })],
 );
 
+/**
+ * The last ENS appraisal write per card, claimed under the card's advisory lock before the transaction is sent, so an
+ * overlapping cron run, another instance or a buyout can't send a duplicate while the indexed record still lags.
+ * `at` is unix seconds; `tx_hash` is null while the claimed write is being sent.
+ */
+export const ensAppraisalWrites = app.table("ens_appraisal_writes", {
+  cardId: bigint("card_id", { mode: "bigint" }).primaryKey(),
+  usd: numeric("usd").notNull(),
+  at: bigint("at", { mode: "bigint" }).notNull(),
+  txHash: text("tx_hash"),
+});
+
 export const collectorProfiles = app.table("collector_profiles", {
   privyDid: text("privy_did").primaryKey(),
   wallet: text("wallet").notNull(),

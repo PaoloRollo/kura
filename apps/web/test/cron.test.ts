@@ -8,12 +8,14 @@ const state = vi.hoisted(() => ({
   lookups: [] as { id: string; opts: unknown }[],
   ens: false,
   nodes: {} as Record<string, string>,
+  balance: 10n ** 17n as bigint | Error,
 }));
 
 vi.mock("@/lib/appraise", () => ({
   ENS_WRITE_TIMEOUT_MS: 5_000,
   defaultDeps: {
     ensWritesEnabled: () => state.ens,
+    signerBalance: vi.fn(async () => { if (state.balance instanceof Error) throw state.balance; return state.balance; }),
     loadEnsNode: vi.fn(async (id: bigint) => state.nodes[id.toString()] ?? null),
     loadEnsText: vi.fn(async (_node: string, key: string) => (key === "description" ? "a card, foil" : null)),
   },
@@ -33,7 +35,8 @@ vi.mock("@/lib/db/client", () => ({
   }),
 }));
 
-import { BUDGET_MS, GET } from "@/app/api/cron/prices/route";
+import { BUDGET_MS, GET, MAX_ENS_WRITES_PER_RUN, MIN_SIGNER_BALANCE_WEI } from "@/app/api/cron/prices/route";
+import { defaultDeps as appraiseDeps } from "@/lib/appraise";
 import { marketPriceForCard } from "@/lib/market-price";
 import { publishAppraisalRecord } from "@/lib/appraise";
 
@@ -49,6 +52,7 @@ describe("cron prices", () => {
     state.lookups = [];
     state.ens = false;
     state.nodes = {};
+    state.balance = 10n ** 17n;
     vi.mocked(publishAppraisalRecord).mockClear();
     vi.mocked(marketPriceForCard).mockClear();
   });
@@ -148,7 +152,8 @@ describe("cron prices", () => {
       vi.mocked(publishAppraisalRecord).mockResolvedValueOnce("timeout");
       state.inserts = [];
       const silent = vi.spyOn(console, "warn").mockImplementation(() => {});
-      expect(await (await call()).json()).toMatchObject({ appraised: 1, appraisalErrors: 1 });
+      // A timeout also stops the run's writes: the next card waits for tomorrow.
+      expect(await (await call()).json()).toMatchObject({ appraised: 0, appraisalErrors: 1, partial: true });
       silent.mockRestore();
     });
 
@@ -165,6 +170,71 @@ describe("cron prices", () => {
       warn.mockRestore();
       expect(body).toEqual({ updated: 4, total: 4, appraised: 1, appraisalErrors: 0, partial: true });
       expect(publishAppraisalRecord).toHaveBeenCalledTimes(1);
+    });
+
+    const quiet = () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      return () => { const n = warn.mock.calls.length; warn.mockRestore(); return n; };
+    };
+
+    it(`writes at most ${MAX_ENS_WRITES_PER_RUN} appraisals per run, the rest deferred`, async () => {
+      const n = MAX_ENS_WRITES_PER_RUN + 3;
+      state.cards = Array.from({ length: n }, (_, i) => ({ id: BigInt(i + 1), scryfallId: `p${i}`, condition: "NM", state: "sharded" }));
+      state.printings = Object.fromEntries(state.cards.map((_, i) => [`p${i}`, printing(`p${i}`, "5.00")]));
+      state.quotes = Object.fromEntries(state.cards.map((_, i) => [`p${i}`, { ...quote(null), adjustedUsd: "5" }]));
+      state.nodes = Object.fromEntries(state.cards.map((_, i) => [String(i + 1), `0xn${i}`]));
+      state.ens = true;
+      const done = quiet();
+      expect(await (await call()).json()).toEqual({ updated: n, total: n, appraised: MAX_ENS_WRITES_PER_RUN, appraisalErrors: 0, partial: true });
+      expect(done()).toBe(1);
+      expect(publishAppraisalRecord).toHaveBeenCalledTimes(MAX_ENS_WRITES_PER_RUN);
+    });
+
+    it("writes no appraisals while the signer is under the floor, or its balance can't be read", async () => {
+      setup();
+      state.ens = true;
+      state.balance = MIN_SIGNER_BALANCE_WEI - 1n;
+      let done = quiet();
+      expect(await (await call()).json()).toEqual({ updated: 4, total: 4, appraised: 0, appraisalErrors: 0 });
+      expect(done()).toBe(1);
+      state.balance = new Error("rpc down");
+      done = quiet();
+      expect(await (await call()).json()).toEqual({ updated: 4, total: 4, appraised: 0, appraisalErrors: 0 });
+      done();
+      expect(publishAppraisalRecord).not.toHaveBeenCalled();
+      // Read once per run, at the floor it writes.
+      state.balance = MIN_SIGNER_BALANCE_WEI;
+      vi.mocked(appraiseDeps.signerBalance).mockClear();
+      await call();
+      expect(appraiseDeps.signerBalance).toHaveBeenCalledOnce();
+      expect(publishAppraisalRecord).toHaveBeenCalledTimes(2);
+    });
+
+    for (const stop of ["timeout", "no-funds", "stuck"] as const) {
+      it(`stops starting writes after a ${stop}, the rest deferred`, async () => {
+        setup();
+        state.ens = true;
+        vi.mocked(publishAppraisalRecord).mockResolvedValueOnce(stop);
+        const done = quiet();
+        const body = await (await call()).json();
+        done();
+        expect(body).toEqual({ updated: 4, total: 4, appraised: 0, appraisalErrors: stop === "stuck" ? 0 : 1, partial: true });
+        expect(publishAppraisalRecord).toHaveBeenCalledOnce();
+      });
+    }
+
+    it("still snapshots the English fallback when the ENS name can't be read", async () => {
+      state.cards = [{ id: 1n, scryfallId: "ja", condition: "NM", state: "sharded" }];
+      state.printings = { ja: printing("ja", null), en: printing("en", "12.00") };
+      state.quotes = { ja: { ...quote("en"), adjustedUsd: "12" } };
+      state.ens = true;
+      vi.mocked(appraiseDeps.loadEnsNode).mockRejectedValueOnce(new Error("indexer down"));
+      const done = quiet();
+      const body = await (await call()).json();
+      expect(done()).toBe(1);
+      expect(body).toEqual({ updated: 2, total: 1, appraised: 0, appraisalErrors: 0 });
+      expect(state.inserts.map((i) => i.values.scryfallId)).toEqual(["ja", "en"]);
+      expect(publishAppraisalRecord).not.toHaveBeenCalled();
     });
   });
 });

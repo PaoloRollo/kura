@@ -42,7 +42,8 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] `CRON_SECRET` is set, and the daily `/api/cron/prices` cron shows up under Settings → Cron Jobs
 - [ ] `NEXT_PUBLIC_ALCHEMY_WS_URL` is set for the live toasts (then redeploy: it is baked in at build time)
 - [ ] `NEXT_PUBLIC_WORLD_ENV` and `WORLD_ENV` are `staging`, and `WORLD_STAGING_VERIFICATION_TOKEN` holds a token from a staging window that is open through the judging (the current window closes 2026-09-27 04:23:41 UTC). Before the demo, re-check it with the World Developer Portal's `get_app_config` and reopen it (`set_world_id_staging_verification`) if it has closed or will close during judging; if that issues a new token, update `WORLD_STAGING_VERIFICATION_TOKEN` in Vercel and redeploy
-- [ ] `APPRAISER_WRITE_ENS=true`, and the signer `0x3Ee6…b731` still holds Sepolia ETH for the ENS writes (buyout appraisals and the daily cron's appraisals; `SIGNER_PRIVATE_KEY` and `ALCHEMY_HTTP_URL` are set)
+- [ ] `APPRAISER_WRITE_ENS=true`, and the signer `0x3Ee6…b731` holds at least 0.02 Sepolia ETH for the ENS writes (buyout appraisals and the daily cron's, about 250–330 writes at 1 gwei; the cron writes at most 20 a run and none under 0.003 ETH); `SIGNER_PRIVATE_KEY` and `ALCHEMY_HTTP_URL` are set
+- [ ] Migration `0005_ens_appraisal_writes` is applied to the production database (`pnpm --filter web db:migrate`)
 - [ ] After the first cron run, its response or logs show `appraised` > 0, and a sharded card's On-chain profile lists `appraisal.usd` and `appraisal.at`
 - [ ] The card index: `CARD_INDEX_URL`, `CARD_INDEX_BLOB_ACCESS=private` and the connected Blob store's `BLOB_READ_WRITE_TOKEN`
 
