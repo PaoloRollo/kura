@@ -12,7 +12,8 @@
     "contracts:build": "pnpm --dir contracts exec forge build",
     "contracts:test": "pnpm --dir contracts exec forge test",
     "sync:deployments": "node scripts/sync-deployments.mjs",
-    "rehearse": "tsx scripts/rehearse.ts"
+    "rehearse": "tsx scripts/rehearse.ts",
+    "multibaas:setup": "tsx scripts/multibaas-setup.ts"
   },
   "devDependencies": {
     "@kura/shared": "workspace:*",
