@@ -1,5 +1,6 @@
 "use client";
 
+import { CountdownHead } from "@/components/countdown";
 import { useState } from "react";
 import { ExploreView } from "@/components/explore-view";
 import type { ExploreData } from "@/hooks/use-explore";
@@ -69,7 +70,9 @@ export function ExplorePreview({ state, now }: { state: ExplorePreviewState; now
   const [filters, setFilters] = useState<ExploreFilters>({ ...DEFAULT_FILTERS, ...INITIAL[state] });
   return (
     <PreviewShell base="/design/explore" states={EXPLORE_PREVIEWS} state={state} path="/app">
-      <ExploreView {...fixture(state, now)} filters={filters} onFilters={setFilters} now={now} defaultSheetOpen={state === "filters-sheet"} />
+      <CountdownHead.Provider value={{ number: HEAD, timestamp: now }}>
+        <ExploreView {...fixture(state, now)} filters={filters} onFilters={setFilters} now={now} defaultSheetOpen={state === "filters-sheet"} />
+      </CountdownHead.Provider>
     </PreviewShell>
   );
 }

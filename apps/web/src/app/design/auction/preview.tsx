@@ -1,5 +1,6 @@
 "use client";
 
+import { CountdownHead } from "@/components/countdown";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CircleDollarSignIcon, GlobeIcon } from "lucide-react";
@@ -162,6 +163,7 @@ export function AuctionPreview({ state, tab, now }: { state: AuctionPreviewState
   const href = (t: CardTab) => `/design/auction?state=${state}${t === "overview" ? "" : `&tab=${t}`}`;
   return (
     <HandlesFixture.Provider value={HANDLES}>
+      <CountdownHead.Provider value={{ number: block, timestamp: now }}>
       <AuctionIoContext.Provider value={{ ...io, ticket }}>
         <div className="min-h-screen">
           <TopBar
@@ -187,6 +189,7 @@ export function AuctionPreview({ state, tab, now }: { state: AuctionPreviewState
           </main>
         </div>
       </AuctionIoContext.Provider>
+      </CountdownHead.Provider>
     </HandlesFixture.Provider>
   );
 }

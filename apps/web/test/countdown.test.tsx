@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { Countdown } from "@/components/countdown";
-import { countdownSeconds, moneyShort } from "@/lib/format";
+import { countdownSeconds, money } from "@/lib/format";
 
 const head = { number: 1000, timestamp: 1_790_000_000 };
 vi.mock("@ponder/react", () => ({ usePonderStatus: () => ({ data: { sepolia: { block: head } } }) }));
@@ -28,6 +28,7 @@ describe("Countdown", () => {
     vi.useFakeTimers();
     vi.setSystemTime((head.timestamp + 60) * 1000);
     render(<Countdown endBlock={1002n} />);
+    act(() => void vi.advanceTimersByTime(0)); // the first tick runs right after mount
     expect(screen.getByText("00:00")).toBeTruthy();
   });
 });
@@ -40,8 +41,8 @@ describe("formatting", () => {
   });
 
   it("shows cents on every amount so small bids don't read $0", () => {
-    expect(moneyShort(220_000n)).toBe("$0.22");
-    expect(moneyShort(17_500_000n)).toBe("$17.50");
-    expect(moneyShort(1_712_000_000n)).toBe("$1,712.00");
+    expect(money(220_000n)).toBe("$0.22");
+    expect(money(17_500_000n)).toBe("$17.50");
+    expect(money(1_712_000_000n)).toBe("$1,712.00");
   });
 });

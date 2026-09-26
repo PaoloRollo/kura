@@ -1,5 +1,6 @@
 "use client";
 
+import { CountdownHead } from "@/components/countdown";
 import { useState } from "react";
 import { usdcPerShardToQ96 } from "@kura/shared";
 import { AnalyticsDashboard } from "@/components/analytics-dashboard";
@@ -112,7 +113,9 @@ export function AnalyticsPreview({ state, now, initialRange }: { state: Analytic
       ) : state === "loading" ? (
         <AnalyticsDashboard view={null} isLoading feeBps={null} range={range} onRange={setRange} />
       ) : (
-        <AnalyticsDashboard view={analyticsView(fixture(state, now, range))} isLoading={false} feeBps={250} range={range} onRange={setRange} />
+        <CountdownHead.Provider value={{ number: HEAD, timestamp: now }}>
+          <AnalyticsDashboard view={analyticsView(fixture(state, now, range))} isLoading={false} feeBps={250} range={range} onRange={setRange} />
+        </CountdownHead.Provider>
       )}
     </PreviewShell>
   );

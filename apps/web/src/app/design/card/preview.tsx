@@ -1,5 +1,6 @@
 "use client";
 
+import { CountdownHead } from "@/components/countdown";
 import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
@@ -46,6 +47,7 @@ export function CardPreview({ state, tab, now, liveId }: { state: PreviewState |
   const href = (t: CardTab) => `/design/card?state=${state}${t === "overview" ? "" : `&tab=${t}`}`;
   return (
     <HandlesFixture.Provider value={live ? null : HANDLES}>
+      <CountdownHead.Provider value={live ? null : { number: FIXTURE_HEAD, timestamp: now }}>
       <div className="min-h-screen">
         <TopBar
           className="max-md:hidden"
@@ -74,6 +76,7 @@ export function CardPreview({ state, tab, now, liveId }: { state: PreviewState |
             : <CardPageView c={c} me={PAOLO} now={now} block={FIXTURE_HEAD} tab={tab} tabHref={href} market={marketFixture(now)} />}
         </main>
       </div>
+      </CountdownHead.Provider>
     </HandlesFixture.Provider>
   );
 }

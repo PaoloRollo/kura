@@ -34,8 +34,6 @@ export function money(x: bigint, dp = 2): string {
   return v.startsWith("-") ? `-$${v.slice(1)}` : `$${v}`;
 }
 
-/** Kept for call sites that used the short form; every amount now shows two decimals ("$0.22", "$1,712.00"). */
-export const moneyShort = (x: bigint): string => money(x);
 
 /** Shards with a fixed number of decimals, the way the designs show them: "13.0", "0.5". */
 export function shardsFixed(x: bigint, dp = 1): string {

@@ -2,7 +2,7 @@
 // toast copy. No React, so node tests cover it.
 import { abi, q96ToUsdcPerShard } from "@kura/shared";
 import type { Address, Hex } from "viem";
-import { money, moneyShort } from "@/lib/format";
+import { money } from "@/lib/format";
 import { boundedSet, isOwnTx } from "@/lib/tx-core";
 
 const SHARD = 10n ** 18n;
@@ -103,7 +103,7 @@ export function shardCount(units: bigint): string {
   return String(Number((Number(units) / 1e18).toFixed(2)));
 }
 
-/** Money without ".00" on whole dollars ("$1,840", "$5,007.60"). */
+/** Money with two decimals ("$1,840.00", "$0.22"); kept as the live-toast name for `money`. */
 export const cash = (x: bigint) => money(x);
 
 export type LiveContext = {
@@ -138,7 +138,7 @@ export function liveToast(e: LiveEvent, ctx: LiveContext): LiveToast | null {
   if (e.kind === "bid") {
     return {
       title: mine ? `New bid on your ${name}` : `New bid on ${name}`,
-      body: `${ctx.name(e.owner)} · ${moneyShort(e.amount)} up to ${moneyShort(q96ToUsdcPerShard(e.priceQ96))}`,
+      body: `${ctx.name(e.owner)} · ${money(e.amount)} up to ${money(q96ToUsdcPerShard(e.priceQ96))}`,
       tone: "shu",
       icon: "bid",
       action: { label: "View", href: cardHref(cardId, "auction") },

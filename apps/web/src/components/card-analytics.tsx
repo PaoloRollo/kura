@@ -290,7 +290,7 @@ export function CardAnalytics({ data, now, market: marketFixture }: { data: Card
         {trL ? panel(270)
           : v.holders.points.length > 0
             ? <HolderBars points={v.holders.points} shardedAt={v.holders.shardedAt} settledAt={v.holders.settledAt} />
-            : <EmptyChart title="Holders over time" subtitle="Distinct wallets holding a shard, auction and vault excluded" note="No transfers yet" />}
+            : <EmptyChart title="Holders over time" subtitle="Distinct wallets holding a shard, auction and vault excluded; unclaimed wins count once claimed" note="No transfers yet" />}
         {v.ownership.slices.length > 0
           ? <OwnershipBar slices={v.ownership.slices} />
           : <EmptyChart title="Ownership split" subtitle="Share of live supply" note={v.ownership.empty} />}

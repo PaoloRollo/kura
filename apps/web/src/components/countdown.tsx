@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { usePonderStatus } from "@ponder/react";
 import { blocksToSeconds, countdown, countdownSeconds } from "@/lib/format";
+
+export type IndexerHead = { number: number | bigint; timestamp: number };
+
+/** Dev previews provide their fixture head here so countdowns tick from the fixture block, not the live indexer. */
+export const CountdownHead = createContext<IndexerHead | null>(null);
 
 /**
  * Time left until `endBlock`, ticking every second.
@@ -12,7 +17,9 @@ import { blocksToSeconds, countdown, countdownSeconds } from "@/lib/format";
  * The first render (server and hydration) shows the block-based value; ticking starts after mount.
  */
 export function Countdown({ endBlock, fallback = "…" }: { endBlock: bigint; fallback?: string }) {
-  const head = usePonderStatus().data?.sepolia?.block;
+  const override = useContext(CountdownHead);
+  const live = usePonderStatus().data?.sepolia?.block;
+  const head = override ?? live;
   const [now, setNow] = useState<number | null>(null);
 
   const deadline = head ? head.timestamp + blocksToSeconds(endBlock - BigInt(head.number)) : null;
@@ -21,9 +28,13 @@ export function Countdown({ endBlock, fallback = "…" }: { endBlock: bigint; fa
   const interval = left == null || left < 86_400 ? 1000 : 60_000;
 
   useEffect(() => {
-    setNow(Date.now() / 1000);
-    const id = setInterval(() => setNow(Date.now() / 1000), interval);
-    return () => clearInterval(id);
+    const tick = () => setNow(Date.now() / 1000);
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, interval);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
   }, [interval]);
 
   if (!head) return <>{fallback}</>;

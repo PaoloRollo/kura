@@ -61,11 +61,8 @@ export type ExploreViewProps = ExploreData & {
 // ---------------------------------------------------------------------------------------------------------------------
 // Item display
 
-/** "$1,712", or "$17.50" under $100 (the designs show cents only on small prices). */
-function price(x: bigint | null): string {
-  if (x == null) return "n/a";
-  return x < 100_000_000n ? money(x) : money(x, 0);
-}
+/** "$1,712.00", "$0.22", or "n/a" when there's no price yet. */
+const price = (x: bigint | null): string => (x == null ? "n/a" : money(x));
 
 function timeLeft(it: AuctionItem): React.ReactNode {
   if (it.status === "settled") return "settled";
@@ -113,7 +110,7 @@ function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
 }
 
 /** Z6BlV0's compact row (and the desktop list view). */
-function ItemRow({ it, block }: { it: AuctionItem; block: bigint }) {
+function ItemRow({ it }: { it: AuctionItem }) {
   const live = it.status === "live";
   return (
     <li>
@@ -472,7 +469,7 @@ export function ExploreView({ items, newCards, block, isLoading, filters: f, onF
     body = (
       <>
         <ul className={cn("flex flex-col gap-3", f.view === "grid" ? "md:hidden" : "md:grid md:grid-cols-2 xl:grid-cols-3")}>
-          {results.map((it) => <ItemRow key={it.auction} it={it} block={head} />)}
+          {results.map((it) => <ItemRow key={it.auction} it={it} />)}
         </ul>
         {f.view === "grid" && (
           <div className="grid grid-cols-2 gap-5 max-md:hidden lg:grid-cols-3 xl:grid-cols-4">

@@ -18,7 +18,7 @@ export function HolderBars({ points, shardedAt, settledAt, height = 128 }: {
   return (
     <ChartFrame
       title="Holders over time"
-      subtitle="Distinct wallets holding a shard, auction and vault excluded"
+      subtitle="Distinct wallets holding a shard, auction and vault excluded; unclaimed wins count once claimed"
       table={{ columns: ["Time (UTC)", "Holders"], rows: points.map((p) => [hhmm(p.t), p.holders]) }}
     >
       <div className="flex flex-col gap-3">
