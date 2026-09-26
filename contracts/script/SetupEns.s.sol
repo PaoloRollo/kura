@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IETHRegistrar, IVerifiableFactory, IENSRegistryV2, IENSResolverV2} from "../src/interfaces/IENSv2.sol";
+import {EnsGrant, IETHRegistrar, IVerifiableFactory, IENSRegistryV2, IENSResolverV2} from "../src/interfaces/IENSv2.sol";
 import {EnsRoles} from "../src/libraries/EnsRoles.sol";
 import {DnsName} from "../src/libraries/DnsName.sol";
 
@@ -11,36 +11,49 @@ interface IMintableToken {
     function mint(address to, uint256 amount) external;
 }
 
-/// ENSv2 Sepolia addresses. Defaults come from ensdomains/contracts-v2 at commit 48b3e2d,
-/// contracts/deployments/sepolia/{ETHRegistry,ETHRegistrar,VerifiableFactory,UserRegistryImpl,PermissionedResolverImpl,
-/// MockUSDC}.json, checked on chain (RootRegistry.getSubregistry("eth") returns this ETHRegistry, and this
-/// ETHRegistrar's ETH_REGISTRY() returns it too). The older docs addresses belong to a superseded deployment whose
-/// registry hangs off a retired root. Each default can be overridden with an env var.
+/// ENSv2 Sepolia addresses. Defaults are the deployment listed on docs.ens.domains/learn/deployments, which the ENS
+/// App, the ENS Explorer and the universal resolver proxies use: ensdomains/contracts-v2 at commit 71a3b73,
+/// contracts/docs/addresses/sepolia.md (ABIs in contracts/deployments/sepolia/*.json). Checked on chain:
+/// RootRegistry.getSubregistry("eth") returns this ETHRegistry, ETHRegistrar.ETH_REGISTRY() returns it too, and
+/// UniversalResolverV2.ROOT_REGISTRY() is this RootRegistry. Each default can be overridden with an env var.
 abstract contract EnsEnv is Script {
+    function rootRegistry() internal view returns (address) {
+        return vm.envOr("ENS_ROOT_REGISTRY", address(0x9703DBD26dAB89504490994138cF2c575251a9cE));
+    }
+
     function ethRegistry() internal view returns (address) {
-        return vm.envOr("ENS_ETH_REGISTRY", address(0x67b728a792e789a8978b30cF1b3b641f19354b43));
+        return vm.envOr("ENS_ETH_REGISTRY", address(0x657eA849311d3D5823348ddEd7C2AaAFb3EDE09E));
     }
 
     function ethRegistrar() internal view returns (address) {
-        return vm.envOr("ENS_ETH_REGISTRAR", address(0xa4449a0dD2b83007553D9b1d28b583A46A805a30));
+        return vm.envOr("ENS_ETH_REGISTRAR", address(0xAbe76F6C8DFcEd81AA5A2bB8034202A7136b94ca));
     }
 
     function verifiableFactory() internal view returns (address) {
-        return vm.envOr("ENS_VERIFIABLE_FACTORY", address(0x118Bc31A50d559F7015a8Da26d54B3b030CdB70F));
+        return vm.envOr("ENS_VERIFIABLE_FACTORY", address(0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C));
     }
 
     function userRegistryImpl() internal view returns (address) {
-        return vm.envOr("ENS_USER_REGISTRY_IMPL", address(0x840Fa461059862Ea466A711E8C98c8dE732061C0));
+        return vm.envOr("ENS_USER_REGISTRY_IMPL", address(0xA80338aAA8D23831cEa25E858D1774534aBb0263));
     }
 
     function resolverImpl() internal view returns (address) {
-        return vm.envOr("ENS_RESOLVER_IMPL", address(0x7E4B2d59938930168024201752EE5503df402303));
+        return vm.envOr("ENS_RESOLVER_IMPL", address(0x14F09Fd05d4585759e54844DC9B00147131Cf243));
     }
 
-    /// Registrar payment token: the repo's MockUSDC (6 decimals, free `mint`). The registrar above reverts
-    /// `PaymentTokenNotSupported` for the docs' 0x16f9... token, which only the superseded registrar accepts.
+    function universalResolver() internal view returns (address) {
+        return vm.envOr("ENS_UNIVERSAL_RESOLVER", address(0x5d25C1D6aCBb71B7a28AA7899618a3412a8303e3));
+    }
+
+    /// Registrar payment token: the deployment's MockUSDC (6 decimals, free `mint`).
     function feeToken() internal view returns (address) {
-        return vm.envOr("ENS_FEE_TOKEN", address(0xD3322B29a7BdEe707D1684676f149bf41Aa3422f));
+        return vm.envOr("ENS_FEE_TOKEN", address(0x16f95D91DBa7dA3Aca778Ec053dF0FF6C6A8aA8e));
+    }
+
+    /// Root admin grant for `account` on a fresh UserRegistry or PermissionedResolver proxy.
+    function adminGrant(address account) internal pure returns (EnsGrant[] memory grants) {
+        grants = new EnsGrant[](1);
+        grants[0] = EnsGrant({account: account, roleBitmap: EnsRoles.ALL_ROLES});
     }
 
     /// Output directory for deployment JSON, relative to contracts/. Overridable so fork tests never overwrite the real
@@ -71,12 +84,12 @@ contract SetupEnsCommit is EnsEnv {
         address registry = factory.deployProxy(
             userRegistryImpl(),
             uint256(keccak256(abi.encode("kura.registry.v1", label))),
-            abi.encodeCall(IENSRegistryV2.initialize, (deployer, EnsRoles.ALL_ROLES))
+            abi.encodeCall(IENSRegistryV2.initialize, (adminGrant(deployer)))
         );
         address resolver = factory.deployProxy(
             resolverImpl(),
             uint256(keccak256(abi.encode("kura.resolver.v1", label))),
-            abi.encodeCall(IENSResolverV2.initialize, (deployer, EnsRoles.ALL_ROLES, new bytes[](0)))
+            abi.encodeCall(IENSResolverV2.initialize, (adminGrant(deployer), new bytes[](0)))
         );
 
         address token = feeToken();
@@ -139,10 +152,10 @@ contract SetupEnsRegister is EnsEnv {
                 uint64(block.timestamp) + 3650 days
             );
         bytes32 parentNode = DnsName.node(DnsName.ETH_NODE, label);
-        bytes32 appraiserNode = DnsName.node(parentNode, "appraiser");
-        IENSResolverV2(resolver).setAddr(appraiserNode, signer);
+        bytes memory appraiserDns = DnsName.addLabel("appraiser", DnsName.ethName(label));
+        IENSResolverV2(resolver).setAddress(appraiserDns, EnsRoles.COIN_TYPE_ETH, abi.encodePacked(signer));
         IENSResolverV2(resolver)
-            .setText(appraiserNode, "description", "Kura appraisal agent: signs market appraisals used for buyouts");
+            .setText(appraiserDns, "description", "Kura appraisal agent: signs market appraisals used for buyouts");
         vm.stopBroadcast();
 
         string memory json = "ens";
@@ -151,6 +164,10 @@ contract SetupEnsRegister is EnsEnv {
         vm.serializeAddress(json, "resolver", resolver);
         vm.serializeAddress(json, "verifiableFactory", verifiableFactory());
         vm.serializeAddress(json, "resolverImpl", resolverImpl());
+        vm.serializeAddress(json, "userRegistryImpl", userRegistryImpl());
+        vm.serializeAddress(json, "ethRegistry", ethRegistry());
+        vm.serializeAddress(json, "universalResolver", universalResolver());
+        vm.serializeAddress(json, "feeToken", token);
         vm.serializeBytes32(json, "parentNode", parentNode);
         string memory out = vm.serializeAddress(json, "appraiserAddr", signer);
         vm.writeJson(out, string.concat(deploymentsDir(), "/sepolia.ens.json"));

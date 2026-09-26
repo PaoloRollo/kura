@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
 import {SetupEnsCommit, SetupEnsRegister} from "../script/SetupEns.s.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Seed} from "../script/Seed.s.sol";
 import {CardVault} from "../src/CardVault.sol";
 import {CardNames} from "../src/CardNames.sol";
-import {IENSRegistryV2, IENSResolverV2} from "../src/interfaces/IENSv2.sol";
+import {IENSRegistryV2} from "../src/interfaces/IENSv2.sol";
 import {DnsName} from "../src/libraries/DnsName.sol";
 import {ShardMarket} from "../src/ShardMarket.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {EnsFork} from "./utils/EnsFork.sol";
 
 interface IETHRegistryView {
     function findOwner(string calldata label) external view returns (address);
@@ -20,7 +20,7 @@ interface IETHRegistryView {
 /// @dev Runs the four deployment scripts in order on a Sepolia fork. The only cheats are the ones a dry run cannot do:
 /// `vm.warp` past the registrar's commitment age, and clearing any EIP-7702 delegation that a public test key may
 /// carry on Sepolia. Output JSON goes to a git-ignored directory, never to the real deployment files.
-contract ScriptsForkTest is Test {
+contract ScriptsForkTest is EnsFork {
     string constant DIR = "deployments/tmp/fork-test";
     string constant LABEL = "kurascriptfork";
     uint160 constant MARKET_FLAGS =
@@ -67,12 +67,11 @@ contract ScriptsForkTest is Test {
         CardVault vault = CardVault(vm.parseJsonAddress(dep, ".cardVault"));
         CardNames names = CardNames(vm.parseJsonAddress(dep, ".cardNames"));
         IENSRegistryV2 registry = IENSRegistryV2(vm.parseJsonAddress(dep, ".ensRegistry"));
-        IENSResolverV2 resolver = IENSResolverV2(vm.parseJsonAddress(dep, ".ensResolver"));
+        address resolver = vm.parseJsonAddress(dep, ".ensResolver");
         bytes32 parentNode = vm.parseJsonBytes32(dep, ".ensParentNode");
 
         // <label>.eth registered to the deployer with the vault's registry as subregistry
-        IETHRegistryView eth =
-            IETHRegistryView(vm.envOr("ENS_ETH_REGISTRY", address(0x67b728a792e789a8978b30cF1b3b641f19354b43)));
+        IETHRegistryView eth = IETHRegistryView(ENS_ETH_REGISTRY);
         assertEq(eth.findOwner(LABEL), deployer, "eth owner");
         assertEq(eth.getSubregistry(LABEL), address(registry), "subregistry");
         assertEq(parentNode, DnsName.node(DnsName.ETH_NODE, LABEL));
@@ -82,7 +81,9 @@ contract ScriptsForkTest is Test {
         // brief Step 6 on-chain checks
         assertEq(vault.vendor(), vendor, "vault vendor");
         assertEq(registry.findOwner("appraiser"), deployer, "appraiser owner");
-        assertEq(resolver.addr(DnsName.node(parentNode, "appraiser")), signer, "appraiser addr");
+        bytes memory appraiserDns = DnsName.addLabel("appraiser", DnsName.ethName(LABEL));
+        assertEq(_urAddr(appraiserDns, DnsName.node(parentNode, "appraiser")), signer, "appraiser addr");
+        assertEq(_urResolver(DnsName.ethName(LABEL)), resolver, "parent resolves to the shared resolver");
         assertEq(registry.findOwner("black-lotus-lea-1"), address(names), "card name owner");
 
         // shard market: mined hook address, wired into the vault, pointed at Sepolia v4
@@ -106,6 +107,14 @@ contract ScriptsForkTest is Test {
         assertEq(address(vault.names()), address(names));
         assertEq(vault.ownerOf(1), demoOwner);
         assertEq(vault.cards(1).label, "black-lotus-lea-1");
-        assertEq(resolver.text(names.nodeOf("black-lotus-lea-1"), "condition"), "LP");
+        string memory card = "black-lotus-lea-1";
+        assertEq(_urText(names.dnsOf(card), names.nodeOf(card), "condition"), "LP");
+        assertEq(_urText(names.dnsOf(card), names.nodeOf(card), "vault.state"), "whole");
+        assertEq(_urAddr(names.dnsOf(card), names.nodeOf(card)), demoOwner, "card addr is its owner");
+
+        string memory ens = vm.readFile(string.concat(DIR, "/sepolia.ens.json"));
+        assertEq(vm.parseJsonAddress(ens, ".universalResolver"), ENS_UNIVERSAL_RESOLVER);
+        assertEq(vm.parseJsonAddress(ens, ".ethRegistry"), ENS_ETH_REGISTRY);
+        assertEq(vm.parseJsonAddress(ens, ".feeToken"), ENS_FEE_TOKEN);
     }
 }
