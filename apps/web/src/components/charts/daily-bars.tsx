@@ -17,7 +17,7 @@ export function DailyBars({ points, label, title = "Daily volume", subtitle = "U
 }) {
   const max = Math.max(1, ...points.map((p) => p.value));
   return (
-    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Day", label], rows: points.map((p) => [p.date, usd(p.value)]) }}>
+    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Day (UTC)", label], rows: points.map((p) => [p.date, usd(p.value)]) }}>
       <div className="flex flex-col gap-2" role="img" aria-label={`${label} per day, latest ${usd(points.at(-1)?.value ?? 0)}`}>
         <div className="flex items-end gap-2 border-b border-border sm:gap-0" style={{ height }}>
           {points.map((p, i) => (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CardArt } from "@/components/kura";
 import { premiumFill, premiumLabel, premiumTone, usd } from "@/lib/chart-colors";
@@ -70,7 +70,7 @@ export function squarify(values: number[], rect: Rect): Rect[] {
 
 function Gradient() {
   return (
-    <span className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground max-sm:hidden" aria-label="Colour: -25% discount to +25% premium">
+    <span role="img" className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground max-sm:hidden" aria-label="Colour: -25% discount to +25% premium">
       -25%
       <span className="h-1.5 w-40 rounded-full" style={{ background: "linear-gradient(90deg, var(--kura-s2), var(--kura-surface-2), var(--kura-s1))" }} />
       +25%
@@ -86,6 +86,7 @@ function Tile({ item, rect, hero }: { item: TreemapItem; rect: Rect; hero: boole
       href={item.href}
       data-premium={item.premium ?? "n/a"}
       title={`${item.name}: ${usd(item.value)}, ${premiumLabel(item.premium)}`}
+      aria-label={`${item.name}, ${usd(item.value)}, premium ${premiumLabel(item.premium)}`}
       className="flex size-full min-w-0 flex-col justify-between overflow-hidden rounded-lg p-3 transition-[filter] hover:brightness-125 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
       style={{ background: premiumFill(item.premium) }}
     >
@@ -115,16 +116,17 @@ export function MarketTreemap({ items, height = 360, title = "Market map", subti
   subtitle?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(1344);
-  useEffect(() => {
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    setWidth(Math.max(1, el.getBoundingClientRect().width));
     const ro = new ResizeObserver(([e]) => e && setWidth(Math.max(1, e.contentRect.width)));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
   const sorted = items.filter((i) => i.value > 0).sort((a, b) => b.value - a.value);
-  const rects = squarify(sorted.map((i) => i.value), { x: 0, y: 0, w: width, h: height + 4 });
+  const rects = width == null ? [] : squarify(sorted.map((i) => i.value), { x: 0, y: 0, w: width, h: height + 4 });
   return (
     <ChartFrame
       bare
@@ -135,7 +137,7 @@ export function MarketTreemap({ items, height = 360, title = "Market map", subti
     >
       <div ref={ref} className="relative -m-0.5" style={{ height: height + 4 }}>
         {sorted.length === 0 && <p className="py-10 text-center text-[12px] text-muted-foreground">No cards in the vault yet</p>}
-        {sorted.map((item, i) => {
+        {width != null && sorted.map((item, i) => {
           const r = rects[i]!;
           return (
             <div

@@ -86,7 +86,7 @@ export function ChartFrame({ title, subtitle, legend = [], aside, table, footer,
             onClick={() => setShowTable((v) => !v)}
             className="rounded-[6px] border border-border px-2 py-0.5 text-[12px] text-text-2 transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
           >
-            {showTable ? "Chart" : "Table"}
+            Table
           </button>
         </div>
       </header>

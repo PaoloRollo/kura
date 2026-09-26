@@ -70,9 +70,9 @@ export default function ChartsDesignPage() {
         </div>
         <PriceBars
           points={PRICES.slice(0, 12)}
-          marks={[{ t: PRICES[3]!.t, label: "A" }]}
+          marks={[{ t: PRICES[3]!.t, label: "A" }, { t: PRICES[11]!.t, label: "S" }, { t: PRICES[11]!.t + 30, label: "B" }]}
           market={1600}
-          footer="Live auction: no settle yet; the market line falls inside the range, appraisal marked"
+          footer="Appraisal marked; a settle and a buyout on the same sample share one chip (S·B)"
         />
         <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
           <DemandBars points={[]} clearing={null} />

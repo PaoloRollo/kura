@@ -18,23 +18,39 @@ function nearest(points: PricePoint[], t: number): number {
   return best;
 }
 
-/** The domain the bars sit in: headroom above the top, and a floor below the lowest bar so the climb reads. */
-export function priceDomain(values: number[]): [number, number] {
-  if (values.length === 0) return [0, 1];
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
-  if (hi === lo) return [0, hi * 1.1 || 1];
-  const span = hi - lo;
-  return [Math.max(0, lo - span * 0.7), hi + span * 0.08];
+/** The smallest 1 / 2 / 2.5 / 5 x 10^k step at or above `x`. */
+function niceStep(x: number): number {
+  if (x <= 0) return 1;
+  const k = 10 ** Math.floor(Math.log10(x));
+  return [1, 2, 2.5, 5, 10].map((m) => m * k).find((s) => s >= x - 1e-9)!;
 }
+
+/**
+ * The y-scale the bars sit in: a floor below the lowest bar so the climb reads, headroom above the top, both on nice
+ * steps, and three ticks [floor, mid, top] so the truncated floor is always labelled.
+ */
+export function priceScale(values: number[]): { domain: [number, number]; ticks: [number, number, number] } {
+  if (values.length === 0) return { domain: [0, 2], ticks: [0, 1, 2] };
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const rawLo = max === min ? 0 : Math.max(0, min - (max - min) * 0.7);
+  const rawHi = max === min ? max * 1.1 || 1 : max + (max - min) * 0.08;
+  const lo = Math.max(0, Math.floor(rawLo / niceStep((rawHi - rawLo) / 2)) * niceStep((rawHi - rawLo) / 2));
+  let step = niceStep((rawHi - lo) / 2);
+  while (lo + 2 * step < rawHi) step = niceStep(step * 1.01);
+  return { domain: [lo, lo + 2 * step], ticks: [lo, lo + step, lo + 2 * step] };
+}
+
+export const priceDomain = (values: number[]) => priceScale(values).domain;
 
 function Chip(props: { x?: number | string; y?: number | string; width?: number | string; value?: unknown }) {
   if (!props.value) return null;
   const x = Number(props.x) + Number(props.width) / 2;
   const y = Number(props.y);
+  const w = 12 + String(props.value).length * 6;
   return (
     <g aria-label={String(props.value)}>
-      <rect x={x - 9} y={y - 21} width={18} height={15} rx={3} fill={SERIES.s4} />
+      <rect x={x - w / 2} y={y - 21} width={w} height={15} rx={3} fill={SERIES.s4} />
       <text x={x} y={y - 10.5} textAnchor="middle" fontSize={9} fontWeight={700} fontFamily="var(--font-mono)" fill="var(--kura-kin-ink)">
         {String(props.value)}
       </text>
@@ -56,26 +72,33 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
   footer?: React.ReactNode;
   height?: number;
 }) {
-  const byIndex = new Map(points.length ? marks.map((m) => [nearest(points, m.t), m.label]) : []);
+  const byIndex = new Map<number, string>();
+  if (points.length) for (const m of marks) {
+    const i = nearest(points, m.t);
+    const prev = byIndex.get(i);
+    byIndex.set(i, prev ? `${prev}·${m.label}` : m.label);
+  }
   const rows: Row[] = points.map((p, i) => ({ ...p, after: settledAt != null && p.t > settledAt, mark: byIndex.get(i) ?? null }));
-  const [lo, hi] = priceDomain(points.map((p) => p.clearing));
+  const { domain, ticks } = priceScale(points.map((p) => p.clearing));
+  const [lo, hi] = domain;
   const marketInRange = market != null && market >= lo && market <= hi;
   return (
     <ChartFrame
       title="Price per shard"
       subtitle="Auction clearing against market, appraisal and buyout marked"
       legend={[{ label: "Clearing", color: SERIES.s1 }, { label: "Market", color: SERIES.s2 }]}
-      table={{ columns: ["Time", "Clearing $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2)]) }}
+      table={{ columns: ["Time (UTC)", "Clearing $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2)]) }}
       footer={footer ?? (market != null && <SwatchNote color={SERIES.s2}>Market {usd(market, 2)} / shard, flat over the window</SwatchNote>)}
     >
       <div style={{ height }} role="img" aria-label={`Clearing price per shard over ${points.length} samples`}>
         <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height }}>
-          <BarChart data={rows} margin={{ top: 26, right: 0, bottom: 0, left: 0 }} barCategoryGap={2}>
+          <BarChart data={rows} margin={{ top: 26, right: 0, bottom: 8, left: 0 }} barCategoryGap={2}>
             <XAxis dataKey="t" hide />
             <YAxis
               domain={[lo, hi]}
               allowDataOverflow
-              tickCount={3}
+              ticks={ticks}
+              interval={0}
               width={52}
               axisLine={false}
               tickLine={false}
@@ -87,12 +110,12 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
               isAnimationActive={false}
               content={({ active, payload }) => {
                 const row = active ? (payload?.[0]?.payload as Row | undefined) : undefined;
-                return row ? <ChartTip label={hhmm(row.t)} value={`${usd(row.clearing, 2)} / shard`} /> : null;
+                return row ? <ChartTip label={`${hhmm(row.t)} UTC`} value={`${usd(row.clearing, 2)} / shard`} /> : null;
               }}
             />
             {marketInRange && <ReferenceLine y={market} stroke={SERIES.s2} strokeWidth={1.5} strokeDasharray="4 3" />}
             <Bar dataKey="clearing" radius={[3, 3, 0, 0]} isAnimationActive={false}>
-              {rows.map((r) => <Cell key={r.t} fill={r.after ? ALPHA.s1_25 : ALPHA.s1_67} />)}
+              {rows.map((r, i) => <Cell key={i} fill={r.after ? ALPHA.s1_25 : ALPHA.s1_67} />)}
               <LabelList dataKey="mark" content={Chip} />
             </Bar>
           </BarChart>

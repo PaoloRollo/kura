@@ -6,7 +6,7 @@ import { DemandBars, demandRows } from "@/components/charts/demand-bars";
 import { KpiStrip } from "@/components/charts/kpi-strip";
 import { squarify } from "@/components/charts/market-treemap";
 import { ownershipRows } from "@/components/charts/ownership-bar";
-import { priceDomain } from "@/components/charts/price-bars";
+import { priceDomain, priceScale } from "@/components/charts/price-bars";
 import { premiumFill, premiumLabel, premiumTone, usdCompact } from "@/lib/chart-colors";
 
 afterEach(cleanup);
@@ -17,13 +17,17 @@ describe("ChartFrame", () => {
   it("toggles the plot for a table with the given rows", () => {
     render(<ChartFrame title="Price per shard" table={table}><div data-testid="plot" /></ChartFrame>);
     expect(screen.getByTestId("plot")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    const chip = screen.getByRole("button", { name: "Table" });
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(chip);
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.textContent).toBe("Table");
     expect(screen.queryByTestId("plot")).toBeNull();
     const t = screen.getByRole("table");
     const rows = within(t).getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(within(rows[2]!).getByText("$1,712")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Chart" }));
+    fireEvent.click(chip);
     expect(screen.getByTestId("plot")).toBeTruthy();
   });
 
@@ -112,6 +116,23 @@ describe("layouts", () => {
     expect(lo).toBeLessThan(1560);
     expect(lo).toBeGreaterThanOrEqual(0);
     expect(hi).toBeGreaterThan(1712);
+  });
+
+  it("labels the truncated floor: the lowest tick is the domain floor, ticks on nice steps", () => {
+    for (const values of [[1560, 1712], [1560, 1560, 1572, 1705, 1712], [0.42, 0.61], [12, 12], [1600, 1650, 1700]]) {
+      const { domain, ticks } = priceScale(values);
+      expect(ticks[0]).toBe(domain[0]);
+      expect(ticks[2]).toBe(domain[1]);
+      expect(ticks[1] - ticks[0]).toBeCloseTo(ticks[2] - ticks[1], 9);
+      expect(domain[0]).toBeLessThanOrEqual(Math.min(...values));
+      expect(domain[1]).toBeGreaterThanOrEqual(Math.max(...values));
+    }
+    expect(priceScale([1560, 1712])).toEqual({ domain: [1400, 1800], ticks: [1400, 1600, 1800] });
+  });
+
+  it("formats chart times in UTC", async () => {
+    const { hhmm } = await import("@/lib/chart-colors");
+    expect(hhmm(Date.UTC(2026, 8, 24, 14, 2) / 1000)).toBe("14:02");
   });
 
   it("tones KPI values", () => {

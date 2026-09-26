@@ -36,7 +36,7 @@ export const OWNERSHIP = [
   { id: "paolo", name: "paolo.kura.eth", value: 81.3 },
   { id: "kenji", name: "kenji.kura.eth", value: 9.4 },
   { id: "x7a3", name: "0x7a3…91c2", value: 6.3 },
-  { id: "aiko", name: "aiko.kura.eth", value: 3.1 },
+  { id: "aiko", name: "aiko.kura.eth", value: 3.0 },
 ];
 
 const card = (id: number, tab = "analytics") => `/app/cards/${id}?tab=${tab}`;

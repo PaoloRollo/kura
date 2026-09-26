@@ -71,9 +71,9 @@ export function usdCompact(v: number): string {
   return usd(v);
 }
 
-/** "14:02", 24-hour, in the viewer's zone (unix seconds). */
+/** "14:02", 24-hour, in UTC (unix seconds), so server and client render the same label. */
 export function hhmm(t: number): string {
-  return new Date(t * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return new Date(t * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
 
 /** Weekday of a "YYYY-MM-DD" UTC bucket: "Mon", or "M" when `narrow`. */
