@@ -5,7 +5,10 @@ import { useState } from "react";
 import { usdcPerShardToQ96 } from "@kura/shared";
 import { AnalyticsDashboard } from "@/components/analytics-dashboard";
 import { useAnalytics } from "@/hooks/use-analytics";
-import { analyticsView, type AnalyticsCard, type AnalyticsInput, type AnalyticsRange } from "@/lib/analytics-view";
+import { analyticsView, withMultibaas, type AnalyticsCard, type AnalyticsInput, type AnalyticsRange } from "@/lib/analytics-view";
+import type { RecentPanel } from "@/components/multibaas-recent";
+import { figuresFromRows } from "@/lib/multibaas/figures";
+import { recentFromRows, type RecentRows } from "@/lib/multibaas/recent";
 import { CATALOG, HEAD, addr, blocksFromSeconds, usd, type CatalogKey } from "../catalog";
 import { PreviewShell } from "../preview-shell";
 import { ANALYTICS_PREVIEWS, type AnalyticsPreviewState } from "./states";
@@ -60,7 +63,43 @@ function cardOf(s: Spec, now: number) {
 /** Daily volume like Y1eNn (oldest first): $4.2k, $11.8k, $7.1k, $15.4k, $9.6k, $21.3k, $27k. */
 const DAILY = [4200, 11_800, 7100, 15_400, 9600, 21_300, 27_000];
 
-function fixture(state: Exclude<AnalyticsPreviewState, "live" | "loading">, now: number, range: AnalyticsRange): AnalyticsInput {
+type FixtureState = Exclude<AnalyticsPreviewState, "live" | "loading" | "multibaas" | "multibaas-new">;
+
+const iso = (t: number) => new Date(t * 1000).toISOString();
+const LINK_BLOCK = 11_785_122;
+const tx = (n: number) => `0x${n.toString(16).padStart(4, "0").repeat(16)}`;
+
+/** What MultiBaas holds in the `multibaas` preview: the last day's events, in the saved queries' row shape. */
+function multibaasRows(now: number): RecentRows {
+  const at = (ago: number) => ({ at: iso(now - ago), block: LINK_BLOCK + 7_500 - Math.round(ago / 12) });
+  return {
+    mints: [{ ...at(20 * H), tx: tx(1), card: "9" }, { ...at(40 * 60), tx: tx(2), card: "24" }],
+    settles: [
+      { ...at(13 * H), tx: tx(3), card: "7", raised: "2200000000", fee: "55000000", graduated: true },
+      { ...at(8 * H), tx: tx(4), card: "10", raised: "0", fee: "0", graduated: false },
+      { ...at(3 * H), tx: tx(5), card: "1", raised: "3400000000", fee: "85000000", graduated: true },
+    ],
+    redeems: [{ ...at(95 * 60), tx: tx(6), card: "4", payout: "1200000000", fee: "30000000" }],
+    fees: [
+      { ...at(13 * H), tx: tx(3), card: "7", kind: "0", amount: "55000000" },
+      { ...at(3 * H), tx: tx(5), card: "1", kind: "0", amount: "85000000" },
+      { ...at(95 * 60), tx: tx(6), card: "4", kind: "1", amount: "30000000" },
+    ],
+  };
+}
+
+/** The recent panel (and, for `multibaas`, the 24h figures) the route would answer in each MultiBaas preview. */
+function multibaasFixture(state: "multibaas" | "multibaas-new", now: number, names: ReadonlyMap<string, string>) {
+  const fresh = state === "multibaas-new";
+  const rows: RecentRows = fresh ? { mints: [], settles: [], redeems: [], fees: [] } : multibaasRows(now);
+  // Just linked: ~2.5 h ago at block 11,785,122. Otherwise linked two days ago, so the whole 24h window is covered.
+  const since = fresh ? now - 2 * H - 35 * 60 : now - 2 * D;
+  const recent: RecentPanel = { recent: recentFromRows(rows, { startBlock: LINK_BLOCK, since, fromDeploy: false }), names, now };
+  const figures = fresh ? null : figuresFromRows({ ...rows, raisedTotal: [], feesTotal: [] }, "24h", now);
+  return { recent, figures };
+}
+
+function fixture(state: FixtureState, now: number, range: AnalyticsRange): AnalyticsInput {
   if (state === "empty") {
     return { cards: [], shardings: [], active: [], checkpoints: [], activities: [], fees: [], collectors: 0, markets: new Map(), attributes: {}, block: HEAD, now, range };
   }
@@ -104,6 +143,14 @@ function Live({ range, onRange }: { range: AnalyticsRange; onRange: (r: Analytic
   return <AnalyticsDashboard {...data} range={range} onRange={onRange} />;
 }
 
+function MultibaasPreview({ state, now, range, onRange }: { state: "multibaas" | "multibaas-new"; now: number; range: AnalyticsRange; onRange: (r: AnalyticsRange) => void }) {
+  const input = fixture("rich", now, range);
+  const names = new Map(input.cards.map((c) => [c.id.toString(), input.attributes[c.scryfallId]?.name || c.label]));
+  const { recent, figures } = multibaasFixture(state, now, names);
+  const view = withMultibaas(analyticsView(input), figures, range);
+  return <AnalyticsDashboard view={view} isLoading={false} feeBps={250} range={range} onRange={onRange} recent={recent} />;
+}
+
 export function AnalyticsPreview({ state, now, initialRange }: { state: AnalyticsPreviewState; now: number; initialRange: AnalyticsRange }) {
   const [range, setRange] = useState<AnalyticsRange>(initialRange);
   return (
@@ -114,7 +161,11 @@ export function AnalyticsPreview({ state, now, initialRange }: { state: Analytic
         <AnalyticsDashboard view={null} isLoading feeBps={null} range={range} onRange={setRange} />
       ) : (
         <CountdownHead.Provider value={{ number: HEAD, timestamp: now }}>
-          <AnalyticsDashboard view={analyticsView(fixture(state, now, range))} isLoading={false} feeBps={250} range={range} onRange={setRange} />
+          {state === "multibaas" || state === "multibaas-new" ? (
+            <MultibaasPreview state={state} now={now} range={range} onRange={setRange} />
+          ) : (
+            <AnalyticsDashboard view={analyticsView(fixture(state, now, range))} isLoading={false} feeBps={250} range={range} onRange={setRange} />
+          )}
         </CountdownHead.Provider>
       )}
     </PreviewShell>
