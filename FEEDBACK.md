@@ -1,4 +1,4 @@
-# Feedback for Uniswap: building on the Continuous Clearing Auction
+# Feedback for Uniswap: building on the Continuous Clearing Auction and v4
 
 Kura sells shards of vaulted trading cards through CCA v2.1.0 on Sepolia (factory `0x000000001F26a0044BaA66024e7b6599c61963F8`, source pinned at commit `7d7602d`). These notes come from building and testing that integration: the contracts, their Sepolia fork tests, the indexer and the web app.
 
@@ -48,3 +48,33 @@ Kura sells shards of vaulted trading cards through CCA v2.1.0 on Sepolia (factor
 4. Add a documented step encoder, for example `linear(duration)`, next to `StepLib`, and document the bit layout.
 5. Document `MIN_FLOOR_PRICE` and `MIN_TICK_SPACING` next to `create`, with an example in human units, since a floor that is too low only surfaces from inside the factory call.
 6. Tag the deployed release commit.
+
+## From the auction to a v4 pool
+
+After the CCA settles, Kura opens a Uniswap v4 pool for the card's shards. The vault hands the net USDC raised, the half of the shards it held back, and any unsold shards to `ShardMarket`. `ShardMarket` creates the pool (shards against USDC, 1% fee, tick spacing 200) at the auction's clearing price, then mints the owner's locked positions through PositionManager. It is also the pool's hook:
+- `beforeInitialize`: only `ShardMarket` itself can create a pool with this hook.
+- `beforeAddLiquidity` and `beforeSwap`: revert once the card is bought out. Removing liquidity always works, so outside LPs can leave.
+- `afterSwap`: emits a card-level `ShardSwap` event.
+
+At buyout, the vault calls `unwind`. That freezes the pool and returns the locked positions to the owner.
+
+### What worked well
+
+- **Hooks let a pool follow a real-world lifecycle.** Freezing trading at buyout, while still letting LPs withdraw, took three small callbacks.
+- **The Sepolia deployment was complete.** PoolManager, PositionManager, Universal Router, V4 Quoter and StateView are all deployed. Our fork tests ran against the real contracts, and the Quoter's quote matched the fill exactly.
+- **Permit2 everywhere.** One approval pattern covers bidding in the CCA and trading on the pool.
+
+### What confused us
+
+- **From clearing price to pool price.** The CCA reports `clearingPrice()` in Q96 as currency per token. v4 wants `sqrtPriceX96` of token1 per token0, so the formula flips depending on whether the shard token sorts above or below USDC. The CCA's average fill price is also at or below its final clearing price, and after the fee the USDC and shard amounts never fit a single full-range position at the clearing price. We add a one-sided position for the leftover shards. A documented "CCA to v4 pool" helper for standalone use (outside the Liquidity Launcher) would remove most of this.
+- **Which v4-periphery to pin.** The repo has no release tags. `main` has an `ExactInputSingleParams` field (`minHopPriceX36`) that the deployed Sepolia Universal Router doesn't have, so encoding against `main` gives calldata the router rejects. We pinned by commit and checked the encoding with `eth_call` against a live pool.
+- **Hook address mining.** The flags have to be in the address, so deployment needs a CREATE2 salt search. `HookMiner` works, but it lives in test utilities, and forge's salted `new` goes through the CREATE2 deployer. A short "deploy a hook from a Foundry script" page would help.
+- **Reverts and senders inside hooks.** A hook revert reaches the caller wrapped in `WrappedError`, so the frontend has to unwrap it to show a useful message. The hook sees the router as the sender, not the trader, so our indexer finds the trader from the shard transfer in the same transaction. Gas-sponsored wallets make `tx.from` unreliable as the trader, too.
+
+### Suggestions
+
+1. Tag v4-periphery releases and say which commit each network runs.
+2. Document the `clearingPrice()` to `sqrtPriceX96` conversion for both token orders, and add a standalone "seed a v4 pool from a settled CCA" example.
+3. Publish a small SDK helper for Universal Router `V4_SWAP` encoding (actions and params) matched to the deployed router.
+4. Document `WrappedError` next to the hook callbacks, with an example of decoding the inner error.
+
