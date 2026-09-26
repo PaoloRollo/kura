@@ -12,11 +12,14 @@
     "contracts:build": "pnpm --dir contracts exec forge build",
     "contracts:test": "pnpm --dir contracts exec forge test",
     "sync:deployments": "node scripts/sync-deployments.mjs",
-    "rehearse": "tsx scripts/rehearse.ts"
+    "rehearse": "tsx scripts/rehearse.ts",
+    "db:reset": "tsx scripts/ops/reset-db.ts"
   },
   "devDependencies": {
     "@kura/shared": "workspace:*",
     "@ponder/client": "^0.17.11",
+    "drizzle-orm": "^0.45.3",
+    "postgres": "^3.4.9",
     "tsx": "^4.23.15",
     "viem": "^2.56.9",
     "vitest": "^3.2.7"
