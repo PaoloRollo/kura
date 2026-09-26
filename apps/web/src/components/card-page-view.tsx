@@ -31,7 +31,7 @@ const CardAnalytics = dynamic(() => import("@/components/card-analytics").then((
 /** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
 export function CardTabs({ tab, href }: { tab: CardTab; href: (t: CardTab) => string }) {
   return (
-    <nav aria-label="Card sections" className="flex gap-8 overflow-x-auto border-b border-border">
+    <nav aria-label="Card sections" className="flex gap-8 overflow-x-auto overflow-y-hidden border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {CARD_TABS.map((t) => (
         <Link
           key={t.value}
