@@ -12,7 +12,7 @@ import type { ShardingRow } from "@/hooks/use-card";
 import { useTicket } from "@/hooks/use-ticket";
 import { TICKET_ERRORS, bidRevertMessage, defaultMaxPriceQ96, endedNowPreview, isRetryableBidError, isValidMax, maxQ96FromUsdc } from "@/lib/bid-math";
 import { addresses, explorerTx } from "@/lib/chain";
-import { money, shortAddress, shortHash, shardsFixed } from "@/lib/format";
+import { money, moneySig, shortAddress, shortHash, shardsFixed } from "@/lib/format";
 import { TxError, encodeHookData, type Revert, type Sent } from "@/lib/tx-core";
 import { cn } from "@/lib/utils";
 
@@ -239,8 +239,8 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
         hint={
           !ready ? undefined
           : !validMax
-            ? <>Use a step of {money(q96ToUsdcPerShard(tick))}, at least one step above the current {money(clearingUsdc)}.</>
-            : <>You stay in while the price is below this. Current {money(clearingUsdc, 0)}, steps of {money(q96ToUsdcPerShard(tick), 0)}.</>
+            ? <>Use a step of {moneySig(q96ToUsdcPerShard(tick))}, at least one step above the current {moneySig(clearingUsdc)}.</>
+            : <>You stay in while the price is below this. Current {moneySig(clearingUsdc)}, steps of {moneySig(q96ToUsdcPerShard(tick))}.</>
         }
         hintClassName={!validMax ? "text-shu" : undefined}
       />
