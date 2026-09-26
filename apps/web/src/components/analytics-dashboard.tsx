@@ -13,7 +13,8 @@ import { MobilePageTitle } from "@/components/page-title";
 import { IndexerLoading } from "@/components/sync-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RANGES, mintedSub, type AnalyticsRange, type AnalyticsView } from "@/lib/analytics-view";
-import { countdown, money } from "@/lib/format";
+import { money } from "@/lib/format";
+import { Countdown } from "@/components/countdown";
 
 const EMPTY = "Nothing in the vault yet.";
 
@@ -33,7 +34,7 @@ function tiles(v: AnalyticsView, range: AnalyticsRange, feeBps: number | null): 
     { label: "Value locked", value: money(t.valueLocked, 0), sub: "implied at clearing" },
     { label: "Raised", value: money(t.raised, 0), sub: `across ${t.raisedAuctions} auction${t.raisedAuctions === 1 ? "" : "s"}` },
     { label: "Fees to vault", value: money(t.fees, 0), sub: `${feeBps != null ? `${feeBps / 100}% ` : ""}of sales + buyouts` },
-    { label: "Live auctions", value: t.liveAuctions, sub: t.nextEndsIn != null ? `next ends in ${countdown(t.nextEndsIn)}` : "none running", hideOnMobile: true },
+    { label: "Live auctions", value: t.liveAuctions, sub: t.nextEndBlock != null ? <>next ends in <Countdown endBlock={t.nextEndBlock} /></> : "none running", hideOnMobile: true },
     { label: "Verified collectors", shortLabel: "Collectors", value: t.collectors, sub: "World ID, one per human" },
   ];
 }

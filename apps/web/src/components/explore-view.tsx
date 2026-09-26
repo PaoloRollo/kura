@@ -44,7 +44,8 @@ import {
   type ExploreFilters,
   type ExploreTab,
 } from "@/lib/explore";
-import { countdown, money } from "@/lib/format";
+import { money } from "@/lib/format";
+import { Countdown } from "@/components/countdown";
 import { cn } from "@/lib/utils";
 
 export type ExploreViewProps = ExploreData & {
@@ -65,10 +66,10 @@ function price(x: bigint | null): string {
   return x < 100_000_000n ? money(x) : money(x, 0);
 }
 
-function timeLeft(it: AuctionItem, block: bigint): string {
+function timeLeft(it: AuctionItem): React.ReactNode {
   if (it.status === "settled") return "settled";
   if (it.status === "awaiting") return "ended";
-  return countdown(it.endBlock - block);
+  return <Countdown endBlock={it.endBlock} />;
 }
 
 const STATUS: Record<AuctionItem["status"], { tone: PillTone; label?: string }> = {
@@ -103,7 +104,7 @@ function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
       set={setLine(it)}
       clearingPrice={price(it.clearing)}
       premium={it.premium != null ? it.premium * 100 : undefined}
-      timeLeft={timeLeft(it, block)}
+      timeLeft={timeLeft(it)}
       progress={elapsed(it, block)}
       status={s.tone}
       footnote={`${it.forSale} of ${it.totalShards} shards for sale · ${it.status === "live" ? `${pct}% of time elapsed` : it.status === "awaiting" ? "awaiting settle" : it.graduated === false ? "reserve not met" : "settled"}`}
@@ -128,7 +129,7 @@ function ItemRow({ it, block }: { it: AuctionItem; block: bigint }) {
         <div className="flex shrink-0 flex-col items-end justify-end">
           <span className={cn("inline-flex items-center gap-1 rounded-sm bg-surface-2 px-2 py-1 font-mono text-[12px]", live ? "text-shu" : "text-text-2")}>
             {live && <TimerIcon aria-hidden className="size-3" />}
-            {timeLeft(it, block)}
+            {timeLeft(it)}
           </span>
         </div>
       </Link>

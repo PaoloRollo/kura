@@ -90,6 +90,8 @@ export type AnalyticsTiles = {
   /** Auctions with endBlock > block, and the blocks until the next ends (null with none). */
   liveAuctions: number;
   nextEndsIn: bigint | null;
+  /** End block of the next live auction to end, for a ticking countdown. */
+  nextEndBlock: bigint | null;
   collectors: number;
 };
 
@@ -190,6 +192,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
       fees: p.fees.filter((f) => inRange(f.timestamp)).reduce((a, f) => a + f.amountUsdc, 0n),
       liveAuctions: liveActive.length,
       nextEndsIn: nextEnd == null ? null : nextEnd - p.block,
+      nextEndBlock: nextEnd,
       collectors: p.collectors,
     },
     treemap,

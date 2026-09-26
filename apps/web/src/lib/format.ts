@@ -31,6 +31,12 @@ export function money(x: bigint, dp = 2): string {
   return v.startsWith("-") ? `-$${v.slice(1)}` : `$${v}`;
 }
 
+/** "$1,712", or with cents under $100 ("$17.50", "$0.22") so small amounts never round to "$0". */
+export function moneyShort(x: bigint): string {
+  const abs = x < 0n ? -x : x;
+  return money(x, abs < 100_000_000n ? 2 : 0);
+}
+
 /** Shards with a fixed number of decimals, the way the designs show them: "13.0", "0.5". */
 export function shardsFixed(x: bigint, dp = 1): string {
   return fixed(formatUnits(x, 18), dp);
@@ -52,7 +58,15 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /** Time left at 12 s per block: "04:12" under an hour, "1:12:30" under a day, else "6d 4h". */
 export function countdown(blocksLeft: bigint): string {
-  const total = Math.max(0, Number(blocksLeft)) * SECONDS_PER_BLOCK;
+  return countdownSeconds(Number(blocksLeft) * SECONDS_PER_BLOCK);
+}
+
+/** Seconds a block count spans at 12 s per block. */
+export const blocksToSeconds = (n: bigint) => Number(n) * SECONDS_PER_BLOCK;
+
+/** The countdown format for a number of seconds (negative reads as zero). */
+export function countdownSeconds(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
   const d = Math.floor(total / 86_400);
   const h = Math.floor((total % 86_400) / 3600);
   const m = Math.floor((total % 3600) / 60);

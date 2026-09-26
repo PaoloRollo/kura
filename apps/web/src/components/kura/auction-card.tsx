@@ -14,8 +14,8 @@ export type AuctionCardProps = Omit<React.ComponentProps<"article">, "children">
   clearingPrice: string;
   /** Clearing vs market, in percent; positive is a premium. */
   premium?: number;
-  /** Formatted time left, e.g. "04:12". */
-  timeLeft: string;
+  /** Time left, e.g. "04:12" (a string or a ticking <Countdown>). */
+  timeLeft: React.ReactNode;
   /** Auction progress 0..1 (time elapsed). */
   progress: number;
   /** Footnote under the bar, e.g. "3 of 16 shards for sale · 62% of time elapsed". */

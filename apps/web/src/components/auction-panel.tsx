@@ -15,7 +15,8 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import type { CardData, CheckpointRow, ShardingRow } from "@/hooks/use-card";
 import { bidView, demandRatio } from "@/lib/bid-math";
 import { addresses, explorerTx } from "@/lib/chain";
-import { countdown, money, shortHash } from "@/lib/format";
+import { money, shortHash } from "@/lib/format";
+import { Countdown } from "@/components/countdown";
 import type { Step } from "@/lib/tx-core";
 import { marketPerShard, quoteUsdc, vsMarket } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ function AuctionStats({ c, s, clearingUsdc, raised, left }: { c: CardData; s: Sh
     <div className="grid grid-cols-2 gap-6 lg:grid-cols-4">
       <Stat label="Clearing price" value={money(clearingUsdc, 0)} sub={`per shard · floor ${money(q96ToUsdcPerShard(s.floorPriceQ96), 0)}`} />
       <Stat label="Raised" value={money(raised, 0)} sub={demand != null ? `demand ${demand.toFixed(1)}× supply` : `${s.forSale} shards for sale`} />
-      <Stat label="Ends in" value={left == null ? "…" : countdown(left)} tone="shu" sub={`block ${s.endBlock.toLocaleString("en-US")}`} />
+      <Stat label="Ends in" value={left == null ? "…" : <Countdown endBlock={s.endBlock} />} tone="shu" sub={`block ${s.endBlock.toLocaleString("en-US")}`} />
       <Stat
         label="VS market"
         value={vs == null ? "n/a" : pctText(vs)}
@@ -127,7 +128,7 @@ function LiveAuction({ c, me, block, chain }: { c: CardData; me: Address | null;
                 <span aria-hidden className="mx-auto h-1 w-9 rounded-full bg-border" />
                 <div className="flex items-baseline justify-between gap-3 pt-3">
                   <SheetTitle className="font-display text-[24px] font-semibold text-text">Bid on {s.forSale} shards</SheetTitle>
-                  <span className="shrink-0 font-mono text-[13px] text-shu">{left == null ? "…" : `${countdown(left)} left`}</span>
+                  <span className="shrink-0 font-mono text-[13px] text-shu">{left == null ? "…" : <><Countdown endBlock={s.endBlock} /> left</>}</span>
                 </div>
                 <SheetDescription className="sr-only">Place a bid on this auction</SheetDescription>
                 <div className="pt-4">{form}</div>
