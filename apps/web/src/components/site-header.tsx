@@ -138,13 +138,16 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
   const fullScreenStep = bare === "/app/onboarding";
   // A card page (yV8eD) is a detail screen: its own CTAs pin to the bottom on mobile instead of the tab bar.
   // On mobile it shows its own Nav row (MobileNav: back, title, share) in place of the top bar.
-  const detail = bare.startsWith("/app/cards/");
+  // My shards (sWbGq) is a detail screen too.
+  const detail = bare.startsWith("/app/cards/") || bare.startsWith("/app/portfolio/");
+  // The collector's tab screens (Z6BlV0, YH4Ft, xog3h) open on their own "蔵 Title" row instead of the top bar.
+  const tabRoot = role === "collector" && signedIn && ["/app", "/app/portfolio", "/app/vault", "/app/profile"].includes(bare);
   const tabs = showNav && !fullScreenStep && !detail ? TABS[role] : [];
   useEffect(() => recordNavigation(bare), [bare]);
   return (
     <>
       <TopBar
-        className={fullScreenStep || detail ? "max-md:hidden" : undefined}
+        className={fullScreenStep || detail || tabRoot ? "max-md:hidden" : undefined}
         homeHref={role === "collector" ? "/app" : "/vendor"}
         nav={nav}
         pathname={pathname}

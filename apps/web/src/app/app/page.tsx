@@ -1,17 +1,35 @@
-import { CompassIcon } from "lucide-react";
+"use client";
 
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { ExploreView } from "@/components/explore-view";
+import { IndexerLoading } from "@/components/sync-state";
+import { useExploreData } from "@/hooks/use-explore";
+import { useNow } from "@/hooks/use-now";
+import { filtersToQuery, parseFilters, type ExploreFilters } from "@/lib/explore";
+
+function Explore() {
+  const params = useSearchParams();
+  const [filters, setFilters] = useState<ExploreFilters>(() => parseFilters(params));
+  const data = useExploreData();
+  const now = useNow(30_000);
+
+  // The query mirrors the filters without a navigation (a shared link reopens the same view).
+  useEffect(() => {
+    const q = filtersToQuery(filters);
+    const next = `${window.location.pathname}${q ? `?${q}` : ""}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
+  }, [filters]);
+
+  return <ExploreView {...data} filters={filters} onFilters={setFilters} now={now} />;
+}
+
+/** Explore: live auctions with search, filters and sort kept in the URL query, and what's new in the vault. */
 export default function ExplorePage() {
+  // useSearchParams needs a Suspense boundary so the page can still prerender.
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-display text-[28px] font-semibold text-text md:text-[32px]">Live auctions</h1>
-        <p className="text-[14px] text-text-2">Uniswap continuous clearing auctions. Set a budget and a max price, everyone pays the same.</p>
-      </header>
-      <div className="flex flex-col items-start gap-3 rounded-3xl border border-border bg-surface p-6">
-        <span className="flex size-11 items-center justify-center rounded-md bg-surface-2 text-text-2"><CompassIcon className="size-5" /></span>
-        <h2 className="text-[16px] font-semibold text-text">No auctions yet</h2>
-        <p className="text-[14px] text-text-2">Auctions appear here once contracts are live.</p>
-      </div>
-    </section>
+    <Suspense fallback={<IndexerLoading title="Loading auctions" className="max-w-md" />}>
+      <Explore />
+    </Suspense>
   );
 }
