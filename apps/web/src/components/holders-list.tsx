@@ -92,6 +92,7 @@ export function HoldersList({ view, now, whole, buyout }: {
       </div>
       <p className="text-[12px] text-text-2">
         The auction contract and the vault are excluded. Redemption needs one holder at 80% or more.
+        {rows.some((r) => r.isPool) && " The Uniswap pool holds shards anyone can buy, outside liquidity included; it never redeems."}
         {toClaim.length > 0 && " To claim: shards won at auction, still in the auction contract until the bidder claims them (estimated at the clearing until the bid exits)."}
       </p>
     </div>
@@ -106,6 +107,7 @@ function HolderTr({ row, rank, now }: { row: HolderRow; rank: number; now: numbe
         <span className="flex min-w-0 items-center gap-2.5">
           <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: row.color }} />
           <Name address={row.holder} />
+          {row.isPool && <span data-pool className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground">for sale to anyone</span>}
           {row.canRedeem && <span className="rounded-md bg-kin-soft px-2 py-0.5 text-[11px] font-semibold text-kin">can redeem</span>}
         </span>
       </td>

@@ -7,7 +7,8 @@ const SHARD = 10n ** 18n;
 const lc = (a: string) => a.toLowerCase();
 
 type Address = `0x${string}`;
-type Balance = { holder: Address; balance: bigint };
+/** `isPool`: the v4 PoolManager, holding the pool's shards (outside LPs' included). */
+type Balance = { holder: Address; balance: bigint; isPool?: boolean };
 type Transfer = { id: string; from: Address; to: Address; shardToken: Address; blockNumber: bigint; timestamp: number };
 type Sharding = { auction: Address; shardToken: Address; graduated: boolean | null; clearingPriceQ96: bigint | null };
 
@@ -80,6 +81,8 @@ export type HolderRow = {
   value: bigint | null;
   canRedeem: boolean;
   since: Since;
+  /** The Uniswap pool (the v4 PoolManager): shards anyone can buy. It never redeems. */
+  isPool: boolean;
 };
 
 /** A winning bidder whose shards still sit in the auction contract (exitBid / claimTokens not called yet). */
@@ -142,8 +145,9 @@ export function holdersView(p: {
     share: shareOf(b.balance, supply),
     color: holderColor(i),
     value: price == null ? null : (b.balance * price) / SHARD,
-    canRedeem: canRedeem(b.balance, supply),
+    canRedeem: !b.isPool && canRedeem(b.balance, supply),
     since: holderSince(b.holder, token, p.transfers, auctions),
+    isPool: !!b.isPool,
   }));
   const inAuction = live.filter((b) => auctions.has(lc(b.holder))).reduce((a, b) => a + b.balance, 0n);
   const current = p.sharding ? live.find((b) => lc(b.holder) === lc(p.sharding!.auction))?.balance ?? 0n : 0n;
@@ -153,7 +157,7 @@ export function holdersView(p: {
   const toClaim: ToClaimRow[] = won.map((w) => ({ ...w, share: shareOf(w.balance, supply), value: price == null ? null : (w.balance * price) / SHARD }));
   const claimed = won.reduce((a, w) => a + w.balance, 0n);
   const holderCount = new Set([...rows.map((r) => lc(r.holder)), ...toClaim.map((r) => lc(r.holder))]).size;
-  return { rows, toClaim, holderCount, supply, unclaimed: inAuction - claimed, hhi: hhi(shares(live, excluded)), top: rows[0] ?? null, clearingPerShard: price };
+  return { rows, toClaim, holderCount, supply, unclaimed: inAuction - claimed, hhi: hhi(shares(live, excluded)), top: rows.find((r) => !r.isPool) ?? null, clearingPerShard: price };
 }
 
 /**

@@ -64,14 +64,17 @@ export function reasonFromRevert(name: string | null | undefined): HandleReason 
   return (name && REVERT_REASONS[name]) || null;
 }
 
-export type NameParties = { vendor: string; signer: string; cardVault: string; cardNames: string; ensParentLabel: string };
+export type NameParties = { vendor: string; signer: string; cardVault: string; cardNames: string; ensParentLabel: string; poolManager?: string; shardMarket?: string };
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /** address(lowercase) → collector label. */
 export type Handles = Record<string, string>;
 
 /**
  * The name an address is shown by: the vendor as `kura.eth`, the appraiser (the signer) as `appraiser.kura.eth`, the
- * vault contracts as `vault`, a collector as `<label>.kura.eth`, anything else as its short address.
+ * vault contracts as `vault`, the v4 PoolManager as `Uniswap pool` (it holds every Kura pool's shards), ShardMarket as
+ * `Kura market`, a collector as `<label>.kura.eth`, anything else as its short address.
  */
 export function displayName(address: string, handles: Handles, parties: NameParties): string {
   const a = address.toLowerCase();
@@ -79,6 +82,8 @@ export function displayName(address: string, handles: Handles, parties: NamePart
   if (a === parties.vendor.toLowerCase()) return parent;
   if (a === parties.signer.toLowerCase()) return `appraiser.${parent}`;
   if (a === parties.cardVault.toLowerCase() || a === parties.cardNames.toLowerCase()) return "vault";
+  if (a !== ZERO_ADDRESS && a === parties.poolManager?.toLowerCase()) return "Uniswap pool";
+  if (a !== ZERO_ADDRESS && a === parties.shardMarket?.toLowerCase()) return "Kura market";
   const label = handles[a];
   if (label && label !== "vendor") return `${label}.${parent}`;
   return isAddress(address, { strict: false }) ? shortAddress(address) : address;
