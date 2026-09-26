@@ -73,8 +73,12 @@ export function demandCurve(bids: readonly { maxPriceQ96: bigint; amountUsdc: bi
   });
 }
 
-/** Index of the highest level at or below the clearing price (the highlighted row), or -1. */
+/**
+ * Index of the highlighted row: the lowest level still in the money (max price at or above the clearing), or -1 when
+ * the clearing is unknown or above every level.
+ */
 export function clearingLevel(curve: readonly DemandLevel[], clearingUsdcPerShard: bigint | null): number {
   if (clearingUsdcPerShard == null) return -1;
-  return curve.findIndex((l) => l.maxUsdcPerShard <= clearingUsdcPerShard);
+  for (let i = curve.length - 1; i >= 0; i--) if (curve[i]!.maxUsdcPerShard >= clearingUsdcPerShard) return i;
+  return -1;
 }

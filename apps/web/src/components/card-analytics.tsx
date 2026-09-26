@@ -20,7 +20,7 @@ import { addresses } from "@/lib/chain";
 import { SERIES, premiumLabel } from "@/lib/chart-colors";
 import { clearingPerShard, custodians, holdersView, pct, shareOf } from "@/lib/card-view";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
-import { distanceToRedemption, feesByKind, fillRate, hhi, impliedValueUsdc, participation, premium, shares, tokensSold } from "@/lib/metrics";
+import { distanceToRedemption, feesByKind, fillRate, impliedValueUsdc, participation, premium, tokensSold } from "@/lib/metrics";
 import { marketPerShard, priceSourceLabel, quoteUsdc } from "@/lib/pricing";
 import { clearingLevel, demandCurve, holderSeries } from "@/lib/series";
 import { cn } from "@/lib/utils";
@@ -133,9 +133,11 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     clearing: level >= 0 ? dollars(curve[level]!.maxUsdcPerShard) : null,
     forSale: s.forSale,
     footer: failed ? `Reserve not met: demand didn't reach the ${money(s.reserveUsdc, 0)} reserve. Every bid was refunded.`
-      // No bid sits exactly at the clearing level: still say where it cleared.
-      : level < 0 && clearingUsdc != null && curve.length > 0 ? `${live ? "Clearing now at" : "Cleared at"} ${money(clearingUsdc, 0)} for the ${s.forSale} shard${s.forSale === 1 ? "" : "s"} for sale.`
-      : undefined,
+      // The highlighted row is the lowest level still in the money; the note gives the clearing itself.
+      : clearingUsdc == null || curve.length === 0 ? undefined
+      : level >= 0 ? `${live ? "Clearing now at" : "Clears at"} ${money(clearingUsdc, 0)} where demand covers the ${s.forSale} shard${s.forSale === 1 ? "" : "s"} for sale.`
+      // Every bid sits below the clearing.
+      : `${live ? "Clearing now at" : "Cleared at"} ${money(clearingUsdc, 0)}, above every bid.`,
   };
 
   // --- Holders over time and ownership.
@@ -145,13 +147,14 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
   );
   const view = holdersView({ balances: data.holders, sharding: s, shardings: data.allShardings, transfers: data.transfers, vault });
   const slices: OwnershipSlice[] = view.rows.map((r) => ({ id: r.holder, name: shortAddress(r.holder), label: <AddressName address={r.holder} copyable={false} avatar={false} />, value: r.share }));
-  if (view.unclaimed > 0n) slices.push({ id: "unclaimed", name: "Unclaimed in auction", label: <span className="text-muted-foreground">Unclaimed in auction</span>, value: shareOf(view.unclaimed, view.supply), color: UNCLAIMED_COLOR });
+  // Live, the auction still holds every shard for sale; after the settle, the ones bought but not claimed.
+  const unclaimedLabel = live ? "In auction" : "Unclaimed in auction";
+  if (view.unclaimed > 0n) slices.push({ id: "unclaimed", name: unclaimedLabel, label: <span className="text-muted-foreground">{unclaimedLabel}</span>, value: shareOf(view.unclaimed, view.supply), color: UNCLAIMED_COLOR });
 
   // --- KPIs.
   const implied = boughtOut ? null : impliedValueUsdc(s, liveQ96);
   const prem = premium(implied, quote);
   const why = s.redeemer != null && s.buyoutPerShard != null ? `bought out at ${money(s.buyoutPerShard, 0)}/shard` : card.state === "released" ? "released" : card.state === "whole" ? "bought out" : failed ? "reserve not met" : null;
-  const ownerShares = shares(data.holders, excluded);
   const top = view.top?.balance ?? 0n;
   const distance = distanceToRedemption(top, data.supply);
   const ticks = data.ticks.filter((tk) => lc(tk.auction) === lc(s.auction));
@@ -173,7 +176,7 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     },
     {
       label: "Concentration",
-      value: ownerShares.length > 0 ? hhi(ownerShares).toFixed(2) : "n/a",
+      value: view.rows.length > 0 ? view.hhi.toFixed(2) : "n/a",
       sub: "HHI, 1.0 = one owner",
     },
     boughtOut
@@ -282,23 +285,28 @@ export function CardAnalytics({ data, now, market: marketFixture }: { data: Card
     );
   }
   const priceTitle = { title: "Price per shard", subtitle: "Auction clearing against market, appraisal and buyout marked" };
+  // A query still loading shows a skeleton, never its empty state ("No bids yet", $0.00).
+  const panel = (h: number) => <Skeleton aria-busy className="rounded-2xl bg-surface" style={{ height: h }} />;
+  const { checkpointsLoading: cpL, bidsLoading: bidL, feesLoading: feeL, transfersLoading: trL } = data;
   return (
     <div className="flex flex-col gap-4 sm:gap-6">
-      <KpiStrip items={v.kpis} />
+      {cpL || bidL || trL ? panel(108) : <KpiStrip items={v.kpis} />}
       <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-[1.74fr_1fr] md:items-start">
-        {v.price.points.length > 0
-          ? <PriceBars points={v.price.points} marks={v.price.marks} settledAt={v.price.settledAt} market={v.price.market} footer={v.price.footer} />
-          : <EmptyChart {...priceTitle} note="No bids yet" />}
-        <DemandBars points={v.demand.points} clearing={v.demand.clearing} forSale={v.demand.forSale} footer={v.demand.footer} />
+        {cpL ? panel(320)
+          : v.price.points.length > 0
+            ? <PriceBars points={v.price.points} marks={v.price.marks} settledAt={v.price.settledAt} market={v.price.market} footer={v.price.footer} />
+            : <EmptyChart {...priceTitle} note="No bids yet" />}
+        {bidL || cpL ? panel(240) : <DemandBars points={v.demand.points} clearing={v.demand.clearing} forSale={v.demand.forSale} footer={v.demand.footer} />}
       </div>
       <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 md:items-start lg:grid-cols-[1.1fr_1fr_0.64fr]">
-        {v.holders.points.length > 0
-          ? <HolderBars points={v.holders.points} shardedAt={v.holders.shardedAt} settledAt={v.holders.settledAt} />
-          : <EmptyChart title="Holders over time" subtitle="Distinct wallets holding a shard, auction and vault excluded" note="No transfers yet" />}
+        {trL ? panel(270)
+          : v.holders.points.length > 0
+            ? <HolderBars points={v.holders.points} shardedAt={v.holders.shardedAt} settledAt={v.holders.settledAt} />
+            : <EmptyChart title="Holders over time" subtitle="Distinct wallets holding a shard, auction and vault excluded" note="No transfers yet" />}
         {v.ownership.slices.length > 0
           ? <OwnershipBar slices={v.ownership.slices} />
           : <EmptyChart title="Ownership split" subtitle="Share of live supply" note={v.ownership.empty} />}
-        <FeesPanel {...v.fees} />
+        {feeL ? panel(250) : <FeesPanel {...v.fees} />}
       </div>
     </div>
   );

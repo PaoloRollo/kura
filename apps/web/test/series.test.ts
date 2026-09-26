@@ -58,9 +58,11 @@ describe("series", () => {
     expect(c.map((p) => p.maxUsdcPerShard)).toEqual([30_000_000n, 20_000_000n, 10_000_000n]);
     expect(c.map((p) => p.levelUsdc)).toEqual([1n, 2n, 9n]);
     expect(c.map((p) => p.cumulativeUsdc)).toEqual([1n, 3n, 12n]);
-    expect(clearingLevel(c, 25_000_000n)).toBe(1);
+    // The lowest level still in the money: max price at or above the clearing.
+    expect(clearingLevel(c, 25_000_000n)).toBe(0);
     expect(clearingLevel(c, 20_000_000n)).toBe(1);
-    expect(clearingLevel(c, 5_000_000n)).toBe(-1);
+    expect(clearingLevel(c, 5_000_000n)).toBe(2);
+    expect(clearingLevel(c, 35_000_000n)).toBe(-1);
     expect(clearingLevel(c, null)).toBe(-1);
   });
 });

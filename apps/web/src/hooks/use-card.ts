@@ -65,6 +65,11 @@ export type CardData = {
   shardingsLoading?: boolean;
   /** The current shard token's balances haven't loaded yet: `myBalance` 0 means "not known", not "holds none". */
   holdersLoading?: boolean;
+  /** These queries haven't loaded yet: empty means "not known", not "none" (the Analytics tab shows skeletons). */
+  checkpointsLoading?: boolean;
+  bidsLoading?: boolean;
+  feesLoading?: boolean;
+  transfersLoading?: boolean;
 };
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -174,5 +179,9 @@ export function useCard(id: bigint): CardData {
     isLoading: card.isLoading,
     shardingsLoading: shardingRows.isLoading,
     holdersLoading: shardingRows.isLoading || (!!current && holders.isLoading),
+    checkpointsLoading: shardingRows.isLoading || checkpoints.isLoading,
+    bidsLoading: bids.isLoading,
+    feesLoading: fees.isLoading,
+    transfersLoading: shardingRows.isLoading || transfers.isLoading,
   };
 }

@@ -86,7 +86,7 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
     <ChartFrame
       title="Price per shard"
       subtitle="Auction clearing against market, appraisal and buyout marked"
-      legend={[{ label: "Clearing", color: SERIES.s1 }, { label: "Market", color: SERIES.s2 }]}
+      legend={[{ label: "Clearing", color: SERIES.s1 }, ...(market != null ? [{ label: "Market", color: SERIES.s2 }] : [])]}
       table={{ columns: ["Time (UTC)", "Clearing $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2)]) }}
       footer={footer ?? (market != null && <SwatchNote color={SERIES.s2}>Market {usd(market, 2)} / shard, flat over the window</SwatchNote>)}
     >

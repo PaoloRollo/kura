@@ -58,6 +58,9 @@ describe("CardAnalytics", () => {
     expect(kpi("Fill rate").getByText("100%")).toBeTruthy();
     expect(kpi("Fill rate").getByText("3 of 3 shards sold")).toBeTruthy();
     expect(screen.getByText(/Market \$1,562\.50 \/ shard, flat over the window/)).toBeTruthy();
+    // The lowest level still in the money ($1,760) is marked; the note gives the clearing itself.
+    expect(document.querySelector("[data-clearing]")?.textContent).toContain("$1,760");
+    expect(screen.getByText("Clears at $1,712 where demand covers the 3 shards for sale.")).toBeTruthy();
     expect(screen.getByText("$128.40", { selector: "dd.text-kin" })).toBeTruthy();
     expect(await screen.findByText("2.5% of proceeds, paid at settle and on buyout.")).toBeTruthy();
   });
@@ -73,6 +76,7 @@ describe("CardAnalytics", () => {
     const v = view("sharded", { holders, supply: 16n * S });
     expect(tile(v, "To redemption")).toMatchObject({ value: "eligible", tone: "kin", sub: "top holder 81.3%" });
     expect(v.ownership.slices.at(-1)).toMatchObject({ id: "unclaimed", name: "Unclaimed in auction", value: 0.125 });
+    expect(view("auctioning").ownership.slices.at(-1)).toMatchObject({ id: "unclaimed", name: "In auction" });
   });
 
   it("is 2.8 shards short at 10/16", () => {
@@ -107,6 +111,19 @@ describe("CardAnalytics", () => {
     expect(tile(unpriced, "Premium")).toMatchObject({ value: "n/a", sub: "no market price" });
     // A live auction with no bids has no clearing, so no premium either.
     expect(tile(view("auctioning", { checkpoints: [] }), "Premium")).toMatchObject({ value: "n/a", sub: "no clearing yet" });
+  });
+
+  it("shows skeletons, not empty states, while bids, checkpoints and fees load", () => {
+    renderAnalytics({ ...cardFixture("sharded", NOW), bids: [], checkpoints: [], fees: [], bidsLoading: true, checkpointsLoading: true, feesLoading: true });
+    expect(screen.queryByText("No bids yet")).toBeNull();
+    expect(screen.queryByText("$0.00")).toBeNull();
+    expect(screen.queryByLabelText("Fees to the vault")).toBeNull();
+    expect(document.querySelector("[data-slot=kpi-strip]")).toBeNull();
+  });
+
+  it("drops the Market legend without a market price", () => {
+    renderAnalytics({ ...cardFixture("sharded", NOW), price: null });
+    expect(within(screen.getByRole("region", { name: "Price per shard" })).queryByText("Market")).toBeNull();
   });
 
   it("has one empty panel for a card never sharded", () => {
