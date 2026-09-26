@@ -19,7 +19,8 @@ contract CardVaultRedeemTest is ForkTest {
     /// are compared against the round figures within this tolerance.
     uint256 constant DUST = 100;
 
-    /// After this: alice ~13.5 shards, bob ~1, carol ~1.5 (all within DUST), clearing 10 USDC per shard, card Sharded.
+    /// After this: alice ~13.5 shards (bought from the pool), bob ~1, carol ~1.5 (all within DUST), clearing 10 USDC per
+    /// shard, card Sharded.
     function setUp() public override {
         super.setUp();
         id = _mintTo(alice);
@@ -38,6 +39,7 @@ contract CardVaultRedeemTest is ForkTest {
         }
         vm.roll(ICCAAuction(a).endBlock());
         vault.settle(cardId);
+        _buyPool(t, alice); // alice buys every shard the settle put in the pool
         if (withBids) {
             vm.prank(bob);
             ICCAAuction(a).exitBid(bobBid);
@@ -126,7 +128,6 @@ contract CardVaultRedeemTest is ForkTest {
         uint256 id2 = _mintTo(alice);
         CardVault.ShardParams memory p = _defaultParams();
         p.totalShards = 32;
-        p.forSale = 6;
         (address t2,) = _runAuction(id2, p, false); // no bids: all 32 shards end with alice
         assertEq(ShardToken(t2).balanceOf(alice), 32e18);
 
@@ -153,14 +154,13 @@ contract CardVaultRedeemTest is ForkTest {
         vm.prank(alice);
         vault.redeem(id, a1, sig1);
 
-        CardVault.ShardParams memory p = _defaultParams();
-        p.forSale = 1;
         vm.prank(alice);
-        (address token2, address auction2) = vault.shardAndAuction(id, p);
+        (address token2, address auction2) = vault.shardAndAuction(id, _defaultParams());
         uint256 tick = ICCAAuction(auction2).tickSpacing();
         uint256 bobBid2 = _bid(bob, auction2, tick * 22, 10e6);
         vm.roll(ICCAAuction(auction2).endBlock());
         vault.settle(id);
+        _buyPool(token2, alice);
         vm.prank(bob);
         ICCAAuction(auction2).exitBid(bobBid2);
         ICCAAuction(auction2).claimTokens(bobBid2);
@@ -325,5 +325,45 @@ contract CardVaultRedeemTest is ForkTest {
         // floor loss: at most 1 unit per claimant (7) plus 1 for splitting the auction dust off the floored pool,
         // plus the dust's own (floored) share, which is reserved for a future claim by the auction's bidders
         assertLe(pool, 7 + 1 + PriceMath.payoutFor(12e6, remainingSupply), "dust bounded by number of claimants");
+    }
+
+    /// The market is unwound during redeem, after the card is Whole again and before the redeemer's shards burn. Shards
+    /// still in the pool go to the LP owner, who claims them like any other minority holder.
+    function test_redeemUnwindsTheMarket() public {
+        uint256 id2 = _mintTo(alice);
+        vm.prank(alice);
+        (address t2, address a2) = vault.shardAndAuction(id2, _defaultParams());
+        vm.roll(ICCAAuction(a2).endBlock());
+        vault.settle(id2); // no bids: all 16 shards seed the pool
+        market.give(t2, bob, 13e18); // bob buys 13 of them: 81.25 percent
+
+        (Tickets.Appraisal memory a, bytes memory sig) = _appraisal(id2, t2, 12e6);
+        (uint256 pool, uint256 fee) = _owed(t2, bob, 12e6);
+        _fundAndApprove(bob, pool + fee);
+        vm.prank(bob);
+        vault.redeem(id2, a, sig);
+
+        assertEq(market.unwindCount(), 1);
+        assertEq(market.lastUnwound(), id2);
+        assertEq(uint8(market.stateAtUnwind()), uint8(CardVault.State.Whole), "state written before unwind");
+        assertEq(market.redeemerBalanceAtUnwind(), 13e18, "unwind runs before the burn");
+        assertEq(ShardToken(t2).balanceOf(alice), 3e18, "pool shards returned to the LP owner");
+
+        uint256 before = USDC.balanceOf(alice);
+        vm.prank(alice);
+        vault.claimPayout(t2);
+        assertEq(USDC.balanceOf(alice) - before, 36e6);
+        assertEq(vault.shardings(t2).payoutPool, 0);
+    }
+
+    function test_redeemWithoutPoolStillCallsUnwind() public {
+        uint256 id2 = _mintTo(alice);
+        CardVault.ShardParams memory p = _defaultParams();
+        p.reserveUsdc = 1_000e6; // not graduated: no seed
+        _runAuction(id2, p, false);
+        Tickets.Appraisal memory none;
+        vm.prank(alice);
+        vault.redeem(id2, none, "");
+        assertEq(market.lastUnwound(), id2);
     }
 }
