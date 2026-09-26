@@ -191,3 +191,22 @@
     left: 0;
   }
 }
+
+/* Landing hero cards: a slow, gentle bob (translate, so it composes with the scroll-driven transform). */
+@keyframes kura-float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -10px;
+  }
+}
+.kura-float {
+  animation: kura-float 6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kura-float {
+    animation: none;
+  }
+}
