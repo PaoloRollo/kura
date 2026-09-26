@@ -191,3 +191,58 @@
     left: 0;
   }
 }
+
+/* Card page art (components/card-showcase.tsx): pointer tilt, flip, glare and the foil sheen. */
+.card-showcase-tilt {
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform 180ms ease-out;
+  transform-style: preserve-3d;
+}
+.card-showcase-flip {
+  transition: transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.card-showcase-flip.is-flipped {
+  transform: rotateY(180deg);
+}
+.card-glare {
+  background: radial-gradient(circle at var(--gx) var(--gy), #ffffff40 0%, transparent 45%);
+  mix-blend-mode: overlay;
+  opacity: var(--glare);
+  transition: opacity 200ms ease-out;
+}
+@keyframes card-foil-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+.card-foil {
+  background:
+    linear-gradient(115deg, transparent 18%, #ff4fb855 30%, #ffe45c55 40%, #5cffb455 50%, #5cc8ff55 60%, #b45cff55 70%, transparent 82%),
+    radial-gradient(circle at var(--gx) var(--gy), #ffffff33 0%, transparent 55%);
+  background-size: 200% 200%, 100% 100%;
+  mix-blend-mode: color-dodge;
+  opacity: 0.7;
+  animation: card-foil-shimmer 7s linear infinite;
+}
+.card-foil-etched {
+  background:
+    linear-gradient(115deg, transparent 20%, #e8ecf555 38%, #9aa6ba55 50%, #f5f7fb66 62%, transparent 80%),
+    radial-gradient(circle at var(--gx) var(--gy), #ffffff2e 0%, transparent 55%);
+  background-size: 200% 200%, 100% 100%;
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-showcase-tilt {
+    transform: none;
+    transition: none;
+  }
+  .card-showcase-flip {
+    transition: none;
+  }
+  .card-foil {
+    animation: none;
+  }
+}
