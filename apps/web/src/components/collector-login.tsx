@@ -26,7 +26,8 @@ export function CollectorLogin({ onLogin }: { onLogin: (method: LoginMethod) => 
         <Button variant="inverse" size="md" className="w-full" onClick={() => onLogin("email")}><MailIcon />Continue with email</Button>
         <Button variant="secondary" size="md" className="w-full" onClick={() => onLogin("google")}><GlobeIcon />Continue with Google</Button>
         <Button variant="secondary" size="md" className="w-full" onClick={() => onLogin("wallet")}><WalletIcon />Connect a wallet</Button>
-        <p className="pt-1 text-[12px] text-muted-foreground">A wallet is created for you. No seed phrase, no gas fees.</p>
+        <p className="pt-1 text-[12px] text-muted-foreground">With email or Google a wallet is created for you. No seed phrase, no gas fees.</p>
+        <p className="text-[12px] text-muted-foreground">A connected wallet pays its own gas in Sepolia ETH.</p>
       </div>
     </section>
   );

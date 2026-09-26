@@ -21,6 +21,7 @@ import { shardsFixed, shortAddress, shortHash } from "@/lib/format";
 import { handleMessage, normalizeHandle, reasonFromRevert, type Availability } from "@/lib/handles";
 import { schema, t, type Row } from "@/lib/ponder";
 import { useSendTx, type Revert, type Step } from "@/lib/tx";
+import type { WalletKind } from "@/lib/tx-core";
 import { cn } from "@/lib/utils";
 
 const PARENT = `${addresses.ensParentLabel}.eth`;
@@ -40,6 +41,7 @@ export function ClaimHandleView({
   fallbackName,
   hints,
   cta,
+  walletKind,
 }: {
   label: string;
   onLabel: (v: string) => void;
@@ -49,6 +51,8 @@ export function ClaimHandleView({
   fallbackName: string;
   hints: { label: string; note: string }[];
   cta: React.ReactNode;
+  /** Only the embedded wallet's sends are sponsored, so only then does the footer say gas is covered. */
+  walletKind?: WalletKind | null;
 }) {
   const ok = !!check && "available" in check && check.available;
   const bad = !!check && (("available" in check && !check.available) || "error" in check);
@@ -119,7 +123,9 @@ export function ClaimHandleView({
       </div>
       <div className="flex flex-col gap-3 pt-8">
         {cta}
-        <p className="text-center text-[12px] text-muted-foreground">Free, one per wallet. Gas is covered.</p>
+        <p className="text-center text-[12px] text-muted-foreground">
+          Free, one per wallet.{walletKind === "embedded" ? " Gas is covered." : walletKind === "external" ? " Your wallet pays its own gas." : ""}
+        </p>
       </div>
     </div>
   );
@@ -301,6 +307,7 @@ export function ClaimHandle() {
       holding={holding}
       fallbackName={address ? shortAddress(address) : ""}
       hints={hintsFrom(handles)}
+      walletKind={walletKind}
       cta={
         <TxStepper
           steps={steps}

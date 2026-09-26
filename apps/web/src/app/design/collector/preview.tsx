@@ -27,6 +27,7 @@ function Claim({ initial }: { initial: { label: string; check: CheckState } }) {
   const ok = !!initial.check && "available" in initial.check && initial.check.available;
   return (
     <ClaimHandleView
+      walletKind="embedded"
       label={label}
       onLabel={setLabel}
       check={initial.check}

@@ -22,6 +22,15 @@ describe("ClaimHandleView", () => {
     expect(screen.getByText("holds no shards yet")).toBeTruthy();
   });
 
+  it("says gas is covered only for the embedded wallet", () => {
+    render(<ClaimHandleView {...base} label="" onLabel={() => {}} check={null} walletKind="embedded" />);
+    expect(screen.getByText("Free, one per wallet. Gas is covered.")).toBeTruthy();
+    cleanup();
+    render(<ClaimHandleView {...base} label="" onLabel={() => {}} check={null} walletKind="external" />);
+    expect(screen.queryByText(/Gas is covered/)).toBeNull();
+    expect(screen.getByText(/your wallet pays its own gas/i)).toBeTruthy();
+  });
+
   it("lowercases what is typed and drops spaces", () => {
     const onLabel = vi.fn();
     render(<ClaimHandleView {...base} label="" onLabel={onLabel} check={null} />);
