@@ -5,7 +5,7 @@ export const feeKind = onchainEnum("fee_kind", ["sale", "buyout"]);
 export const nameKind = onchainEnum("name_kind", ["card", "collector", "agent"]);
 export const bidStatus = onchainEnum("bid_status", ["open", "exited", "claimed"]);
 export const activityKind = onchainEnum("activity_kind", [
-  "mint", "shard", "bid", "exit", "claim", "settle", "redeem", "payout", "release", "named", "transfer",
+  "mint", "shard", "bid", "exit", "claim", "settle", "redeem", "payout", "release", "named", "transfer", "pool_opened", "swap",
 ]);
 
 export const cards = onchainTable("cards", (t) => ({
@@ -74,6 +74,8 @@ export const shardBalances = onchainTable("shard_balances", (t) => ({
   shardToken: t.hex().notNull(),
   holder: t.hex().notNull(),
   balance: t.bigint().notNull(),
+  // True for the Uniswap v4 PoolManager, which holds the shards of every pool (label it "Uniswap pool").
+  isPool: t.boolean().notNull(),
   updatedBlock: t.bigint().notNull(),
   updatedAt: t.integer().notNull(),
 }), (table) => ({ tokenIdx: index().on(table.shardToken), holderIdx: index().on(table.holder) }));
@@ -156,8 +158,9 @@ export const activities = onchainTable("activities", (t) => ({
   kind: activityKind("kind").notNull(),
   cardId: t.bigint(),
   actor: t.hex().notNull(),
-  // Units depend on kind: "shard" and "claim" are 18-decimal shard units; "bid", "exit", "settle", "redeem" and
-  // "payout" are 6-decimal USDC; "mint", "named", "transfer" and "release" carry no amount (null).
+  // Units depend on kind: "shard" and "claim" are 18-decimal shard units; "bid", "exit", "settle", "redeem",
+  // "payout" and "swap" (the USDC leg) are 6-decimal USDC; "pool_opened" is the opening USDC per whole shard (6 dp);
+  // "mint", "named", "transfer" and "release" carry no amount (null).
   amount: t.bigint(),
   meta: t.json(),
   txHash: t.hex().notNull(),
