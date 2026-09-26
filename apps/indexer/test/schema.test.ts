@@ -61,4 +61,12 @@ describe("schema", () => {
     expect(schema.swapsRelations).toBeDefined();
     expect(schema.cardsRelations).toBeDefined();
   });
+  it("tags the v4 PoolManager among shard holders", () => {
+    const c = schema.shardBalances as unknown as Record<string, { notNull: boolean; columnType: string }>;
+    expect(c.isPool!.columnType).toBe("PgBoolean");
+    expect(c.isPool!.notNull).toBe(true);
+  });
+  it("has activity kinds for the pool opening and swaps", () => {
+    expect(schema.activityKind.enumValues).toEqual(expect.arrayContaining(["pool_opened", "swap"]));
+  });
 });
