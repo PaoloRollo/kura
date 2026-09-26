@@ -9,6 +9,9 @@ export type CardAttributes = {
   usd: string | null;
   /** The illustrator (Scryfall `artist`), for the credit line; null when unknown. */
   artist: string | null;
+  /** The card's name and normal-size art (the same as its metadata's), so lists need no /api/meta call per card. */
+  name?: string;
+  image?: string | null;
 };
 
 export type CardAttributesMap = Record<string, CardAttributes>;
