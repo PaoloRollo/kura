@@ -243,6 +243,9 @@
     transition: none;
   }
   .card-foil {
+    animation: none;
+  }
+}
 /* Landing hero cards: a slow, gentle bob (translate, so it composes with the scroll-driven transform). */
 @keyframes kura-float {
   0%,
