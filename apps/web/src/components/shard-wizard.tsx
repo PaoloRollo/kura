@@ -8,7 +8,7 @@ import { ArrowRightIcon, CheckIcon, ChevronLeftIcon, ExternalLinkIcon, InfoIcon,
 import { AmountInput, Button, CardArt, Segmented } from "@/components/kura";
 import { Slider } from "@/components/ui/slider";
 import type { CardData } from "@/hooks/use-card";
-import { identityOf } from "@/components/card-page-view";
+import { identityOf } from "@/components/card-page-parts";
 import { explorerAddress, explorerTx } from "@/lib/chain";
 import { dateTime } from "@/lib/card-view";
 import { money, shortAddress, shortHash } from "@/lib/format";

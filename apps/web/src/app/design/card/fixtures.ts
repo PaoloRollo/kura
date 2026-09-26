@@ -4,6 +4,7 @@ import { usdcPerShardToQ96 } from "@kura/shared";
 import type { ActivityRow, BalanceRow, BidRow, CardData, CheckpointRow, EnsRecordRow, FeeRow, ShardingRow, TickRow, TransferRow } from "@/hooks/use-card";
 import { addresses } from "@/lib/chain";
 import type { Handles } from "@/lib/handles";
+import type { MarketPoint } from "@/app/api/cards/[id]/market/route";
 
 type Hex = `0x${string}`;
 const addr = (n: number): Hex => `0x${n.toString(16).padStart(40, "0")}`;
@@ -240,3 +241,11 @@ export function cardFixture(state: PreviewState, now: number): CardData {
 }
 
 export const FIXTURE_HEAD = HEAD;
+
+/** The Analytics tab's market series (the snapshot cron's daily rows): two weeks drifting up to today's $25,000 quote. */
+export function marketFixture(now: number): MarketPoint[] {
+  return Array.from({ length: 14 }, (_, i) => {
+    const usd = (25_000 - (13 - i) * 60).toFixed(2);
+    return { date: new Date((now - (13 - i) * 86_400) * 1000).toISOString().slice(0, 10), usd, adjustedUsd: usd };
+  });
+}

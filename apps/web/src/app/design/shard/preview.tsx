@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { CircleDollarSignIcon, GavelIcon } from "lucide-react";
 import { BarChip, EnsName, TopBar } from "@/components/kura";
-import { CardLoading, CardNotFound } from "@/components/card-page-view";
+import { CardLoading, CardNotFound } from "@/components/card-page-parts";
 import { NAV } from "@/components/site-header";
 import { ShardWizard, useUrlStepNav, type ShardDone, type WizardStep } from "@/components/shard-wizard";
 import { TxStepper, describeTxError } from "@/components/tx-stepper";

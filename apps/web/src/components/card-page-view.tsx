@@ -3,10 +3,12 @@
 import type * as React from "react";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ActivityFeed, ActivityList } from "@/components/activity-feed";
-import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
+import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy } from "@/components/card-header";
 import { AuctionPanel, hasBidActions } from "@/components/auction-panel";
-import { CardAnalytics } from "@/components/card-analytics";
+import { CardAnalyticsLoading } from "@/components/card-analytics-loading";
+import { identityOf } from "@/components/card-page-parts";
 import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
@@ -15,14 +17,15 @@ import { RedeemPanel } from "@/components/redeem-panel";
 import { PayoutClaimedView, RedeemedView, showVaultSuccess, useVaultSuccess } from "@/components/vault-success";
 import { MobileNav } from "@/components/mobile-nav";
 import { HoldersList, OwnershipSummary } from "@/components/holders-list";
-import { IndexerLoading } from "@/components/sync-state";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ACTIVITY_LIMIT, type CardData } from "@/hooks/use-card";
+import type { MarketPoint } from "@/app/api/cards/[id]/market/route";
 import { addresses } from "@/lib/chain";
 import { buildFeed } from "@/lib/activity-feed";
 import { CARD_TABS, agoLong, dateTime, holdersView, lastBuyout, type CardTab } from "@/lib/card-view";
-import { metaCardName, metaTrait } from "@/lib/meta";
 import { cn } from "@/lib/utils";
+
+// The Analytics tab's charts (recharts) load only when the tab opens, not with every card page.
+const CardAnalytics = dynamic(() => import("@/components/card-analytics").then((m) => m.CardAnalytics), { ssr: false, loading: () => <CardAnalyticsLoading /> });
 
 /** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
 export function CardTabs({ tab, href }: { tab: CardTab; href: (t: CardTab) => string }) {
@@ -46,44 +49,6 @@ export function CardTabs({ tab, href }: { tab: CardTab; href: (t: CardTab) => st
   );
 }
 
-/** Name, art, set and rarity from metadata and attributes, whichever has loaded. */
-export function identityOf(c: CardData): Identity {
-  return {
-    name: c.meta ? metaCardName(c.meta.name) : c.card ? c.card.label : "…",
-    image: c.meta?.image || null,
-    set: c.attributes?.set ?? (c.meta ? metaTrait(c.meta, "Set") : undefined),
-    rarity: c.attributes?.rarity ?? (c.meta ? metaTrait(c.meta, "Rarity") : undefined),
-    artist: c.attributes?.artist ?? null,
-  };
-}
-
-export function CardLoading() {
-  return (
-    <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_minmax(0,1fr)]">
-      <MobileNav className="-mt-2 -mb-6" />
-      <Skeleton className="mx-auto aspect-[63/88] w-full max-w-[280px] rounded-3xl bg-surface lg:max-w-none" />
-      <div className="flex min-w-0 flex-col gap-4">
-        <Skeleton className="h-6 w-60 bg-surface" />
-        <Skeleton className="h-14 w-96 max-w-full bg-surface" />
-        <IndexerLoading title="Loading this card" className="max-w-md" />
-      </div>
-    </div>
-  );
-}
-
-export function CardNotFound({ id }: { id: string }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <MobileNav className="-mt-2" />
-      <div className="flex flex-col items-start gap-2 rounded-3xl border border-border bg-surface p-6">
-        <h1 className="font-display text-[24px] font-semibold text-text">Card not found</h1>
-        <p className="text-[14px] text-text-2">No vault card has id {id}. It may not be minted yet, or the indexer is still catching up.</p>
-        <Link href="/app" className="text-[13px] text-text underline-offset-2 hover:underline">Back to explore</Link>
-      </div>
-    </div>
-  );
-}
-
 export type CardPageViewProps = {
   c: CardData;
   /** The viewer's wallet, or null. */
@@ -94,10 +59,12 @@ export type CardPageViewProps = {
   block: bigint | null;
   tab: CardTab;
   tabHref: (t: CardTab) => string;
+  /** The Analytics tab's market series, overriding its /api/cards/[id]/market fetch (the /design previews' fixtures). */
+  market?: MarketPoint[];
 };
 
 /** The card page (HisVE, Ps4OJ, oezcX, gmKpU, mWV0E, yV8eD) for a loaded card. */
-export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewProps) {
+export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPageViewProps) {
   const card = c.card!;
   const identity = identityOf(c);
   const settledInfo = useOwnerSettled(card.id);
@@ -153,7 +120,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
             <Empty title="No auction yet" body="This card is whole. An auction starts when its owner shards it." />
           )
         )}
-        {tab === "analytics" && <CardAnalytics data={c} now={now} />}
+        {tab === "analytics" && <CardAnalytics data={c} now={now} market={market} />}
       </div>
     );
   }

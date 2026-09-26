@@ -12,7 +12,8 @@ vi.mock("@/lib/chain", async (orig) => ({ ...(await orig<object>()), publicClien
 vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c, worldIdRefusalTitle: () => "Refused" }));
 Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
-import { CardNotFound, CardPageView } from "@/components/card-page-view";
+import { CardPageView } from "@/components/card-page-view";
+import { CardNotFound } from "@/components/card-page-parts";
 import { ACTIVITY_LIMIT } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
 import type { CardTab } from "@/lib/card-view";

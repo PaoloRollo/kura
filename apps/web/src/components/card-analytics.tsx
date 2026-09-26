@@ -11,7 +11,7 @@ import { HolderBars, type HolderPoint } from "@/components/charts/holder-bars";
 import { KpiStrip, type Kpi } from "@/components/charts/kpi-strip";
 import { OwnershipBar, type OwnershipSlice } from "@/components/charts/ownership-bar";
 import { PriceBars, type PriceMark, type PricePoint } from "@/components/charts/price-bars";
-import { IndexerLoading } from "@/components/sync-state";
+import { CardAnalyticsLoading } from "@/components/card-analytics-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CardData, ShardingRow } from "@/hooks/use-card";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
@@ -234,24 +234,6 @@ function FeesPanel({ sale, buyout, total, feeBps }: { sale: bigint; buyout: bigi
       </dl>
       <p className="text-[11px] text-text-2">{feeBps != null ? `${Number((feeBps / 100).toFixed(2))}% of proceeds, paid at settle and on buyout.` : "Paid at settle and on buyout."}</p>
     </Panel>
-  );
-}
-
-export function CardAnalyticsLoading() {
-  return (
-    <div className="flex flex-col gap-4" aria-busy>
-      <IndexerLoading title="Loading this card's analytics" className="max-w-md" />
-      <Skeleton className="h-[108px] rounded-2xl bg-surface" />
-      <div className="grid gap-4 md:grid-cols-[1.74fr_1fr]">
-        <Skeleton className="h-[320px] rounded-2xl bg-surface" />
-        <Skeleton className="h-[240px] rounded-2xl bg-surface" />
-      </div>
-      <div className="grid gap-4 md:grid-cols-[1.1fr_1fr_0.64fr]">
-        <Skeleton className="h-[270px] rounded-2xl bg-surface" />
-        <Skeleton className="h-[230px] rounded-2xl bg-surface" />
-        <Skeleton className="h-[250px] rounded-2xl bg-surface" />
-      </div>
-    </div>
   );
 }
 

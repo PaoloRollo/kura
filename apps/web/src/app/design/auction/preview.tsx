@@ -17,7 +17,7 @@ import { HandlesFixture } from "@/hooks/use-handles";
 import type { CardTab } from "@/lib/card-view";
 import { TxError, type SendInput, type Sent } from "@/lib/tx-core";
 import { cn } from "@/lib/utils";
-import { FIXTURE_HEAD, HANDLES, PAOLO, cardFixture } from "../card/fixtures";
+import { FIXTURE_HEAD, HANDLES, PAOLO, cardFixture, marketFixture } from "../card/fixtures";
 import { AUCTION_PREVIEWS, ENDED_STATES, type AuctionPreviewState } from "./states";
 
 const usd = (dollars: number) => BigInt(Math.round(dollars * 100)) * 10_000n;
@@ -183,7 +183,7 @@ export function AuctionPreview({ state, tab, now }: { state: AuctionPreviewState
             ))}
           </nav>
           <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-24 sm:px-6 md:pb-10 lg:px-12 lg:pt-8">
-            <CardPageView key={state} c={c} me={PAOLO} now={now} block={block} tab={tab} tabHref={href} />
+            <CardPageView key={state} c={c} me={PAOLO} now={now} block={block} tab={tab} tabHref={href} market={marketFixture(now)} />
           </main>
         </div>
       </AuctionIoContext.Provider>

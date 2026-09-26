@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import type { Address } from "viem";
 import { abi } from "@kura/shared";
-import { identityOf } from "@/components/card-page-view";
+import { identityOf } from "@/components/card-page-parts";
 import { Credit } from "@/components/card-header";
 import { Button, CardArt, EnsName, RedemptionMeter } from "@/components/kura";
 import { MobileNav } from "@/components/mobile-nav";
