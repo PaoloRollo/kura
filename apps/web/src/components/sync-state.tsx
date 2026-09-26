@@ -2,7 +2,7 @@
 
 import type * as React from "react";
 import { usePonderStatus } from "@ponder/react";
-import { Loader2Icon, RefreshCwIcon } from "lucide-react";
+import { Loader2Icon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { shortHash } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +39,17 @@ export function SyncLoading({ block: n, title = "Syncing with the vault", classN
         <span className="h-2 w-[70%] animate-pulse rounded-full bg-surface-2" />
       </div>
     </StateCard>
+  );
+}
+
+/** A visible "indexer not configured" error (see lib/indexer-config), pinned above every page; nothing when fine. */
+export function IndexerConfigBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div role="alert" className="sticky top-[env(safe-area-inset-top,0px)] z-50 flex items-center gap-2.5 border-b border-shu/40 bg-shu-soft px-4 py-2.5 text-[13px] text-text">
+      <TriangleAlertIcon aria-hidden className="size-4 shrink-0 text-shu" />
+      <span>{error}</span>
+    </div>
   );
 }
 
