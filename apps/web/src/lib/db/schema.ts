@@ -134,6 +134,23 @@ export const ensAppraisalWrites = app.table("ens_appraisal_writes", {
   txHash: text("tx_hash"),
 });
 
+/**
+ * One row per MultiBaas-delivered log the webhook acts on (tx hash and log index), so a retried, duplicated or replayed
+ * delivery is processed once. `status`: processing → done | failed; a failed row, or one stuck in processing past
+ * DELIVERY_STALE_SEC, is claimed again by the next delivery (`attempts` counts claims).
+ */
+export const multibaasDeliveries = app.table("multibaas_deliveries", {
+  eventKey: text("event_key").primaryKey(),
+  deliveryId: text("delivery_id").notNull(),
+  eventName: text("event_name").notNull(),
+  cardId: bigint("card_id", { mode: "bigint" }),
+  status: text("status").notNull().default("processing"),
+  outcome: text("outcome"),
+  attempts: integer("attempts").notNull().default(1),
+  receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const collectorProfiles = app.table("collector_profiles", {
   privyDid: text("privy_did").primaryKey(),
   wallet: text("wallet").notNull(),
