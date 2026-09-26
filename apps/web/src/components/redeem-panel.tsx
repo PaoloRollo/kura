@@ -5,31 +5,30 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BotIcon, CheckIcon, CloudOffIcon, KeyRoundIcon, PackageOpenIcon, SendIcon } from "lucide-react";
-import { parseUnits, type Address, type TransactionReceipt } from "viem";
+import { parseUnits, type Address, type Hex, type TransactionReceipt } from "viem";
 import { abi } from "@kura/shared";
 import { Button, RedemptionMeter } from "@/components/kura";
 import { Panel } from "@/components/card-state-panel";
 import { SendShardsSheet } from "@/components/send-shards";
 import { TxStepper } from "@/components/tx-stepper";
 import { AppraiseError, useVaultIo, type VaultIo } from "@/components/vault-io";
-import { redeemedFromReceipt, showVaultSuccess } from "@/components/vault-success";
+import { redeemedFromReceipt, showVaultSuccess, type RedeemedInfo } from "@/components/vault-success";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CardData } from "@/hooks/use-card";
 import { useNow } from "@/hooks/use-now";
 import { useHandles } from "@/hooks/use-handles";
 import { displayName } from "@/lib/handles";
 import type { AppraiseResult } from "@/lib/appraise";
-import { buyoutQuote, shardsShort, type BuyoutQuote } from "@/lib/buyout";
+import { REFRESH_BEFORE_SEC, canAttemptAppraisal, throttledAppraisal } from "@/lib/appraisal-refresh";
+import { buyoutQuote, payoutFor, shardsShort, type BuyoutQuote } from "@/lib/buyout";
 import { addresses } from "@/lib/chain";
 import { holdersView, shareOf } from "@/lib/card-view";
-import { money, shardsFixed, usdc } from "@/lib/format";
+import { money, shardsFixed } from "@/lib/format";
 import { metaCardName } from "@/lib/meta";
-import type { Revert, Step } from "@/lib/tx";
+import { TxError, type Revert, type Step, type StepResult } from "@/lib/tx";
 import { cn } from "@/lib/utils";
 
 const SHARDED = 3; // CardVault.State.Sharded
-/** Re-fetch the appraisal once it has less than this left, so the signature never expires mid-flow. */
-const REFRESH_BEFORE_SEC = 30;
 
 type Chain = { supply: bigint; balance: bigint; usdc: bigint; allowance: bigint; feeBps: bigint; clearingQ96: bigint };
 
@@ -60,9 +59,19 @@ export function useRedeem(c: CardData, me: Address | null) {
   const ch = chain.data ?? null;
   const eligible = !!ch && ch.supply > 0n && ch.balance * 5n >= ch.supply * 4n;
   const full = !!ch && ch.supply > 0n && ch.balance >= ch.supply;
+  const queryClient = useQueryClient();
+  const appraisalKey = ["appraisal", cardId.toString(), token];
   const appraisal = useQuery<AppraiseResult, Error>({
-    queryKey: ["appraisal", cardId.toString(), token],
-    queryFn: () => io.appraise(cardId),
+    queryKey: appraisalKey,
+    queryFn: () =>
+      throttledAppraisal(
+        () => io.appraise(cardId),
+        () => {
+          const cached = queryClient.getQueryData<AppraiseResult>(appraisalKey);
+          const left = cached ? Number(cached.appraisal.expiresAt) - Math.floor(Date.now() / 1000) : 0;
+          return cached && left >= REFRESH_BEFORE_SEC ? cached : undefined;
+        },
+      ),
     enabled: eligible && !full,
     retry: false,
     staleTime: Infinity,
@@ -71,16 +80,20 @@ export function useRedeem(c: CardData, me: Address | null) {
   const now = useNow(1000);
   const expiresAt = appraisal.data ? Number(appraisal.data.appraisal.expiresAt) : null;
   const left = expiresAt != null ? expiresAt - now : null;
-  const { refetch, isFetching } = appraisal;
-  // Quote expired or about to: fetch a new one without asking (the design shows the quote as always ready).
+  const { refetch, isFetching, isError } = appraisal;
+  // Quote expired or about to: fetch a new one without asking (the design shows the quote as always ready). After a
+  // failure only once the backoff allows it; never more than once per 10 s per tab (lib/appraisal-refresh).
+  const due = isError || (left != null && left < REFRESH_BEFORE_SEC);
   useEffect(() => {
-    if (left != null && left < REFRESH_BEFORE_SEC && !isFetching) void refetch();
-  }, [left, isFetching, refetch]);
+    if (due && !isFetching && canAttemptAppraisal(now * 1000)) void refetch();
+  }, [due, now, isFetching, refetch]);
+  // A signature with no time left can't be sent: the CTA waits for the fresh one.
+  const quoteReady = !!appraisal.data && left != null && left > 0;
 
   const quote: BuyoutQuote | null = ch
     ? buyoutQuote({ supply: ch.supply, balance: ch.balance, clearingQ96: ch.clearingQ96, appraisedUsdcPerShard: BigInt(appraisal.data?.appraisal.usdcPerShard ?? "0"), feeBps: ch.feeBps })
     : null;
-  return { io, chain: ch, chainLoading: chain.isLoading, eligible, full, appraisal, now, left: left != null ? Math.max(0, left) : null, quote };
+  return { io, chain: ch, chainLoading: chain.isLoading, eligible, full, appraisal, now, left: left != null ? Math.max(0, left) : null, quoteReady, quote };
 }
 
 type RedeemState = ReturnType<typeof useRedeem>;
@@ -113,6 +126,16 @@ function redeemRevert(r: Revert, supply: bigint, balance: bigint): { title: stri
   }
 }
 
+/** A landed buyout read back from the vault: its buyout price, and the payout and fee it implies for `missing`. */
+async function redeemedFromChain(io: VaultIo, cardId: bigint, token: Address, missing: bigint, hash: Hex | undefined): Promise<RedeemedInfo> {
+  const [sh, feeBps] = await Promise.all([
+    io.read<{ buyoutPerShard: bigint }>({ address: addresses.cardVault, abi: abi.cardVault, functionName: "shardings", args: [token] }),
+    io.read<number | bigint>({ address: addresses.cardVault, abi: abi.cardVault, functionName: "feeBps" }),
+  ]);
+  const payoutUsdc = payoutFor(sh.buyoutPerShard, missing);
+  return { kind: "redeemed", cardId, hash, buyoutPerShard: sh.buyoutPerShard, payoutUsdc, feeUsdc: (payoutUsdc * BigInt(feeBps)) / 10_000n, missing };
+}
+
 /** The approve + redeem steps. The plan is recomputed from fresh reads when a run starts, so the approval always covers what redeem pulls. */
 function useRedeemSteps(s: RedeemState, c: CardData, me: Address | null) {
   const cardId = c.card?.id ?? 0n;
@@ -142,6 +165,18 @@ function useRedeemSteps(s: RedeemState, c: CardData, me: Address | null) {
     label: s.full ? "Reassemble the card (nothing to pay)" : "Buy out & redeem",
     skip: redeemed,
     run: async () => {
+      // An appraisal about to expire would revert Expired: fetch a fresh one, and make sure the approval still covers
+      // the new total before sending (the retry then approves the difference).
+      if (!s.full) {
+        const current = latestAppraisal();
+        const left = current ? Number(current.appraisal.expiresAt) - Math.floor(Date.now() / 1000) : -1;
+        if (left < REFRESH_BEFORE_SEC) {
+          const res = await s.appraisal.refetch();
+          if (res.error || !res.data) throw res.error ?? new Error("Couldn't get a fresh appraisal");
+          const { ch, q } = await freshPlan();
+          if (ch.allowance < q.total) throw new TxError("The price moved since the approval", { name: "ERC20InsufficientAllowance" });
+        }
+      }
       if (!plan.current) await freshPlan();
       const { a } = plan.current!;
       const args = s.full || !a
@@ -164,12 +199,17 @@ function useRedeemSteps(s: RedeemState, c: CardData, me: Address | null) {
   };
   const steps = s.full ? [redeemStep] : [approveStep, redeemStep];
 
-  function onDone() {
+  async function onDone(results: StepResult[]) {
     const r = receipt.current;
-    const info = r ? redeemedFromReceipt(cardId, plan.current?.q.missing ?? 0n, r) : null;
+    const missing = plan.current?.q.missing ?? (s.chain ? s.chain.supply - s.chain.balance : 0n);
     plan.current = null;
     receipt.current = null;
-    if (info) showVaultSuccess(info);
+    const info = r ? redeemedFromReceipt(cardId, missing, r) : null;
+    if (info) return showVaultSuccess(info);
+    // The redeem was skipped because an earlier attempt had already landed: rebuild the success from the chain.
+    const hash = results.find((x) => x.id === "redeem")?.hash;
+    const fromChain = token ? await redeemedFromChain(s.io, cardId, token, missing, hash).catch(() => null) : null;
+    showVaultSuccess(fromChain ?? { kind: "redeemed", cardId, hash, buyoutPerShard: 0n, payoutUsdc: 0n, feeUsdc: 0n, missing });
   }
   async function onRetry() {
     plan.current = null;
@@ -238,10 +278,12 @@ function SignedChip({ s, short }: { s: RedeemState; short?: boolean }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2.5 rounded-xl bg-bg/60 px-4 py-3 text-[13px] text-text-2">
         <BotIcon aria-hidden className="size-4 shrink-0 text-s7" />
-        {a && s.left != null ? (
+        {a && s.quoteReady && s.left != null ? (
           <span>{short ? "Price signed" : "Signed"} by appraiser.{addresses.ensParentLabel}.eth · valid <span className="font-mono">{mmss(s.left)}</span></span>
+        ) : s.appraisal.isError ? (
+          <span>Couldn&apos;t refresh the appraisal · retrying shortly</span>
         ) : (
-          <span>{s.appraisal.isFetching ? "Fetching a signed appraisal…" : "Waiting for the appraisal"}</span>
+          <span>{a ? "Getting a fresh appraisal…" : "Fetching a signed appraisal…"}</span>
         )}
       </div>
       {a?.source === "snapshot" && (
@@ -270,7 +312,7 @@ function AppraisalError({ s }: { s: RedeemState }) {
 function RedeemAction({ s, c, me, compactSteps }: { s: RedeemState; c: CardData; me: Address | null; compactSteps?: boolean }) {
   const tx = useRedeemSteps(s, c, me);
   const q = s.quote;
-  const ready = s.full || (!!s.appraisal.data && !!q);
+  const ready = s.full || (s.quoteReady && !!q);
   const enough = !!q && !!s.chain && s.chain.usdc >= q.total;
   const approved = !!q && !!s.chain && s.chain.allowance >= q.total && q.total > 0n;
   return (
@@ -334,13 +376,14 @@ export function BelowThresholdCard({ c, balance, supply, onSend, holdersHref }: 
  * The redeem panel of a sharded card for a holder (Ps4OJ on desktop; on mobile a summary that opens the M3M7L5 page).
  * Below 80% it is the mnpO6 "shards short" card; a full holder reassembles the card for nothing.
  */
-export function RedeemPanel({ c, me }: { c: CardData; me: Address | null }) {
+export function RedeemPanel({ c, me, fallback = null }: { c: CardData; me: Address | null; /** Shown when the live balance is zero (not a holder). */ fallback?: React.ReactNode }) {
   const s = useRedeem(c, me);
   const [sending, setSending] = useState(false);
   const id = c.card!.id.toString();
-  if (!me || !c.sharding) return null;
-  if (!s.chain) return <Panel className="p-6 md:p-7"><SkeletonRows /></Panel>;
-  if (s.chain.balance === 0n) return null;
+  if (!me || !c.sharding) return <>{fallback}</>;
+  // Gated on the live balanceOf: the indexer's balance only decides what shows while the chain read loads.
+  if (!s.chain) return c.myBalance > 0n ? <Panel className="p-6 md:p-7"><SkeletonRows /></Panel> : <>{fallback}</>;
+  if (s.chain.balance === 0n) return <>{fallback}</>;
   const send = (
     <SendShardsSheet open={sending} onOpenChange={setSending} cardName={cardName(c)} shardToken={c.sharding.shardToken} balance={s.chain.balance} supply={s.chain.supply} />
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangleIcon, CheckCheckIcon, ExternalLinkIcon, SendIcon } from "lucide-react";
-import { parseUnits, type Address, type Hex } from "viem";
+import { formatUnits, parseUnits, type Address, type Hex } from "viem";
 import { abi } from "@kura/shared";
 import { AmountInput, Button, notify } from "@/components/kura";
 import { TxStepper } from "@/components/tx-stepper";
@@ -106,7 +106,7 @@ export function SendShardsSheet({ open, onOpenChange, cardName, shardToken, bala
     },
   }];
 
-  const chips: [string, string][] = [["0.5", "0.5"], ["1", "1.0"], ["Max", shardsFixed(balance, 4).replace(/\.?0+$/, "") || "0"]];
+  const chips: [string, string][] = [["0.5", "0.5"], ["1", "1.0"], ["Max", formatUnits(balance, 18)]];
 
   return (
     <Sheet open={open} onOpenChange={close}>

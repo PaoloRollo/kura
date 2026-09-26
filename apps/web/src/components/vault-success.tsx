@@ -14,9 +14,9 @@ import { money, shardsFixed, shortHash } from "@/lib/format";
 type Logs = Pick<TransactionReceipt, "logs" | "transactionHash">;
 
 /** A buyout, from the CardRedeemed log of the redeem receipt. */
-export type RedeemedInfo = { kind: "redeemed"; cardId: bigint; hash: Hex; buyoutPerShard: bigint; payoutUsdc: bigint; feeUsdc: bigint; missing: bigint };
+export type RedeemedInfo = { kind: "redeemed"; cardId: bigint; hash?: Hex; buyoutPerShard: bigint; payoutUsdc: bigint; feeUsdc: bigint; missing: bigint };
 /** A minority payout, from the PayoutClaimed log of the claim receipt. */
-export type ClaimedInfo = { kind: "claimed"; cardId: bigint; hash: Hex; shardUnits: bigint; usdc: bigint; buyoutPerShard: bigint; redeemer: Address | null };
+export type ClaimedInfo = { kind: "claimed"; cardId: bigint; hash?: Hex; shardUnits: bigint; usdc: bigint; buyoutPerShard: bigint; redeemer: Address | null };
 export type VaultSuccess = RedeemedInfo | ClaimedInfo;
 
 export function redeemedFromReceipt(cardId: bigint, missing: bigint, receipt: Logs): RedeemedInfo | null {
@@ -51,7 +51,8 @@ export function useVaultSuccess(cardId?: bigint): VaultSuccess | null {
   return v && (cardId === undefined || v.cardId === cardId) ? v : null;
 }
 
-function TxChip({ label, hash }: { label: string; hash: string }) {
+function TxChip({ label, hash }: { label: string; hash?: string }) {
+  if (!hash) return null;
   return (
     <a href={explorerTx(hash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1.5 font-mono text-[12px] text-text-2 hover:text-text">
       {label} {shortHash(hash)}<ExternalLinkIcon aria-hidden className="size-3" />

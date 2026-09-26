@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ address: "0x4f2c6e1a0b3d5f7a9c1e3b5d7f9a1c3e5b7da81e", identityToken: null, login: vi.fn(), logout: vi.fn() }), apiFetch: vi.fn() }));
@@ -14,6 +14,8 @@ import { PayoutPanel } from "@/components/payout-panel";
 import { SendShardsSheet, parseShardAmount } from "@/components/send-shards";
 import { VaultIoContext, type VaultIo, type VaultRead } from "@/components/vault-io";
 import { HandlesFixture } from "@/hooks/use-handles";
+import { showVaultSuccess, useVaultSuccess } from "@/components/vault-success";
+import { resetAppraisalThrottleForTests, retryDelayMs, canAttemptAppraisal } from "@/lib/appraisal-refresh";
 import type { AppraiseResult } from "@/lib/appraise";
 import { buyoutQuote, dropsBelowThreshold, payoutFor, shardsShort } from "@/lib/buyout";
 import { addresses } from "@/lib/chain";
@@ -21,6 +23,11 @@ import type { SendInput, Sent } from "@/lib/tx-core";
 import { HANDLES, KENJI, PAOLO, cardFixture } from "@/app/design/card/fixtures";
 
 afterEach(cleanup);
+beforeEach(() => {
+  resetAppraisalThrottleForTests();
+  showVaultSuccess(null);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ sepolia: { block: { number: 10 } } }))));
+});
 const S = 10n ** 18n;
 const usd = (d: number) => BigInt(Math.round(d * 100)) * 10_000n;
 
@@ -75,8 +82,8 @@ function chainRead(over: Record<string, unknown> = {}) {
   };
 }
 
-const appraisal = (usdcPerShard: bigint): AppraiseResult => ({
-  appraisal: { cardId: "1", shardToken: TOKEN, usdcPerShard: usdcPerShard.toString(), expiresAt: String(Math.floor(Date.now() / 1000) + 600) },
+const appraisal = (usdcPerShard: bigint, ttl = 600): AppraiseResult => ({
+  appraisal: { cardId: "1", shardToken: TOKEN, usdcPerShard: usdcPerShard.toString(), expiresAt: String(Math.floor(Date.now() / 1000) + ttl) },
   signature: "0xabcd", marketUsd: "25400.00", adjustedUsd: "25400", conditionMultiplier: 1, priceSource: "Scryfall USD · nonfoil · EN printing · NM ×1.00",
   source: "scryfall", pricedAt: Math.floor(Date.now() / 1000), clearingUsdcPerShard: usd(1712).toString(),
 });
@@ -157,5 +164,67 @@ describe("SendShardsSheet", () => {
     fireEvent.click(screen.getByRole("button", { name: /Send 1.0 shard$/ }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     expect(send.mock.calls[0][0]).toMatchObject({ to: TOKEN, functionName: "transfer", args: [KENJI, S] });
+  });
+});
+
+describe("appraisal refresh", () => {
+  it("backs off exponentially and never allows two requests within 10 s", () => {
+    expect([0, 1, 2, 3, 10].map(retryDelayMs)).toEqual([0, 10_000, 20_000, 40_000, 300_000]);
+    expect(canAttemptAppraisal(Date.now())).toBe(true);
+  });
+
+  it("does not storm the server while the appraisal keeps failing", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+    try {
+      const appraise = vi.fn(async () => { throw new Error("rate limited"); });
+      wrap(<RedeemPanel c={cardFixture("sharded", 1_790_000_000)} me={PAOLO} />, { read: chainRead(), appraise });
+      for (let i = 0; i < 90; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      // t≈0, then 10 s and 20 s of backoff after each failure: 0, 10, 30, 70 → four requests in 90 s, not ninety.
+      expect(appraise.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(appraise.mock.calls.length).toBeLessThanOrEqual(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("disables the CTA while the quote has expired and a fresh one is on its way", async () => {
+    let n = 0;
+    const appraise = vi.fn(() => (n++ === 0 ? Promise.resolve(appraisal(usd(1587.5), -1)) : new Promise<AppraiseResult>(() => {})));
+    wrap(<RedeemPanel c={cardFixture("sharded", 1_790_000_000)} me={PAOLO} />, { read: chainRead(), appraise });
+    await waitFor(() => expect(screen.getAllByText("Getting a fresh appraisal…").length).toBeGreaterThan(0));
+    for (const b of screen.getAllByRole("button", { name: /Buy out and redeem/ })) expect((b as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+function Probe() {
+  const v = useVaultSuccess(1n);
+  return v ? <output data-testid="success">{JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x))}</output> : null;
+}
+
+describe("success feedback", () => {
+  it("shows the buyout success from the chain when the redeem had already landed", async () => {
+    const read = chainRead({ cards: { state: 1, beneficialOwner: PAOLO }, shardings: { clearingPriceQ96: usdcPerShardToQ96(usd(1712)), buyoutPerShard: usd(1712) } });
+    const send = vi.fn();
+    wrap(<><RedeemPanel c={cardFixture("sharded", 1_790_000_000)} me={PAOLO} /><Probe /></>, { read, send, appraise: async () => appraisal(usd(1587.5)) });
+    await waitFor(() => expect(screen.getAllByText("$5,264.40").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: /Buy out and redeem/ }));
+    const out = await screen.findByTestId("success", {}, { timeout: 3000 });
+    expect(send).not.toHaveBeenCalled();
+    expect(JSON.parse(out.textContent!)).toMatchObject({ kind: "redeemed", buyoutPerShard: usd(1712).toString(), payoutUsdc: usd(5136).toString(), feeUsdc: usd(128.4).toString() });
+  });
+
+  it("confirms a payout with the tx link even when PayoutClaimed can't be read", async () => {
+    const send = vi.fn<(i: SendInput) => Promise<Sent>>(async () => sent());
+    const onClaimed = vi.fn();
+    wrap(<PayoutPanel me={KENJI} cardName="Black Lotus" onClaimed={onClaimed} sharding={{ cardId: 1n, shardToken: TOKEN, buyoutPerShard: usd(1840), redeemer: PAOLO }} />, { read: chainRead({ balanceOf: S }), send });
+    fireEvent.click(await screen.findByRole("button", { name: "Claim $1,840.00" }));
+    await waitFor(() => expect(onClaimed).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(onClaimed.mock.calls[0][0]).toMatchObject({ kind: "claimed", usdc: usd(1840), shardUnits: S, hash: `0x${"1".repeat(64)}` });
+  });
+
+  it("fills Max with the exact balance", async () => {
+    wrap(<SendShardsSheet open onOpenChange={() => {}} cardName="Black Lotus" shardToken={TOKEN} balance={1234567890123456789012n} supply={2000n * S} />, { read: chainRead() });
+    fireEvent.click(screen.getByRole("button", { name: "Max" }));
+    expect((screen.getByDisplayValue("1234.567890123456789012") as HTMLInputElement).value).toBe("1234.567890123456789012");
   });
 });

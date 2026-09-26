@@ -7,13 +7,14 @@ import type { Address, TransactionReceipt } from "viem";
 import { abi } from "@kura/shared";
 import { AddressName } from "@/components/address-name";
 import { Panel } from "@/components/card-state-panel";
+import { notify } from "@/components/kura";
 import { TxStepper } from "@/components/tx-stepper";
 import { useVaultIo } from "@/components/vault-io";
 import { claimedFromReceipt, showVaultSuccess, type ClaimedInfo } from "@/components/vault-success";
 import { payoutFor } from "@/lib/buyout";
 import { addresses } from "@/lib/chain";
 import { money, shardsFixed } from "@/lib/format";
-import type { Revert, Step } from "@/lib/tx";
+import type { Revert, Step, StepResult } from "@/lib/tx";
 import { cn } from "@/lib/utils";
 
 export type PayoutSharding = { cardId: bigint; shardToken: Address; buyoutPerShard: bigint; redeemer: Address | null };
@@ -52,7 +53,6 @@ export function PayoutPanel({ sharding, me, cardName, layout = "card", onClaimed
   const io = useVaultIo();
   const bal = usePayoutBalance(sharding.shardToken, me);
   const receipt = useRef<TransactionReceipt | null>(null);
-  const claimed = useRef<bigint>(0n);
   const balance = bal.data ?? 0n;
   if (!me || balance === 0n) return null;
   const amount = payoutFor(sharding.buyoutPerShard, balance);
@@ -64,17 +64,21 @@ export function PayoutPanel({ sharding, me, cardName, layout = "card", onClaimed
     label: `Burn ${units} ${noun} and receive ${money(amount)}`,
     skip: async () => (await io.read<bigint>({ address: sharding.shardToken, abi: abi.shardToken, functionName: "balanceOf", args: [me] })) === 0n,
     run: async () => {
-      claimed.current = amount;
       const sent = await io.send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "claimPayout", args: [sharding.shardToken] });
       receipt.current = sent.receipt;
       return sent;
     },
   }];
-  function onDone() {
+  function onDone(results: StepResult[]) {
     const r = receipt.current;
     receipt.current = null;
-    const info = r ? claimedFromReceipt({ buyoutPerShard: sharding.buyoutPerShard, redeemer: sharding.redeemer }, r) : null;
-    if (!info) return;
+    const parsed = r ? claimedFromReceipt({ buyoutPerShard: sharding.buyoutPerShard, redeemer: sharding.redeemer }, r) : null;
+    // No PayoutClaimed to read (unparsable receipt, or a claim that had already landed): confirm with what was due.
+    const info: ClaimedInfo = parsed ?? {
+      kind: "claimed", cardId: sharding.cardId, hash: r?.transactionHash ?? results.find((x) => x.id === "claim")?.hash,
+      shardUnits: balance, usdc: amount, buyoutPerShard: sharding.buyoutPerShard, redeemer: sharding.redeemer,
+    };
+    notify({ title: "Payout claimed", body: `${money(info.usdc)} for your ${shardsFixed(info.shardUnits)} ${noun} of ${cardName}`, tone: "good", icon: <HandCoinsIcon /> });
     if (onClaimed) onClaimed(info);
     else showVaultSuccess(info);
   }
