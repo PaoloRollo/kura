@@ -54,7 +54,19 @@ describe("base-unit parsing", () => {
     expect(unixSeconds("2026-09-24T23:37:00+09:00")).toBe(Date.UTC(2026, 8, 24, 14, 37) / 1000);
     expect(unixSeconds("2026-09-24T14:37:00.123456Z")).toBe(Date.UTC(2026, 8, 24, 14, 37) / 1000);
     expect(unixSeconds(1_790_000_000)).toBe(1_790_000_000);
-    for (const v of ["yesterday", "Sep 24 2026", "2026-09-24", "1790000000", "", 1.5, -1, null]) {
+    // Postgres-style offsets and separators, and unix seconds as a digit string.
+    const t = Date.UTC(2026, 8, 24, 14, 37) / 1000;
+    expect(unixSeconds("2026-09-24 14:37:00+00")).toBe(t);
+    expect(unixSeconds("2026-09-24 14:37:00.5+0000")).toBe(t);
+    expect(unixSeconds("2026-09-24T23:37:00+0900")).toBe(t);
+    expect(unixSeconds("2026-09-24T09:37:00-05")).toBe(t);
+    expect(unixSeconds("1790000000")).toBe(1_790_000_000);
+    expect(unixSeconds("0")).toBe(0);
+    // Milliseconds are refused, as a number or a string, rather than read as a date in the year 58,000.
+    for (const v of [1_790_000_000_000, "1790000000000", 1e11, "100000000000"]) {
+      expect(() => unixSeconds(v), String(v)).toThrow(MbShapeError);
+    }
+    for (const v of ["yesterday", "Sep 24 2026", "2026-09-24", "2026-09-24T14:37:00+9", "2026-09-24T14:37:00+00:0", " 1790000000", "17.9", "", 1.5, -1, null]) {
       expect(() => unixSeconds(v), String(v)).toThrow(MbShapeError);
     }
     expect(flag(true, "g")).toBe(true);

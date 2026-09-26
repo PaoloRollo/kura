@@ -26,15 +26,24 @@ export function baseUnits(v: unknown, field: string): bigint {
   throw new MbShapeError(`${field}: expected a base-unit integer, got ${describe(v)}`);
 }
 
-// RFC 3339 date-time (what triggered_at looks like): a date, a time, optional fraction, and a Z or ±hh:mm offset.
-// Date.parse alone is lenient ("Sep 24 2026", bare dates, digit strings), so the shape is checked first.
-const RFC3339 = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+// RFC 3339 date-time (what triggered_at looks like): a date, a time, optional fraction, and a Z or an offset, which may
+// also come Postgres-style (+00, +0000) since MultiBaas stores events in Postgres. Date.parse alone is lenient ("Sep 24
+// 2026", bare dates, digit strings), so the shape is checked first and the offset normalised to ±hh:mm.
+const RFC3339 = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?:([Zz])|([+-]\d{2})(?::?(\d{2}))?)$/;
+/** Unix seconds stay below 1e11 (year 5138); a larger number is a millisecond timestamp, refused rather than misread. */
+const MAX_UNIX_SECONDS = 1e11;
+const seconds = (n: number) => Number.isSafeInteger(n) && n >= 0 && n < MAX_UNIX_SECONDS;
 
-/** RFC 3339 (triggered_at) or unix seconds (a safe non-negative integer), as unix seconds. */
+/**
+ * triggered_at as unix seconds: RFC 3339 (Z, ±hh:mm, or Postgres's ±hh / ±hhmm), unix seconds as a non-negative
+ * integer, or unix seconds as a digit string of at most 11 digits. Milliseconds (≥ 1e11) are refused.
+ */
 export function unixSeconds(v: unknown, field = "at"): number {
-  if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return v;
-  if (typeof v === "string" && RFC3339.test(v)) {
-    const ms = Date.parse(v);
+  if (typeof v === "number" && seconds(v)) return v;
+  if (typeof v === "string" && /^\d{1,11}$/.test(v) && seconds(Number(v))) return Number(v);
+  const m = typeof v === "string" ? RFC3339.exec(v) : null;
+  if (m) {
+    const ms = Date.parse(`${m[1]}T${m[2]}${m[3] ? "Z" : `${m[4]}:${m[5] ?? "00"}`}`);
     if (Number.isFinite(ms) && ms >= 0) return Math.floor(ms / 1000);
   }
   throw new MbShapeError(`${field}: expected a timestamp, got ${describe(v)}`);
@@ -65,9 +74,12 @@ export type MultibaasFigures = {
   raisedAuctions: number;
   /** Σ FeeAccrued in the window (All: MultiBaas's add aggregate). */
   fees: bigint;
-  /** CardMinted events in the window. */
+  /**
+   * CardMinted events in the window: an event count, so a card minted and released since is counted too (the
+   * indexer's "Cards in vault" sub line counts only cards still in the vault).
+   */
   mintedInRange: number;
-  /** Every CardMinted MultiBaas has indexed: the dashboard's check against the indexer's card count. */
+  /** Every CardMinted MultiBaas still holds (it keeps 72 h, from when the vault was linked); informational only. */
   totalMints: number;
   volume: { date: string; volumeUsdc: bigint }[];
 };
