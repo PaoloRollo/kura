@@ -31,6 +31,10 @@ describe("multibaas-setup args", () => {
     expect(() => parseSetupArgs(["--webhook-base"])).toThrow(/needs a URL/);
     expect(() => parseSetupArgs(["--aply"])).toThrow(/unknown flag --aply/);
   });
+
+  it("refuses a deployments file for another chain", () => {
+    expect(() => desiredState({ ...deployments, chainId: 1 }, null)).toThrow(/chain 1, expected Sepolia/);
+  });
 });
 
 describe("planSetup", () => {
@@ -86,7 +90,10 @@ function fakeMultibaas(state: { contract?: unknown; address?: unknown; queries?:
       if (path === "/chains/ethereum/addresses/kura_vault") return state.address ? reply(state.address) : reply(null, 404);
       const q = /^\/queries\/([^/]+)$/.exec(path);
       if (q) return state.queries?.[q[1]!] ? reply(state.queries[q[1]!]) : reply(null, 404);
-      if (path === "/webhooks") return reply(state.hooks ?? []);
+      if (path === "/webhooks") {
+        const o = Number(u.searchParams.get("offset") ?? 0), l = Number(u.searchParams.get("limit") ?? 10);
+        return l > 50 ? reply(null, 400) : reply((state.hooks ?? []).slice(o, o + l)); // live: limit > 50 → 400
+      }
       if (path === "/chains/ethereum/addresses/kura_vault/contracts/kura_cardvault/status")
         return state.address ? reply({ isProcessingPastLogs: false, latestBlockNumber: 11_799_990, startBlockNumber: 11779719 }) : reply(null, 400); // live: 400 "invalid address"
       const r = /^\/queries\/([^/]+)\/results$/.exec(path);
@@ -111,7 +118,7 @@ describe("runSetup against a fake MultiBaas", () => {
     const io = collect();
     await expect(runSetup(parseSetupArgs(["--webhook-base", "https://www.kuravault.xyz"]), { cfg, deployments, fetch: mb.f, ...io })).resolves.toBe(0);
     expect(mb.calls.every((c) => c.method === "GET")).toBe(true);
-    expect(mb.calls.find((c) => c.path.startsWith("/webhooks"))!.path).toBe("/webhooks?limit=50");
+    expect(mb.calls.find((c) => c.path.startsWith("/webhooks"))!.path).toBe("/webhooks?offset=0&limit=50");
     expect(io.out.filter((l) => l.startsWith("would "))).toHaveLength(10);
     expect(io.out).toContain("would create webhook kura_web → https://www.kuravault.xyz/api/webhooks/multibaas (event.emitted)");
     expect(io.out.at(-1)).toMatch(/Dry run: nothing was changed/);
@@ -145,6 +152,17 @@ describe("runSetup against a fake MultiBaas", () => {
     expect(mb.calls.filter((c) => c.method !== "GET")).toEqual([]);
     expect(io.out).toContain("MultiBaas is set up; nothing to do.");
     expect(io.out.join("\n")).not.toContain("whsec-OLD");
+  });
+
+  it("finds the webhook past the first page of /webhooks", async () => {
+    const others = Array.from({ length: 50 }, (_, i) => ({ id: 100 + i, label: `other_${i}`, url: `https://x.example/${i}`, subscriptions: ["event.emitted"] }));
+    const mine = { id: 4, label: "kura_web", url: "https://www.kuravault.xyz/api/webhooks/multibaas", subscriptions: ["event.emitted"] };
+    const mb = fakeMultibaas({ contract: done.contract, address: done.address, queries: done.queries, hooks: [...others, mine] });
+    const io = collect();
+    await expect(runSetup(parseSetupArgs(["--apply", "--webhook-base", "https://www.kuravault.xyz"]), { cfg, deployments, fetch: mb.f, ...io })).resolves.toBe(0);
+    expect(mb.calls.filter((c) => c.path.startsWith("/webhooks")).map((c) => c.path)).toEqual(["/webhooks?offset=0&limit=50", "/webhooks?offset=50&limit=50"]);
+    expect(mb.calls.filter((c) => c.method !== "GET")).toEqual([]);
+    expect(io.out).toContain("MultiBaas is set up; nothing to do.");
   });
 
   it("--apply repoints an existing webhook with a PUT", async () => {
