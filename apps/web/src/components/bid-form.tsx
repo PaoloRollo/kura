@@ -168,6 +168,8 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
     );
   }
 
+  // aD9is / p5hrR: until the wallet is verified the fields are bare, without hints or the steps footer.
+  const ready = !!issued && !refused;
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       {refused ? (
@@ -222,7 +224,8 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
         onChange={(e) => setBudget(e.target.value)}
         tone={budget && !budgetOk ? "shu" : "default"}
         hint={
-          overBalance ? <>You have {money(chain.balance ?? 0n)} USDC. Get Sepolia USDC from faucet.circle.com.</>
+          !ready ? undefined
+          : overBalance ? <>You have {money(chain.balance ?? 0n)} USDC. Get Sepolia USDC from faucet.circle.com.</>
           : budget && budgetUsdc === 0n ? "Enter an amount above zero."
           : "The total you commit. Whatever isn't used is refunded."
         }
@@ -234,7 +237,8 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
         onChange={(e) => setMax(e.target.value)}
         tone={!validMax ? "shu" : "default"}
         hint={
-          !validMax
+          !ready ? undefined
+          : !validMax
             ? <>Use a step of {money(q96ToUsdcPerShard(tick))}, at least one step above the current {money(clearingUsdc)}.</>
             : <>You stay in while the price is below this. Current {money(clearingUsdc, 0)}, steps of {money(q96ToUsdcPerShard(tick), 0)}.</>
         }
@@ -243,10 +247,11 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
 
       {budgetUsdc > 0n && <div className="flex flex-col gap-2 rounded-xl border border-border bg-bg/60 p-3.5 text-[12px]">
         <div className="text-[12px] font-semibold text-text">If the auction ended now</div>
-        <PreviewRow label="Everyone pays" value={`${money(preview.clearingUsdc)} / shard`} />
-        <PreviewRow label="You get" value={`${shardsFixed(preview.shards, 3)} shards`} />
-        <PreviewRow label="Refunded" value={money(preview.refundedUsdc)} />
-        <PreviewRow label="Out if price passes" value={money(preview.outAtUsdc)} tone="shu" />
+        <PreviewRow label="Everyone pays" value={`${money(preview.clearingUsdc, 0)} / shard`} />
+        <PreviewRow label="≈ You get" value={`${shardsFixed(preview.shards, 3)} shards`} />
+        <PreviewRow label="Refunded" value={money(preview.refundedUsdc, 0)} />
+        <PreviewRow label="Out if price passes" value={money(preview.outAtUsdc, 0)} tone="shu" />
+        <p className="text-[11px] text-muted-foreground">An estimate if the price holds at {money(preview.clearingUsdc, 0)}.</p>
       </div>}
 
       {(issued || needTicket) && !refused && me ? (
@@ -276,9 +281,11 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
           <LockIcon aria-hidden />{refused ? "Switch wallet to place a bid" : "Verify to place a bid"}
         </Button>
       )}
-      <p className="text-[12px] text-muted-foreground">
-        3 steps: approve USDC, allow auction, bid.{io.walletKind === "embedded" ? " Gas is on us." : ""}
-      </p>
+      {ready && (
+        <p className="text-[12px] text-muted-foreground">
+          3 steps: approve USDC, allow auction, bid.{io.walletKind === "embedded" ? " Gas is on us." : ""}
+        </p>
+      )}
     </div>
   );
 }

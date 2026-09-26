@@ -52,9 +52,13 @@ function detail(b: BidRow, v: BidView, p: Omit<MyBidsProps, "bids">): { line: st
     if (filled > 0n) return { line: `Filled ${shardsFixed(filled, 2)} shards · refund ${refund}` };
     return p.graduated === false ? { line: `Full refund ${refund} · taken back`, note: "Refund received" } : { line: `Outbid · refund ${refund}`, note: "Refund received" };
   }
-  if (!p.ended) return { line: v.label === "outbid" ? `Outbid at ${money(q96ToUsdcPerShard(p.clearingQ96))}. Your budget comes back when the auction ends.` : `In while the price stays below ${money(q96ToUsdcPerShard(b.maxPriceQ96))}` };
+  if (!p.ended) {
+    if (v.label === "outbid") return { line: `Outbid at ${money(q96ToUsdcPerShard(p.clearingQ96))}. Shards filled before that are kept; the unspent budget comes back when you exit after the auction.` };
+    if (v.label === "at clearing · filling") return { line: "At the clearing price: filling alongside the other bids at this price." };
+    return { line: `In while the price stays below ${money(q96ToUsdcPerShard(b.maxPriceQ96))}` };
+  }
   if (p.graduated === false) return { line: `Full refund ${money(b.amountUsdc)}` };
-  if (v.label === "outbid") return { line: "Outbid at the final price. Exit to take back what wasn't spent." };
+  if (v.label === "outbid") return { line: "Outbid at the final price. Exit to keep any shards filled before that and take back the rest." };
   return { line: "Exit to lock in your shards and get back what wasn't spent." };
 }
 

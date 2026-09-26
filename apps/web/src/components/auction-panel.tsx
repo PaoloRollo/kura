@@ -26,6 +26,8 @@ export function liveClearingQ96(s: ShardingRow, checkpoints: readonly Checkpoint
 }
 
 const SHARD = 10n ** 18n;
+/** `totalCleared()` (18 decimals) in whole shards, for "3 of 3 shards sold". */
+const wholeShardsRounded = (units: bigint) => Number((units + SHARD / 2n) / SHARD);
 const pctText = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 
 /** The stats strip (HisVE): clearing, raised, time left and the premium over the market reference. */
@@ -150,18 +152,20 @@ function PostAuction({ c, me, chain }: { c: CardData; me: Address | null; chain:
   const io = useAuctionIo();
   const receipt = useRef<TransactionReceipt | null>(null);
   const [settledHash, setSettledHash] = useState<Hex | null>(null);
-  const graduated = s.settled ? s.graduated : chain.graduated;
+  // Only the settled row is final: before settle the chain's graduation, clearing and raised lag behind the post-end
+  // checkpoint that settle writes, so they show as "so far" and decide nothing.
+  const graduated = s.settled ? s.graduated : null;
   const clearingQ96 = (s.settled ? s.clearingPriceQ96 : null) ?? liveClearingQ96(s, c.checkpoints, chain);
   const lastTick = c.ticks.filter((t) => t.auction === s.auction).at(-1);
   const raised = s.settled && s.graduated ? (s.raisedUsdc ?? 0n) : (chain.raised ?? lastTick?.currencyRaised ?? 0n);
-  const sold = chain.cleared != null ? Number((chain.cleared + SHARD / 2n) / SHARD) : null;
+  const sold = s.settled && chain.cleared != null ? wholeShardsRounded(chain.cleared) : null;
   const mine = c.bids.filter((b) => b.auction === s.auction && !!me && b.owner.toLowerCase() === me.toLowerCase());
   const isOwner = !!me && c.card!.beneficialOwner.toLowerCase() === me.toLowerCase();
 
   const settleSteps: Step[] = [
     {
       id: "settle",
-      label: graduated === false ? "Settle: return the shards, open refunds" : "Settle: pay the owner and the vault, return unsold shards",
+      label: "Settle the auction",
       skip: async () => (await io.read<{ state: number }>({ address: addresses.cardVault, abi: abi.cardVault, functionName: "cards", args: [s.cardId] })).state !== AUCTIONING,
       run: async () => {
         const sent = await io.send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "settle", args: [s.cardId] });
@@ -174,23 +178,24 @@ function PostAuction({ c, me, chain }: { c: CardData; me: Address | null; chain:
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <Panel className="flex flex-col gap-2 p-6 md:p-7">
-        {graduated === false ? (
+        {!s.settled ? (
+          <>
+            <p className="text-[18px] font-semibold text-text md:text-[20px]">Auction ended · settle to finalize the outcome</p>
+            <p className="text-[13px] text-text-2">
+              {money(raised, 0)} raised so far · clearing {money(q96ToUsdcPerShard(clearingQ96), 0)} / shard so far. Settling decides whether it graduated.
+            </p>
+          </>
+        ) : graduated === false ? (
           <>
             <Pill tone="live" dot={false}>Reserve not met</Pill>
             <p className="font-mono text-[20px] text-text md:text-[26px]">Raised {money(raised, 0)} of {money(s.reserveUsdc, 0)}</p>
             <p className="text-[13px] text-text-2">The auction didn&apos;t graduate. Nothing was sold.</p>
           </>
-        ) : graduated ? (
+        ) : (
           <>
             <Pill tone="released" dot={false}>Auction graduated</Pill>
             <p className="font-mono text-[20px] text-text md:text-[26px]">Cleared at {money(q96ToUsdcPerShard(clearingQ96), 0)} / shard</p>
             <p className="text-[13px] text-text-2">{sold != null ? `${sold} of ${s.forSale} shards sold · ` : ""}{money(raised, 0)} raised</p>
-          </>
-        ) : (
-          <>
-            <Pill dot={false}>Auction ended</Pill>
-            <p className="font-mono text-[20px] text-text md:text-[26px]">Clearing {money(q96ToUsdcPerShard(clearingQ96), 0)} / shard</p>
-            <p className="text-[13px] text-text-2">Reading the outcome…</p>
           </>
         )}
       </Panel>
@@ -198,15 +203,13 @@ function PostAuction({ c, me, chain }: { c: CardData; me: Address | null; chain:
       {!s.settled && (
         <Panel className="flex flex-col gap-4 p-5 md:p-6">
           <div className="flex flex-col gap-1">
-            <h3 className="text-[15px] font-semibold text-text">{graduated === false ? "Settle and refund" : "Settle the auction"}</h3>
+            <h3 className="text-[15px] font-semibold text-text">Settle the auction</h3>
             <p className="text-[13px] text-text-2">
-              {graduated === false
-                ? `Returns all ${s.forSale} shards to the owner. Every bidder can then take back their full budget. No fee is charged.`
-                : "Pays the owner, pays the vault fee, returns any unsold shards. Anyone can do it."}
+              Finalizes the outcome: pays out the sale if it graduated, or returns the shards so every bidder can take back their budget. Anyone can do it.
             </p>
           </div>
           <TxStepper
-            cta={graduated === false ? "Settle and refund" : "Settle"}
+            cta="Settle"
             ctaIcon={<CheckCheckIcon aria-hidden />}
             ctaClassName="h-12 rounded-xl bg-text text-bg hover:bg-text/90"
             title="Settling the auction"
@@ -214,9 +217,10 @@ function PostAuction({ c, me, chain }: { c: CardData; me: Address | null; chain:
             steps={settleSteps}
             walletKind={io.walletKind}
             successToast={false}
-            onDone={(results) => {
+            onDone={async (results) => {
               const hash = results.find((r) => r.id === "settle")?.hash ?? null;
-              const info = receipt.current ? settledFromReceipt(s.cardId, receipt.current) : null;
+              const cleared = await io.read<bigint>({ address: s.auction as Address, abi: abi.ccaAuction, functionName: "totalCleared" }).catch(() => null);
+              const info = receipt.current ? settledFromReceipt(s.cardId, receipt.current, cleared != null ? wholeShardsRounded(cleared) : null) : null;
               notify({ title: "Auction settled", body: info && !info.graduated ? "Reserve not met: bidders can take back their budgets." : "The owner and the vault were paid.", tone: "good", icon: <CheckIcon /> });
               setSettledHash(hash);
               if (info && isOwner) showOwnerSettled(info);

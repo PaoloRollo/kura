@@ -10,13 +10,14 @@ export function estimateShards(budgetUsdc: bigint, maxUsdcPerShard: bigint): big
   return (budgetUsdc * SHARD) / maxUsdcPerShard;
 }
 
-export const roundDownToTick = (priceQ96: bigint, tickQ96: bigint) => (priceQ96 / tickQ96) * tickQ96;
+/** The tick at or below `priceQ96`; 0 without a tick (no valid price). */
+export const roundDownToTick = (priceQ96: bigint, tickQ96: bigint) => (tickQ96 > 0n ? (priceQ96 / tickQ96) * tickQ96 : 0n);
 
 /** The default max: the clearing price rounded down to a tick, plus two ticks. */
-export const defaultMaxPriceQ96 = (clearingQ96: bigint, tickQ96: bigint) => roundDownToTick(clearingQ96, tickQ96) + 2n * tickQ96;
+export const defaultMaxPriceQ96 = (clearingQ96: bigint, tickQ96: bigint) => (tickQ96 > 0n ? roundDownToTick(clearingQ96, tickQ96) + 2n * tickQ96 : 0n);
 
 /** A max the auction accepts: on a tick and at least one tick above clearing. */
-export const isValidMax = (priceQ96: bigint, clearingQ96: bigint, tickQ96: bigint) => priceQ96 % tickQ96 === 0n && priceQ96 >= clearingQ96 + tickQ96;
+export const isValidMax = (priceQ96: bigint, clearingQ96: bigint, tickQ96: bigint) => tickQ96 > 0n && priceQ96 % tickQ96 === 0n && priceQ96 >= clearingQ96 + tickQ96;
 
 /**
  * The highest tick whose USDC price is at most `usdc`. Both Q96 conversions round (ceil one way, floor the other),
@@ -71,7 +72,7 @@ export function exitRoute(bid: ExitBid, graduated: boolean, checkpoints: readonl
 
 export type BidStatus = "open" | "exited" | "claimed";
 export type BidView = {
-  label: "open" | "outbid" | "filled" | "partially filled" | "refund due" | "refunded" | "claimed";
+  label: "open" | "at clearing · filling" | "outbid" | "filled" | "partially filled" | "refund due" | "refunded" | "claimed";
   tone: "good" | "kin" | "muted" | "shu";
   /** What the row can do next. */
   action: "none" | "exit-claim" | "claim" | "exit" | "take-back";
@@ -89,7 +90,12 @@ export function bidView(b: { status: BidStatus; maxPriceQ96: bigint; tokensFille
     if (filled === 0n) return { label: "refunded", tone: "muted", action: "none" };
     return p.graduated ? { label: "filled", tone: "good", action: "claim" } : { label: "filled", tone: "good", action: "none" };
   }
-  if (!p.ended || p.graduated == null) return b.maxPriceQ96 > p.clearingQ96 ? { label: "open", tone: "good", action: "none" } : { label: "outbid", tone: "shu", action: "none" };
+  if (!p.ended || p.graduated == null) {
+    if (b.maxPriceQ96 > p.clearingQ96) return { label: "open", tone: "good", action: "none" };
+    // At clearing the bid still fills pro rata with the other bids at that price.
+    if (b.maxPriceQ96 === p.clearingQ96) return { label: "at clearing · filling", tone: "kin", action: "none" };
+    return { label: "outbid", tone: "shu", action: "none" };
+  }
   if (!p.graduated) return { label: "refund due", tone: "kin", action: "take-back" };
   if (b.maxPriceQ96 > p.clearingQ96) return { label: "filled", tone: "good", action: "exit-claim" };
   if (b.maxPriceQ96 === p.clearingQ96) return { label: "partially filled", tone: "good", action: "exit-claim" };

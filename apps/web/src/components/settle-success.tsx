@@ -10,13 +10,13 @@ import { explorerTx } from "@/lib/chain";
 import { money, shortHash } from "@/lib/format";
 
 /** What the seller sees after settling (Oh2m9), from the AuctionSettled log of the settle receipt. */
-export type SettledInfo = { cardId: bigint; hash: Hex; raisedUsdc: bigint; feeUsdc: bigint; graduated: boolean; clearingQ96: bigint };
+export type SettledInfo = { cardId: bigint; hash: Hex; raisedUsdc: bigint; feeUsdc: bigint; graduated: boolean; clearingQ96: bigint; /** Whole shards sold, from `totalCleared()`. */ sold: number | null };
 
 /** AuctionSettled from a settle receipt, or null when the receipt has none for `cardId`. */
-export function settledFromReceipt(cardId: bigint, receipt: Pick<TransactionReceipt, "logs" | "transactionHash">): SettledInfo | null {
+export function settledFromReceipt(cardId: bigint, receipt: Pick<TransactionReceipt, "logs" | "transactionHash">, sold: number | null = null): SettledInfo | null {
   const ev = parseEventLogs({ abi: abi.cardVault, eventName: "AuctionSettled", logs: receipt.logs }).find((l) => l.args.id === cardId);
   if (!ev) return null;
-  return { cardId, hash: receipt.transactionHash, raisedUsdc: ev.args.raisedUsdc, feeUsdc: ev.args.feeUsdc, graduated: ev.args.graduated, clearingQ96: ev.args.clearingPriceQ96 };
+  return { cardId, hash: receipt.transactionHash, raisedUsdc: ev.args.raisedUsdc, feeUsdc: ev.args.feeUsdc, graduated: ev.args.graduated, clearingQ96: ev.args.clearingPriceQ96, sold: ev.args.graduated ? sold : null };
 }
 
 // The success outlives the auction panel: once settled, the card page swaps that panel for the sharded summary.

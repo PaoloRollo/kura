@@ -119,7 +119,7 @@ export function AuctionPreview({ state, tab, now }: { state: AuctionPreviewState
   // Oh2m9: the seller has just settled (the success replaces the card page until "See Black Lotus").
   useEffect(() => {
     if (state !== "owner-settled") return;
-    showOwnerSettled({ cardId: 1n, hash: fakeHash(0x71c02), raisedUsdc: usd(5136), feeUsdc: usd(128.4), graduated: true, clearingQ96 });
+    showOwnerSettled({ cardId: 1n, hash: fakeHash(0x71c02), raisedUsdc: usd(5136), feeUsdc: usd(128.4), graduated: true, clearingQ96, sold: 3 });
     return () => showOwnerSettled(null);
   }, [state, clearingQ96]);
 

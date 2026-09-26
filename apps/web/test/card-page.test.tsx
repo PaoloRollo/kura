@@ -81,6 +81,9 @@ describe("CardPageView", () => {
     expect(screen.getByText("Prove you're a unique human")).toBeTruthy();
     expect((screen.getByRole("button", { name: /Verify to place a bid/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Spend up to")).toBeTruthy();
+    // aD9is: no field hints or steps footer until verified.
+    expect(screen.queryByText(/The total you commit/)).toBeNull();
+    expect(screen.queryByText(/3 steps/)).toBeNull();
   });
 
   it("marks a released card's profile as revoked read-only history", () => {

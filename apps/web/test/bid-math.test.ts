@@ -28,6 +28,11 @@ describe("bid math", () => {
     expect(isValidMax(tick * 20n, clearing, tick)).toBe(false);
     expect(isValidMax(tick * 21n + 1n, clearing, tick)).toBe(false);
   });
+  it("treats a zero tick as no valid price instead of dividing by zero", () => {
+    expect(roundDownToTick(123n, 0n)).toBe(0n);
+    expect(isValidMax(123n, 100n, 0n)).toBe(false);
+    expect(defaultMaxPriceQ96(100n, 0n)).toBe(0n);
+  });
   it("maps a typed USDC max onto its own tick, not one below", () => {
     const tick = usdcPerShardToQ96(20_000_000n);
     expect(maxQ96FromUsdc(1_760_000_000n, tick)).toBe(tick * 88n);
@@ -93,6 +98,12 @@ describe("bid rows", () => {
     expect(bidView({ status: "open", maxPriceQ96: 30n, tokensFilled: null }, p).label).toBe("partially filled");
     expect(bidView({ status: "exited", maxPriceQ96: 40n, tokensFilled: 5n }, p).action).toBe("claim");
     expect(bidView({ status: "open", maxPriceQ96: 20n, tokensFilled: null }, p).action).toBe("exit");
+  });
+  it("labels a live bid exactly at clearing as filling, not outbid", () => {
+    const live = { ended: false, graduated: null, clearingQ96: 30n };
+    expect(bidView({ status: "open", maxPriceQ96: 30n, tokensFilled: null }, live).label).toBe("at clearing · filling");
+    expect(bidView({ status: "open", maxPriceQ96: 20n, tokensFilled: null }, live).label).toBe("outbid");
+    expect(bidView({ status: "open", maxPriceQ96: 40n, tokensFilled: null }, live).label).toBe("open");
   });
   it("offers a take-back when the reserve was not met", () => {
     expect(bidView({ status: "open", maxPriceQ96: 40n, tokensFilled: null }, { ...p, graduated: false })).toEqual({ label: "refund due", tone: "kin", action: "take-back" });

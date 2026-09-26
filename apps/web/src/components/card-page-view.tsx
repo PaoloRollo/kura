@@ -18,7 +18,6 @@ import { addresses } from "@/lib/chain";
 import { buildFeed } from "@/lib/activity-feed";
 import { CARD_TABS, agoLong, dateTime, holdersView, lastBuyout, type CardTab } from "@/lib/card-view";
 import { metaCardName, metaTrait } from "@/lib/meta";
-import { q96ToUsdcPerShard } from "@kura/shared";
 import { cn } from "@/lib/utils";
 
 /** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
@@ -191,10 +190,9 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   );
 }
 
-/** Shards sold (raised / clearing) and distinct buyers of the settled auction, for the Oh2m9 sentence. */
+/** Shards sold (`totalCleared()`, read after settle) and distinct buyers of the settled auction, for the Oh2m9 sentence. */
 function settledCounts(c: CardData, info: SettledInfo): { sold: number | null; buyers: number } {
-  const clearing = q96ToUsdcPerShard(info.clearingQ96);
-  const sold = info.graduated && clearing > 0n ? Math.round(Number(info.raisedUsdc) / Number(clearing)) : null;
+  const sold = info.graduated ? info.sold : null;
   const auction = c.sharding?.auction.toLowerCase();
   const filled = c.bids.filter((b) => b.auction.toLowerCase() === auction && (b.tokensFilled != null ? b.tokensFilled > 0n : b.maxPriceQ96 >= info.clearingQ96));
   return { sold, buyers: new Set(filled.map((b) => b.owner.toLowerCase())).size };

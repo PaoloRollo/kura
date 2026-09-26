@@ -59,8 +59,15 @@ export function WorldIdGate(props: {
   const [starting, setStarting] = useState(false);
   const rpContext = rp?.action === props.action ? rp.ctx : null;
 
+  const reported = useRef(false);
+  // The widget can close while the server is still verifying: onClose then waits for that answer (ticket or refusal).
+  const verifying = useRef(false);
+  const closePending = useRef(false);
+
   async function start() {
     if (!identityToken) return;
+    // A fresh attempt: an earlier refusal's "already reported" flag must not swallow this one's errors.
+    reported.current = false;
     setStarting(true);
     setRp(null);
     try {
@@ -80,7 +87,6 @@ export function WorldIdGate(props: {
 
   // Kick off once when asked to (after the identity token is known); a ref keeps StrictMode from opening it twice.
   const autoStarted = useRef(false);
-  const reported = useRef(false);
   useEffect(() => {
     if (!props.autoStart || autoStarted.current || !identityToken) return;
     autoStarted.current = true;
@@ -92,7 +98,8 @@ export function WorldIdGate(props: {
     setOpen(next);
     if (!next) {
       setRp(null);
-      props.onClose?.();
+      if (verifying.current) closePending.current = true;
+      else props.onClose?.();
     }
   }
 
@@ -117,20 +124,29 @@ export function WorldIdGate(props: {
           environment={env.NEXT_PUBLIC_WORLD_ENV}
           preset={preset}
           handleVerify={async (result) => {
-            const res = await apiFetch("/api/worldid/verify", {
-              method: "POST",
-              body: JSON.stringify({ action: props.action, subject: props.subject, idkitResponse: result }),
-              identityToken,
-            });
-            if (!res.ok) {
-              const { error } = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } };
-              if (error?.code && props.onError) {
-                reported.current = true;
-                props.onError(error.code, error.details);
+            verifying.current = true;
+            try {
+              const res = await apiFetch("/api/worldid/verify", {
+                method: "POST",
+                body: JSON.stringify({ action: props.action, subject: props.subject, idkitResponse: result }),
+                identityToken,
+              });
+              if (!res.ok) {
+                const { error } = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } };
+                if (error?.code && props.onError) {
+                  reported.current = true;
+                  props.onError(error.code, error.details);
+                }
+                throw new Error(ERRORS[error?.code ?? ""] ?? error?.message ?? "Verification failed");
               }
-              throw new Error(ERRORS[error?.code ?? ""] ?? error?.message ?? "Verification failed");
+              props.onTicket((await res.json()) as IssuedTicket);
+            } finally {
+              verifying.current = false;
+              if (closePending.current) {
+                closePending.current = false;
+                props.onClose?.();
+              }
             }
-            props.onTicket((await res.json()) as IssuedTicket);
           }}
           onSuccess={() => {
             toast.success("Verified");
