@@ -197,8 +197,8 @@ describe("GET /api/analytics/multibaas", () => {
     expect(mb.calls).toHaveLength(6);
   });
 
-  it("reuses a failure for FAILURE_TTL_MS (2 min), still answering 503 and logging its cause", async () => {
-    expect(FAILURE_TTL_MS).toBe(120_000);
+  it("reuses a failure for FAILURE_TTL_MS (10 min, as long as an answer), still answering 503 and logging its cause", async () => {
+    expect(FAILURE_TTL_MS).toBe(600_000);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     mb.status = null;
     expect((await call()).status).toBe(503);

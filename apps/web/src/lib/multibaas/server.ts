@@ -131,8 +131,11 @@ export async function loadMultibaasFigures(
  * reset it sooner through invalidateMultibaasFigures (the MultiBaas webhook).
  */
 export const FIGURES_TTL_MS = 10 * 60_000;
-/** How long a failure is reused (the route still answers 503, logging the same cause): 2 calls every 2 min at most. */
-export const FAILURE_TTL_MS = 120_000;
+/**
+ * How long a failure is reused (the route still answers 503, logging the same cause): as long as a good answer, since
+ * a failure can last a day (the first 24 h after linking fail the coverage check). 2 calls per 10 min, about 290 a day.
+ */
+export const FAILURE_TTL_MS = FIGURES_TTL_MS;
 
 type Entry = { value: Promise<MultibaasFigures>; settled: null | { at: number; ok: boolean } };
 const memo = new Map<MultibaasRange, Entry>();
