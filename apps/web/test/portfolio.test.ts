@@ -138,11 +138,25 @@ describe("history", () => {
       ],
     });
     expect(seller.map((r) => [r.title, r.detail])).toEqual([
-      ["Auction settled", "3 shards sold at $1,712 · fee $128.40"],
+      ["Auction settled", "3 of 3 shards sold at $1,712 · fee $128.40"],
       ["Auction opened", "3 of 16 shards · 3 hours"],
       ["Sharded", "kept 13 of 16"],
     ]);
     expect(seller[0]!.amount).toBe(usd(5007.6));
+    // Sold is what cleared (raised / clearing price), not what was for sale.
+    const partial = historyRows({
+      me: ME, cardId: 1n, sharding: s, seller: true, binding: null,
+      activities: [act("s", "settle", 50n, { actor: OTHER, amount: usd(3424), meta: { graduated: true, shardToken: s.shardToken, clearingUsdcPerShard: usd(1712).toString() } })],
+    });
+    expect(partial[0]!.detail).toMatch(/^2 of 3 shards sold at \$1,712/);
+  });
+
+  it("shows a buyout as payout plus fee", () => {
+    const rows = historyRows({
+      me: ME, cardId: 1n, sharding: null, seller: false, binding: null,
+      activities: [{ id: "r", kind: "redeem", cardId: 1n, actor: ME, amount: usd(5136), meta: { fee: usd(128.4).toString(), buyoutPerShard: usd(1712).toString() }, blockNumber: 60n, logIndex: 0, timestamp: 60 }],
+    });
+    expect(rows.map((r) => [r.title, r.detail, r.amount])).toEqual([["Redeemed", "bought out the other holders · $5,136 + $128.40 fee", -usd(5264.4)]]);
   });
 });
 

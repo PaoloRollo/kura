@@ -274,7 +274,10 @@ export function historyRows(p: { me: string; cardId: bigint; sharding: Sharding 
         else {
           const clearing = big(m.clearingUsdcPerShard);
           const fee = s?.feeUsdc ?? null;
-          const detail = [`${s?.forSale ?? "?"} shards sold`, clearing != null ? `at ${money0(clearing)}` : null].filter(Boolean).join(" ");
+          // Sold is what cleared: raised / clearing price (an undersubscribed auction sells less than it offered).
+          const sold = clearing != null && clearing > 0n && a.amount != null ? (a.amount * SHARD) / clearing : null;
+          const soldText = sold == null ? "?" : sold % SHARD === 0n ? String(sold / SHARD) : shardsText(sold);
+          const detail = [`${soldText} of ${s?.forSale ?? "?"} shards sold`, clearing != null ? `at ${money0(clearing)}` : null].filter(Boolean).join(" ");
           // What reached the seller: raised less the vault fee.
           rows.push({ ...base, kind: "settle", title: "Auction settled", detail: fee != null ? `${detail} · fee ${money0(fee)}` : detail, amount: a.amount != null ? a.amount - (fee ?? 0n) : null });
         }
@@ -302,7 +305,12 @@ export function historyRows(p: { me: string; cardId: bigint; sharding: Sharding 
         rows.push({ ...base, kind: "payout", title: "Payout claimed", detail: `for ${big(m.shardUnits) != null ? shardsText(big(m.shardUnits)!) : "?"} shards`, amount: a.amount });
         break;
       case "redeem":
-        rows.push({ ...base, kind: "redeem", title: "Redeemed", detail: "bought out the other holders", amount: a.amount != null ? -a.amount : null });
+      {
+        // What the buyout cost: the payout to the other holders plus the vault fee on it.
+        const fee = big(m.fee) ?? 0n;
+        const detail = a.amount != null ? `bought out the other holders · ${money0(a.amount)} + ${money0(fee)} fee` : "bought out the other holders";
+        rows.push({ ...base, kind: "redeem", title: "Redeemed", detail, amount: a.amount != null ? -(a.amount + fee) : null });
+      }
         break;
     }
   }
