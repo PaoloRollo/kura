@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ address: null, identityToken: null, login: vi.fn(), logout: vi.fn() }), apiFetch: vi.fn() }));
 vi.mock("@/lib/tx", async () => ({ ...(await vi.importActual<object>("@/lib/tx-core")), useSendTx: () => ({ send: vi.fn(), walletKind: "embedded" }), getReceipt: async () => null }));
-vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c }));
+vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c, worldIdRefusalTitle: () => "Refused" }));
 Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
 import { usdcPerShardToQ96 } from "@kura/shared";

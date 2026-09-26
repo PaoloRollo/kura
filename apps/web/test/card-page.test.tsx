@@ -9,7 +9,7 @@ vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSu
 vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ address: null, identityToken: null, login: vi.fn(), logout: vi.fn() }), apiFetch: vi.fn() }));
 vi.mock("@/lib/tx", async () => ({ ...(await vi.importActual<object>("@/lib/tx-core")), useSendTx: () => ({ send: vi.fn(), walletKind: "embedded" }), getReceipt: async () => null }));
 vi.mock("@/lib/chain", async (orig) => ({ ...(await orig<object>()), publicClient: { readContract: () => new Promise(() => {}) } }));
-vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c }));
+vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c, worldIdRefusalTitle: () => "Refused" }));
 Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
 import { CardNotFound, CardPageView } from "@/components/card-page-view";
@@ -33,10 +33,10 @@ function renderCard(state: PreviewState, opts: { me?: string | null; tab?: CardT
 }
 
 describe("CardPageView", () => {
-  it("offers the owner of a whole card to shard it or pick it up, with the priced market", () => {
+  it("offers the owner of a whole card to shard it or collect it at the counter, with the priced market", () => {
     renderCard("whole-owner");
     expect(screen.getByRole("link", { name: /Shard this card/ }).getAttribute("href")).toBe("/app/cards/1/shard");
-    expect(screen.getByRole("button", { name: /Pick it up at the vault/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Collect at the counter/ })).toBeTruthy();
     expect(screen.getByText("You own")).toBeTruthy();
     expect(screen.getByText("$25,000")).toBeTruthy();
     expect(screen.getByText("Scryfall USD · nonfoil · EN printing · NM ×1.00")).toBeTruthy();
@@ -91,6 +91,17 @@ describe("CardPageView", () => {
     expect(screen.getByText(/name revoked on release/)).toBeTruthy();
     expect(screen.getAllByText("revoked · read-only history").length).toBeGreaterThan(0);
     expect(screen.getByText("This card left the vault")).toBeTruthy();
+    expect(screen.getByText("Final buyout")).toBeTruthy();
+    expect(screen.getByText("Paid to holders")).toBeTruthy();
+  });
+
+  it("shows a released card that was never bought out without buyout tiles", () => {
+    renderCard("released-no-buyout");
+    expect(screen.getByText("This card left the vault")).toBeTruthy();
+    expect(screen.queryByText("Final buyout")).toBeNull();
+    expect(screen.queryByText("Paid to holders")).toBeNull();
+    expect(screen.getByText("Release tx")).toBeTruthy();
+    expect(screen.queryByText(/haven't claimed their payout/)).toBeNull();
   });
 
   it("lists holders without the auction or vault, with the unclaimed tile", () => {

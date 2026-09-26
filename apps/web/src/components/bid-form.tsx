@@ -7,7 +7,7 @@ import { abi, q96ToUsdcPerShard } from "@kura/shared";
 import { AmountInput, Button, notify } from "@/components/kura";
 import { useAuctionIo, type AuctionChain } from "@/components/auction-io";
 import { TxStepper, describeTxError } from "@/components/tx-stepper";
-import { WorldIdGate, worldIdErrorMessage, type IssuedTicket } from "@/components/world-id-gate";
+import { WorldIdGate, worldIdErrorMessage, worldIdRefusalTitle, type IssuedTicket } from "@/components/world-id-gate";
 import type { ShardingRow } from "@/hooks/use-card";
 import { useTicket } from "@/hooks/use-ticket";
 import { TICKET_ERRORS, bidRevertMessage, defaultMaxPriceQ96, endedNowPreview, isRetryableBidError, isValidMax, maxQ96FromUsdc } from "@/lib/bid-math";
@@ -91,7 +91,7 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
   };
   const onGateError = (code: string, details?: Record<string, unknown>) => {
     if (code === "ALREADY_BOUND") setRefused({ boundTo: typeof details?.boundTo === "string" ? details.boundTo : null });
-    else notify({ title: "World ID", body: worldIdErrorMessage(code), tone: "shu" });
+    else notify({ title: worldIdRefusalTitle(code), body: worldIdErrorMessage(code), tone: "shu" });
     reverify.current?.reject(new Error(code === "ALREADY_BOUND" ? "This World ID already bids from another wallet." : worldIdErrorMessage(code)));
     reverify.current = null;
   };

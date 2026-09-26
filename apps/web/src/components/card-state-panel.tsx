@@ -1,13 +1,12 @@
 "use client";
 
 import type * as React from "react";
-import { useState } from "react";
 import Link from "next/link";
-import { LayersIcon, PackageIcon, PackageCheckIcon } from "lucide-react";
+import { LayersIcon, PackageCheckIcon } from "lucide-react";
 import { q96ToUsdcPerShard } from "@kura/shared";
 import { AddressName } from "@/components/address-name";
 import { Button } from "@/components/kura";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { CollectButton, CollectReady, useCollect } from "@/components/collect-at-counter";
 import type { CardData, ShardingRow } from "@/hooks/use-card";
 import { explorerTx } from "@/lib/chain";
 import { money, shardsFixed, shortHash } from "@/lib/format";
@@ -37,12 +36,24 @@ function MarketStat({ c, label = "Market" }: { c: CardData; label?: string }) {
 }
 
 /**
- * Whole card, viewed by its owner (yV8eD): "You own 100%", the market price, "Shard this card" and "Pick it up at the
- * vault" (an info sheet about the Passport handover; no transaction).
+ * Whole card, viewed by its owner (yV8eD): "You own 100%", the market price, "Shard this card" and "Collect at the
+ * counter" (the owner's own Passport check for the handover). Once verified, the panel becomes the ticket to show.
  */
-export function OwnerPanel({ c }: { c: CardData }) {
-  const [pickup, setPickup] = useState(false);
-  const id = c.card!.id.toString();
+export function OwnerPanel({ c, name }: { c: CardData; name?: string }) {
+  const card = c.card!;
+  const id = card.id.toString();
+  const collect = useCollect(card.id);
+  const me = card.ownerOf as `0x${string}`;
+  if (collect.stage.kind !== "idle") {
+    return (
+      <CollectReady
+        stage={collect.stage}
+        cardName={name ?? `Card #${id}`}
+        onCancel={() => void collect.cancel()}
+        retry={<CollectButton cardId={card.id} me={me} onReady={collect.onReady} label="Verify again" />}
+      />
+    );
+  }
   return (
     // Mobile (yV8eD): stats unboxed, the two CTAs pinned to the bottom of the screen.
     <Panel className="flex flex-col gap-6 p-6 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0 md:p-7">
@@ -54,26 +65,8 @@ export function OwnerPanel({ c }: { c: CardData }) {
         <Button asChild variant="primary" size="md" className="sm:flex-1">
           <Link href={`/app/cards/${id}/shard`}><LayersIcon aria-hidden />Shard this card</Link>
         </Button>
-        <Button variant="secondary" size="md" className="sm:flex-1" onClick={() => setPickup(true)}>
-          <PackageIcon aria-hidden />Pick it up at the vault
-        </Button>
+        <CollectButton cardId={card.id} me={me} onReady={collect.onReady} className="sm:flex-1" />
       </div>
-      <Sheet open={pickup} onOpenChange={setPickup}>
-        <SheetContent side="bottom" className="mx-auto max-w-lg rounded-t-3xl border-border bg-surface p-6">
-          <SheetHeader className="p-0">
-            <SheetTitle className="font-display text-[22px] text-text">Pick it up at the vault</SheetTitle>
-            <SheetDescription className="text-[14px] text-text-2">
-              Bring your Passport to the Kura counter in Tokyo. The vendor checks it against this wallet and hands you the card.
-            </SheetDescription>
-          </SheetHeader>
-          <ul className="mt-4 flex list-disc flex-col gap-2 pl-5 text-[13px] text-text-2">
-            <li>Nothing to sign here: the vendor releases the card on chain at the counter.</li>
-            <li>Once released, the card leaves the vault and its name is revoked. The token stays as a record.</li>
-            <li>A card that is sharded can only be picked up by a holder of 80% or more, after a buyout.</li>
-          </ul>
-          <Button variant="secondary" size="md" className="mt-6 w-full" onClick={() => setPickup(false)}>Got it</Button>
-        </SheetContent>
-      </Sheet>
     </Panel>
   );
 }

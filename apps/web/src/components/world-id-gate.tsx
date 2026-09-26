@@ -6,37 +6,66 @@ import { IDKitRequestWidget, passport, proofOfHuman, type RpContext } from "@wor
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/env";
-import { WorldIdError, useWorldIdTicket, type IssuedTicket } from "@/hooks/use-world-id-ticket";
+import { WorldIdError, useWorldIdTicket, type IssuedTicket, type ReleaseReady } from "@/hooks/use-world-id-ticket";
 
 export type { IssuedTicket };
 
 const ERRORS: Record<string, string> = {
+  // Kura's verify route
   SIGNAL_MISMATCH: "That proof was made for a different wallet.",
   ALREADY_BOUND: "This World ID is already linked to another wallet.",
   WRONG_CREDENTIAL: "A stronger credential is required for this step.",
   WRONG_ENVIRONMENT: "Verification came from the wrong World environment.",
   WORLD_REJECTED: "World could not verify this proof.",
+  NOT_OWNER: "Only the card's owner can collect it, from their own Kura app.",
+  CARD_NOT_WHOLE: "Only a whole card in the vault can be collected.",
+  FORBIDDEN: "This wallet isn't allowed to do that.",
+  UNAUTHENTICATED: "Your session expired. Log in again and retry.",
+  NO_WALLET: "This account has no wallet yet. Log in again and retry.",
+  BAD_REQUEST: "Kura couldn't read that request. Try again.",
+  CONFIG: "World ID isn't set up on this server right now. Try again later.",
+  INTERNAL: "Kura hit an unexpected error. Try again in a moment.",
+  VERIFY_FAILED: "Kura couldn't check the proof. Try again in a moment.",
+  START_FAILED: "Could not start verification. Try again in a moment.",
+  // The IDKit widget and World App
+  user_rejected: "The request was declined in World App.",
+  verification_rejected: "World App declined the verification.",
+  credential_unavailable: "This World ID has no Passport credential yet.",
+  failed_by_host_app: "Verification was refused.",
+  timeout: "The request timed out. Start again.",
+  cancelled: "The request was cancelled.",
+  connection_failed: "Couldn't reach World App. Check the connection and try again.",
+  max_verifications_reached: "This World ID has reached its verification limit for this action.",
 };
+
+/** Codes that come from World (the widget or World's verify API); the rest are Kura's own refusals. */
+const FROM_WORLD = new Set(["WORLD_REJECTED", "WRONG_ENVIRONMENT"]);
 
 /** The human sentence for a World ID refusal code (the server's, or the widget's own). */
 export function worldIdErrorMessage(code: string): string {
-  if (ERRORS[code]) return ERRORS[code];
-  if (code === "START_FAILED") return "Could not start verification.";
-  if (code === "failed_by_host_app") return "Verification was refused.";
-  return `Verification ${code}.`;
+  return ERRORS[code] ?? (/^[a-z_]+$/.test(code) ? `World couldn't verify this (${code.replace(/_/g, " ")}).` : "Verification failed. Try again.");
+}
+
+/** "World refused" for World's own refusals, "Kura refused" for the server's checks. */
+export function worldIdRefusalTitle(code: string): string {
+  return FROM_WORLD.has(code) || /^[a-z_]+$/.test(code) ? "World refused the verification" : "Kura refused the verification";
 }
 
 /**
  * Renders a button that opens the IDKit widget for `action`, binds the proof to `signal` (a wallet address),
- * has the backend verify it, and hands back the signed ticket. `subject` is only used for release, where the vendor
- * requests a ticket on behalf of the card holder.
+ * has the backend verify it, and hands back the signed ticket (bid) or confirms the stored release ticket (release,
+ * signed-in owner of `cardId` only).
  */
 export function WorldIdGate(props: {
   action: "bid" | "release";
   signal: `0x${string}`;
-  subject?: `0x${string}`;
+  /** Release only: the card the signed-in owner collects. */
+  cardId?: bigint;
   label?: string;
-  onTicket: (t: IssuedTicket) => void;
+  /** Bid: the signed ticket. */
+  onTicket?: (t: IssuedTicket) => void;
+  /** Release: the ticket is stored for the vendor station; only its expiry comes back. */
+  onReleaseReady?: (r: ReleaseReady) => void;
   /**
    * A refused verification: the server's error code (ALREADY_BOUND...) and its `details` (`{ boundTo }`), or the
    * widget's own code. When set, the caller renders the refusal and the gate shows no toast.
@@ -51,7 +80,7 @@ export function WorldIdGate(props: {
   className?: string;
 }) {
   const env = publicEnv();
-  const world = useWorldIdTicket({ action: props.action, subject: props.subject });
+  const world = useWorldIdTicket({ action: props.action, cardId: props.cardId });
   const ready = world.ready;
   const [open, setOpen] = useState(false);
   // The rp context is single-use (nonce) and short-lived, so a fresh one is fetched on every open and dropped on close.
@@ -77,7 +106,7 @@ export function WorldIdGate(props: {
       setOpen(true);
     } catch {
       if (props.onError) props.onError("START_FAILED");
-      else toast.error("Could not start verification");
+      else toast.error(worldIdErrorMessage("START_FAILED"));
     } finally {
       setStarting(false);
     }
@@ -124,18 +153,19 @@ export function WorldIdGate(props: {
           handleVerify={async (result) => {
             verifying.current = true;
             try {
-              let issued: IssuedTicket;
+              let issued: Awaited<ReturnType<typeof world.verify>>;
               try {
                 issued = await world.verify(result);
               } catch (e) {
                 const code = e instanceof WorldIdError ? e.code : "";
-                if (code && code !== "VERIFY_FAILED" && props.onError) {
+                if (code && props.onError) {
                   reported.current = true;
                   props.onError(code, e instanceof WorldIdError ? e.details : undefined);
                 }
-                throw new Error(ERRORS[code] ?? (e instanceof Error ? e.message : "Verification failed"));
+                throw new Error(worldIdErrorMessage(code));
               }
-              props.onTicket(issued);
+              if ("ok" in issued) props.onReleaseReady?.(issued);
+              else props.onTicket?.(issued);
             } finally {
               verifying.current = false;
               if (closePending.current) {
@@ -151,7 +181,7 @@ export function WorldIdGate(props: {
             // The server's refusal was already reported with its details; the widget's generic follow-up adds nothing.
             if (reported.current) return void (reported.current = false);
             if (props.onError) return props.onError(String(code));
-            toast.error(code === "failed_by_host_app" ? "Verification was refused" : `Verification ${code}`);
+            toast.error(worldIdErrorMessage(String(code)));
           }}
         />
       )}

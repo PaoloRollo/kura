@@ -1,21 +1,18 @@
 "use client";
 
 import type * as React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { passport, useIDKitRequest, type RpContext } from "@worldcoin/idkit";
-import { QRCodeSVG } from "qrcode.react";
-import { BadgeCheckIcon, CheckIcon, CircleCheckIcon, ExternalLinkIcon, LoaderIcon, LockIcon, PackageCheckIcon, PackageOpenIcon, RotateCcwIcon, ScanFaceIcon, TimerOffIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BadgeCheckIcon, CheckIcon, CircleCheckIcon, ExternalLinkIcon, LoaderIcon, LockIcon, PackageCheckIcon, PackageOpenIcon, SmartphoneIcon, TimerOffIcon, XIcon } from "lucide-react";
 import { abi } from "@kura/shared";
 import { AddressName } from "@/components/address-name";
 import { Button, CardArt, notify } from "@/components/kura";
 import { TxStepper, useIsDesktop } from "@/components/tx-stepper";
-import { worldIdErrorMessage } from "@/components/world-id-gate";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { publicEnv } from "@/env";
 import { useDisplayName } from "@/hooks/use-handles";
+import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
 import { useNow } from "@/hooks/use-now";
-import { WorldIdError, useWorldIdTicket, type IssuedTicket } from "@/hooks/use-world-id-ticket";
 import { addresses, explorerTx, publicClient } from "@/lib/chain";
 import { agoLong } from "@/lib/card-view";
 import { shortHash } from "@/lib/format";
@@ -28,119 +25,34 @@ import {
   releaseArgs,
   releaseRetryable,
   releaseStage,
+  ticketSpent,
   type CheckStatus,
+  type PendingRelease,
   type ReleaseStage,
 } from "@/lib/release";
-import { useSendTx, type Step } from "@/lib/tx";
+import { TxError, useSendTx, type Step } from "@/lib/tx";
 import { cn } from "@/lib/utils";
 
 export type ReleaseCard = { name: string; image?: string; ensName: string };
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Live flow: the inline Passport QR (headless IDKit), the backend ticket, then confirmRelease from the vendor wallet.
+// Live flow: the owner verifies with Passport in their own Kura app (the card page's "Collect at the counter"); the
+// station polls for that ticket, then sends confirmRelease from the vendor wallet.
 
-// useIDKitRequest reads its config only when a request opens; until the real rp context arrives this stands in.
-const NO_RP: RpContext = { rp_id: "", nonce: "", created_at: 0, expires_at: 0, signature: "" };
+const POLL_MS = 3000;
 
-/** The Passport check for `holder`, rendered inline as a QR (tM3Hy) instead of IDKit's modal. */
-export function useReleaseCheck(holder: `0x${string}`) {
-  const env = publicEnv();
-  const { ready, rpContext, verify } = useWorldIdTicket({ action: "release", subject: holder });
-  const [rp, setRp] = useState<RpContext | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<IssuedTicket | null>(null);
-  const openPending = useRef(false);
-  const handled = useRef<unknown>(null);
-
-  const idkit = useIDKitRequest({
-    app_id: env.NEXT_PUBLIC_WORLD_APP_ID as `app_${string}`,
-    action: "release",
-    rp_context: rp ?? NO_RP,
-    allow_legacy_proofs: true,
-    environment: env.NEXT_PUBLIC_WORLD_ENV,
-    preset: passport({ signal: holder }),
-  });
-  const { open, reset: resetIdkit } = idkit;
-
-  const reset = useCallback(() => {
-    resetIdkit();
-    handled.current = null;
-    openPending.current = false;
-    setRp(null);
-    setError(null);
-    setIssued(null);
-    setVerifying(false);
-  }, [resetIdkit]);
-
-  const start = useCallback(async () => {
-    reset();
-    setStarting(true);
-    try {
-      const ctx = await rpContext();
-      openPending.current = true;
-      setRp(ctx);
-    } catch {
-      setError(worldIdErrorMessage("START_FAILED"));
-      notify({ title: "Couldn't start the Passport check", body: "Try again in a moment.", tone: "shu", icon: <XIcon /> });
-    } finally {
-      setStarting(false);
-    }
-  }, [reset, rpContext]);
-
-  // Open the request once its rp context is in the config (the hook reads it when the request starts).
-  useEffect(() => {
-    if (rp && openPending.current) {
-      openPending.current = false;
-      open();
-    }
-  }, [rp, open]);
-
-  // World confirmed a proof: the backend checks it against the holder and signs the ticket (once per result).
-  const { isSuccess, result, isError, errorCode } = idkit;
-  useEffect(() => {
-    if (!isSuccess || !result || handled.current === result) return;
-    handled.current = result;
-    setVerifying(true);
-    verify(result)
-      .then((t) => {
-        setIssued(t);
-        notify({ title: "Passport verified", body: "Release ticket signed for the holder's wallet.", tone: "good", icon: <BadgeCheckIcon /> });
-      })
-      .catch((e: unknown) => {
-        const message = e instanceof WorldIdError ? worldIdErrorMessage(e.code) : "Verification failed.";
-        setError(e instanceof WorldIdError && e.code === "VERIFY_FAILED" ? e.message : message);
-        notify({ title: "World refused the Passport check", body: message, tone: "shu", icon: <XIcon /> });
-      })
-      .finally(() => setVerifying(false));
-  }, [isSuccess, result, verify]);
-
-  useEffect(() => {
-    if (!isError || !errorCode || handled.current === errorCode) return;
-    handled.current = errorCode;
-    const message = errorCode === "user_rejected" ? "The holder declined in World App." : worldIdErrorMessage(String(errorCode));
-    setError(message);
-    notify({ title: "World refused the Passport check", body: message, tone: "shu", icon: <XIcon /> });
-  }, [isError, errorCode]);
-
-  return {
-    ready,
-    start,
-    reset,
-    inputs: {
-      starting,
-      rpExpiresAt: rp ? rp.expires_at : null,
-      uri: idkit.connectorURI,
-      scanned: idkit.isAwaitingUserConfirmation,
-      verifying,
-      error,
-      issued,
-    },
-  };
+async function fetchPending(cardId: bigint, identityToken: string | null): Promise<PendingRelease | null> {
+  const r = await apiFetch(`/api/release/pending?cardId=${cardId}`, { identityToken });
+  if (!r.ok) throw new Error(`pending ${r.status}`);
+  return ((await r.json()) as { pending: PendingRelease | null }).pending;
 }
 
-/** Hand over a Whole card (tM3Hy, ykB2t): the holder's Passport check, then `confirmRelease` from the vendor wallet. */
+/** Marks a ticket used up (released, or refused for good) so the station stops offering it. Best effort. */
+async function consumeTicket(id: string, identityToken: string | null) {
+  await apiFetch("/api/release/consume", { method: "POST", body: JSON.stringify({ id }), identityToken }).catch(() => null);
+}
+
+/** Hand over a Whole card (tM3Hy, ykB2t): wait for the owner's Passport ticket, then `confirmRelease` from the vendor. */
 export function ReleasePanel({
   cardId,
   holder,
@@ -157,17 +69,29 @@ export function ReleasePanel({
   redeemedAt?: number | null;
   onClose: () => void;
   onReleased?: () => void;
-  /** "See it under Released" on the confirmation. */
+  /** "Done" on the confirmation. */
   onShowReleased?: () => void;
 }) {
   const now = useNow(1000);
-  const check = useReleaseCheck(holder);
+  const { identityToken } = useKuraUser();
+  const queryClient = useQueryClient();
   const { send, walletKind } = useSendTx();
   const holderName = useDisplayName(holder);
   const [released, setReleased] = useState<{ hash: `0x${string}` | null } | null>(null);
-  const stage = releaseStage({ ...check.inputs, released, now });
+  // The ticket a confirmation is using: held so the stage stays put while the send and the indexer catch up (the
+  // pending route stops returning it as soon as the card is Released).
+  const [held, setHeld] = useState<PendingRelease | null>(null);
+  const key = ["release-pending", cardId.toString()];
+  const polled = useQuery({
+    queryKey: key,
+    queryFn: () => fetchPending(cardId, identityToken ?? null),
+    enabled: !!identityToken && !released && !held,
+    refetchInterval: POLL_MS,
+  });
+  const pending = held ?? polled.data ?? null;
+  const stage = releaseStage({ pending, released, now });
+  const ready = stage.kind === "verified" ? stage.pending : null;
 
-  const issued = stage.kind === "verified" ? stage.issued : null;
   const steps: Step[] = [
     {
       id: "release",
@@ -177,12 +101,23 @@ export function ReleasePanel({
         const c = (await publicClient.readContract({ address: addresses.cardVault, abi: abi.cardVault, functionName: "cards", args: [cardId] })) as { state: number };
         return Number(c.state) === RELEASED_STATE;
       },
-      run: () => {
-        if (!issued) throw new Error("The release ticket expired. Run the Passport check again.");
-        return send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "confirmRelease", args: releaseArgs(cardId, issued) });
+      run: async () => {
+        const t = held ?? ready;
+        if (!t || Number(t.ticket.expiresAt) <= Math.floor(Date.now() / 1000)) {
+          throw new TxError("The release ticket expired. Ask the holder to verify again in their app.", { name: "Expired" });
+        }
+        setHeld(t);
+        const sent = await send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "confirmRelease", args: releaseArgs(cardId, t) });
+        void consumeTicket(t.id, identityToken ?? null);
+        return sent;
       },
     },
   ];
+
+  const restart = () => {
+    setHeld(null);
+    void queryClient.invalidateQueries({ queryKey: key });
+  };
 
   return (
     <ReleaseShell card={card} onClose={onClose}>
@@ -193,28 +128,25 @@ export function ReleasePanel({
         redeemedAt={redeemedAt}
         stage={stage}
         now={now}
-        ready={check.ready}
-        onStart={() => void check.start()}
+        unreachable={polled.isError}
         onClose={onClose}
         onShowReleased={onShowReleased}
         confirm={
           <TxStepper
             steps={steps}
             cta="Confirm handover"
-            ctaIcon={issued ? <PackageOpenIcon aria-hidden /> : <LockIcon aria-hidden />}
-            ctaClassName={issued ? "bg-kin text-kin-ink hover:bg-kin/90" : "bg-surface-2 text-muted-foreground disabled:opacity-100"}
-            disabled={!issued}
+            ctaIcon={ready ? <PackageOpenIcon aria-hidden /> : <LockIcon aria-hidden />}
+            ctaClassName={ready ? "bg-kin text-kin-ink hover:bg-kin/90" : "bg-surface-2 text-muted-foreground disabled:opacity-100"}
+            disabled={!ready}
             title="Handing over"
             failedTitle="The handover didn't go through"
             describeError={describeReleaseError}
             retryable={releaseRetryable}
-            backLabel="Start a new Passport check"
-            onCancel={() => {
-              // A refused ticket is spent or stale: the next attempt starts from a fresh check.
-              if (!issued) check.reset();
-            }}
+            backLabel="Wait for a new check"
+            onCancel={restart}
             onError={(_r, revert) => {
-              if (!releaseRetryable(revert)) check.reset();
+              const t = held ?? ready;
+              if (t && ticketSpent(revert)) void consumeTicket(t.id, identityToken ?? null);
             }}
             onDone={(results) => {
               const hash = results.find((r) => r.id === "release")?.hash ?? null;
@@ -279,22 +211,6 @@ function StatusRow({ icon, children, trailing }: { icon: React.ReactNode; childr
   );
 }
 
-/** The white QR card with 蔵 in the middle. */
-function PassportQr({ uri }: { uri: string | null }) {
-  return (
-    <div className="flex aspect-[352/260] max-h-[300px] w-full items-center justify-center rounded-2xl bg-white p-5">
-      {uri ? (
-        <a href={uri} target="_blank" rel="noreferrer" aria-label="Open the Passport check in World App" className="relative block h-full max-h-[220px] aspect-square">
-          <QRCodeSVG value={uri} size={220} level="H" bgColor="#ffffff" fgColor="#111111" className="h-full w-full" />
-          <span lang="ja" aria-hidden className="absolute top-1/2 left-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center bg-white font-display text-[26px] text-shu">蔵</span>
-        </a>
-      ) : (
-        <LoaderIcon aria-label="Preparing the QR" className="size-6 animate-spin text-neutral-400" />
-      )}
-    </div>
-  );
-}
-
 function Notice({ tone, icon, title, body, action }: { tone: "shu" | "neutral"; icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode }) {
   return (
     <div className={cn("flex aspect-[352/260] max-h-[300px] w-full flex-col items-center justify-center gap-3 rounded-2xl border p-6 text-center", tone === "shu" ? "border-shu/30 bg-shu-soft" : "border-dashed border-border bg-bg")}>
@@ -324,10 +240,10 @@ function Verified({ holder }: { holder: string }) {
   );
 }
 
+const ASK = "Ask the holder to open the card in Kura and tap Collect at the counter. Only the card's owner can start this, from their own Kura app.";
 const INSTRUCTIONS: Partial<Record<ReleaseStage["kind"], string>> = {
-  verified: "The holder passed the Passport check. Hand over the card, then confirm. This records the release and revokes the ENS name.",
+  verified: "The holder passed the Passport check in their app. Hand over the card, then confirm. This records the release and revokes the ENS name.",
 };
-const ASK = "Ask the holder to scan this with World App and complete the Passport check. The ticket names their wallet, so nobody else can collect.";
 
 /** Everything under the panel's title, for one stage. `confirm` is the Confirm handover control (a TxStepper live). */
 export function ReleaseBody({
@@ -337,8 +253,7 @@ export function ReleaseBody({
   redeemedAt,
   stage,
   now,
-  ready = true,
-  onStart,
+  unreachable = false,
   onClose,
   onShowReleased,
   confirm,
@@ -349,8 +264,8 @@ export function ReleaseBody({
   redeemedAt?: number | null;
   stage: ReleaseStage;
   now: number;
-  ready?: boolean;
-  onStart: () => void;
+  /** The pending-ticket poll is failing. */
+  unreachable?: boolean;
   onClose: () => void;
   onShowReleased?: () => void;
   confirm: React.ReactNode;
@@ -384,8 +299,9 @@ export function ReleaseBody({
         )}
         <Checklist dots={dots} />
         <div className="flex flex-col gap-2.5 sm:flex-row">
+          {/* A new tab, so the station keeps its place; /app renders for any signed-in wallet, the vendor's included. */}
           <Button asChild variant="secondary" size="md" className="sm:flex-1">
-            <Link href={`/app/cards/${cardId}`}>View card page</Link>
+            <Link href={`/app/cards/${cardId}`} target="_blank" rel="noreferrer">View card page<ExternalLinkIcon aria-hidden /></Link>
           </Button>
           <Button variant="redeem" size="md" className="sm:flex-1" onClick={onShowReleased ?? onClose}>
             <CheckIcon aria-hidden />Done
@@ -397,38 +313,20 @@ export function ReleaseBody({
 
   const main =
     stage.kind === "verified" ? <Verified holder={holder} />
-    : stage.kind === "waiting" ? <PassportQr uri={stage.uri} />
-    : stage.kind === "verifying" ? <PassportQr uri={null} />
-    : stage.kind === "refused" ? (
-      <Notice tone="shu" icon={<TriangleAlertIcon />} title="The Passport check didn't pass" body={stage.message} action={<Button variant="secondary" size="compact" onClick={onStart}><RotateCcwIcon />Try again</Button>} />
-    ) : stage.kind === "expired" ? (
-      <Notice
-        tone="neutral"
-        icon={<TimerOffIcon />}
-        title={stage.what === "ticket" ? "The release ticket expired" : "The Passport request timed out"}
-        body={stage.what === "ticket" ? "Tickets last 15 minutes. Run the check again with the holder." : "Start a new request and ask the holder to scan again."}
-        action={<Button variant="redeem" size="compact" onClick={onStart}><RotateCcwIcon />Start again</Button>}
-      />
+    : stage.kind === "expired" ? (
+      <Notice tone="neutral" icon={<TimerOffIcon />} title="The release ticket expired" body="Tickets last 15 minutes. Ask the holder to verify again in their app; this updates by itself." />
     ) : (
-      <Notice
-        tone="neutral"
-        icon={<ScanFaceIcon />}
-        title="Passport check"
-        body="Start when the holder is at the counter with World App."
-        action={<Button variant="redeem" size="compact" onClick={onStart} disabled={!ready || stage.kind === "starting"}>{stage.kind === "starting" ? <LoaderIcon className="animate-spin" /> : <ScanFaceIcon />}Start Passport check</Button>}
-      />
+      <Notice tone="neutral" icon={<SmartphoneIcon />} title="Waiting for the holder" body="They open this card in Kura, tap Collect at the counter and verify with Passport. This updates by itself." />
     );
 
   const status =
-    stage.kind === "waiting" ? (
-      <StatusRow icon={<LoaderIcon className="animate-spin text-kin" />} trailing={mmss(stage.secondsLeft)}>
-        {stage.scanned ? "Holder scanned · confirming in World App…" : "Waiting for Passport verification…"}
-      </StatusRow>
-    ) : stage.kind === "verifying" ? (
-      <StatusRow icon={<LoaderIcon className="animate-spin text-kin" />}>Signing the release ticket…</StatusRow>
-    ) : stage.kind === "verified" ? (
+    stage.kind === "verified" ? (
       <StatusRow icon={<CircleCheckIcon className="text-good" />}>Release ticket signed · valid {mmss(stage.secondsLeft)}</StatusRow>
-    ) : null;
+    ) : unreachable ? (
+      <StatusRow icon={<LoaderIcon className="animate-spin text-shu" />}>Can&apos;t reach Kura right now · retrying…</StatusRow>
+    ) : (
+      <StatusRow icon={<LoaderIcon className="animate-spin text-kin" />}>Waiting for the holder&apos;s Passport check…</StatusRow>
+    );
 
   return (
     <>

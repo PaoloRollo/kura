@@ -166,7 +166,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
     : null;
 
   const panel =
-    card.state === "whole" ? (isOwner ? <OwnerPanel c={c} /> : <OwnedByPanel c={c} />)
+    card.state === "whole" ? (isOwner ? <OwnerPanel c={c} name={identity.name} /> : <OwnedByPanel c={c} />)
     : card.state === "auctioning" && c.sharding ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
     : card.state === "sharded" && c.sharding ? (hasBidActions(c, me, null) ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
       : me ? <RedeemPanel c={c} me={me as `0x${string}`} fallback={<ShardedSummary c={c} />} />
