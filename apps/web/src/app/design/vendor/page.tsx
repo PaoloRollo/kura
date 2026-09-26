@@ -3,7 +3,7 @@ import { VendorPreview } from "./preview";
 
 const VIEWS = [
   "inventory", "inventory-fixture", "inventory-empty", "handover",
-  "handover-idle", "handover-waiting", "handover-verifying", "handover-verified", "handover-refused", "handover-expired", "handover-released",
+  "handover-waiting", "handover-verified", "handover-expired", "handover-released",
   "fees", "fees-fixture", "fees-empty",
 ] as const;
 export type PreviewView = (typeof VIEWS)[number];

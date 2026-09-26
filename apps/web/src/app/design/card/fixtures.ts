@@ -22,7 +22,7 @@ const NODE: Hex = "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1f
 const S = 10n ** 18n;
 const usd = (dollars: number) => BigInt(Math.round(dollars * 100)) * 10_000n;
 
-export const PREVIEW_STATES = ["whole-owner", "whole", "whole-after-buyout", "auctioning", "sharded", "released", "empty", "loading", "notfound"] as const;
+export const PREVIEW_STATES = ["whole-owner", "collect-ready", "collect-expired", "whole", "whole-after-buyout", "auctioning", "sharded", "released", "released-no-buyout", "empty", "loading", "notfound"] as const;
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /** Blocks at 12 s: the fixture's "now" is block HEAD at `now` seconds. */
@@ -33,11 +33,14 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   const blockAgo = (secondsAgo: number) => HEAD - BigInt(Math.floor(secondsAgo / 12));
   // Whole again after paolo bought out the minority holders: the sharding is history, not current.
   const buyout = state === "whole-after-buyout";
-  const whole = state === "whole" || state === "whole-owner" || state === "empty" || buyout;
+  // collect-*: the owner's card page after (or long after) their Passport check at the counter.
+  const whole = state === "whole" || state === "whole-owner" || state === "collect-ready" || state === "collect-expired" || state === "empty" || buyout;
   const auctioning = state === "auctioning";
-  const released = state === "released";
-  const redeemed = released || buyout;
-  const sharded = !whole || buyout; // was ever sharded
+  // Released straight from Whole: never sharded, so there is no buyout to show.
+  const plain = state === "released-no-buyout";
+  const released = state === "released" || plain;
+  const redeemed = state === "released" || buyout;
+  const sharded = !plain && (!whole || buyout); // was ever sharded
   const owner = state === "whole" ? KENJI : PAOLO;
 
   const card = {
@@ -50,9 +53,9 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     language: "en",
     label: "black-lotus-lea-1",
     ensName: "black-lotus-lea-1.kura.eth",
-    shardToken: whole ? null : TOKEN,
-    auction: whole ? null : AUCTION,
-    endBlock: whole ? null : auctioning ? HEAD + 21n : blockAgo(23 * 60),
+    shardToken: whole || plain ? null : TOKEN,
+    auction: whole || plain ? null : AUCTION,
+    endBlock: whole || plain ? null : auctioning ? HEAD + 21n : blockAgo(23 * 60),
     mintedAt: at(7 * 86_400 + 600),
     updatedBlock: HEAD,
     updatedAt: at(60),
@@ -140,6 +143,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     activities.push(act("payout", KENJI, 12 * 60, usd(2568), { shardUnits: (3n * S / 2n).toString(), shardToken: TOKEN }));
     if (released) activities.push(act("release", PAOLO, 10 * 60, null, null));
   }
+  if (plain) activities.push(act("release", PAOLO, 10 * 60, null, null));
   activities.sort((a, b) => (a.blockNumber === b.blockNumber ? b.logIndex - a.logIndex : a.blockNumber > b.blockNumber ? -1 : 1));
 
   // Balances: every holder of the current token, the auction included (it holds unclaimed shards).
@@ -179,7 +183,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
 
   return {
     card,
-    sharding: whole ? null : sharding,
+    sharding: whole || plain ? null : sharding,
     allShardings: sharded ? [sharding] : [],
     meta: {
       name: "Black Lotus (LEA) #1",

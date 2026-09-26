@@ -44,14 +44,11 @@ const TICKET_TTL = 15 * 60;
 const nowSec = () => Math.floor(Date.now() / 1000);
 /** The fixture panel stage for a `handover-<stage>` view. */
 function fixtureStage(view: string, now: number): ReleaseStage | null {
-  const issued = { ticket: { kind: 2, subject: HOLDER, nullifier: "1", expiresAt: String(now + TICKET_TTL - 40) }, signature: "0x" as const, credential: "passport" };
+  const pending = { id: "preview", ticket: { kind: 2, subject: HOLDER, nullifier: "1", expiresAt: String(now + TICKET_TTL - 48) }, signature: "0x" as const, credential: "passport" };
   switch (view) {
-    case "handover-idle": return { kind: "idle" };
-    case "handover-waiting": return { kind: "waiting", uri: "https://world.org/verify?t=wld&i=kura-preview-release-request&k=preview", secondsLeft: 892, scanned: false };
-    case "handover-verifying": return { kind: "verifying" };
-    case "handover-verified": return { kind: "verified", issued, secondsLeft: TICKET_TTL - 48 };
-    case "handover-refused": return { kind: "refused", message: "A stronger credential is required for this step." };
-    case "handover-expired": return { kind: "expired", what: "ticket" };
+    case "handover-waiting": return { kind: "waiting" };
+    case "handover-verified": return { kind: "verified", pending, secondsLeft: TICKET_TTL - 48 };
+    case "handover-expired": return { kind: "expired" };
     case "handover-released": return { kind: "released", hash: "0x7e1a8c0f6b2d4e9a1c3f5b7d9e0a2c4f6b8d0e1a3c5f7b9d1e3a5c7f9b1d3b9" };
     default: return null;
   }
@@ -99,7 +96,7 @@ export function VendorPreview({ view, views }: { view: string; views: readonly s
             initialSelected={1n}
             renderPanel={({ key, cardId, holder, card, redeemedAt, onClose, onShowReleased }) => (
               <ReleaseShell key={key} card={card} onClose={onClose}>
-                <ReleaseBody cardId={cardId} card={card} holder={holder} redeemedAt={redeemedAt} stage={stage} now={nowSec()} onStart={() => {}} onClose={onClose} onShowReleased={onShowReleased} confirm={<StaticConfirm enabled={stage.kind === "verified"} />} />
+                <ReleaseBody cardId={cardId} card={card} holder={holder} redeemedAt={redeemedAt} stage={stage} now={nowSec()} onClose={onClose} onShowReleased={onShowReleased} confirm={<StaticConfirm enabled={stage.kind === "verified"} />} />
               </ReleaseShell>
             )}
           />

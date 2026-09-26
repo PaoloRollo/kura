@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { CircleDollarSignIcon } from "lucide-react";
 import { BarChip, EnsName, TopBar } from "@/components/kura";
 import { CardLoading, CardNotFound, CardPageView } from "@/components/card-page-view";
@@ -24,7 +26,19 @@ function LiveCard({ id, tab, now }: { id: bigint; tab: CardTab; now: number }) {
   return <CardPageView c={c} me={address} now={now} block={block != null ? BigInt(block) : null} tab={tab} tabHref={href} />;
 }
 
+/** Seeds the owner's waiting release ticket for the collect-* states (the live query needs a session). */
+function useCollectFixture(state: PreviewState | "live", now: number) {
+  const qc = useQueryClient();
+  const [seeded] = useState(() => {
+    const ready = state === "collect-ready" ? { expiresAt: String(now + 899) } : state === "collect-expired" ? { expiresAt: String(now - 5) } : null;
+    qc.setQueryData(["release-ready", "1"], ready);
+    return true;
+  });
+  return seeded;
+}
+
 export function CardPreview({ state, tab, now, liveId }: { state: PreviewState | "live"; tab: CardTab; now: number; liveId: bigint }) {
+  useCollectFixture(state, now);
   const live = state === "live";
   const c = cardFixture(live ? "auctioning" : state, now);
   const href = (t: CardTab) => `/design/card?state=${state}${t === "overview" ? "" : `&tab=${t}`}`;
