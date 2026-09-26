@@ -13,7 +13,8 @@
     "contracts:test": "pnpm --dir contracts exec forge test",
     "sync:deployments": "node scripts/sync-deployments.mjs",
     "rehearse": "tsx scripts/rehearse.ts",
-    "db:reset": "tsx scripts/ops/reset-db.ts"
+    "db:reset": "tsx scripts/ops/reset-db.ts",
+    "rehearse:fork": "bash scripts/ops/fork-rehearse.sh"
   },
   "devDependencies": {
     "@kura/shared": "workspace:*",

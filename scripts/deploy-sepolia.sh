@@ -3,6 +3,7 @@
 # deploys the contracts and seeds one demo card. Reads secrets from the git-ignored .env.
 #
 # After Deploy it regenerates packages/shared/src/abi.ts and syncs the deployments to the web and the indexer.
+# Rehearse a deployment on a local fork first: pnpm rehearse:fork (nothing reaches Sepolia).
 #
 # Usage: ./scripts/deploy-sepolia.sh            full run
 #        ./scripts/deploy-sepolia.sh deploy     skip ENS setup (name already registered)
