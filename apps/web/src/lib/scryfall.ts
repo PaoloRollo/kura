@@ -212,9 +212,12 @@ export class Scryfall {
     return card ? this.toCandidate(card) : null;
   }
 
-  /** The raw Scryfall card for an id (all prices, including usd_etched), cache first. */
-  async getCard(id: string): Promise<ScryfallCard | null> {
-    const cached = await this.cacheGet(id).catch((e) => {
+  /**
+   * The raw Scryfall card for an id (all prices, including usd_etched), cache first. `fresh` skips the cache read (the
+   * daily price snapshot must not record a price up to a day old) but still refreshes the cache with the result.
+   */
+  async getCard(id: string, opts: { fresh?: boolean } = {}): Promise<ScryfallCard | null> {
+    const cached = opts.fresh ? null : await this.cacheGet(id).catch((e) => {
       reportCacheFailure("read", e);
       return null;
     });
@@ -225,10 +228,10 @@ export class Scryfall {
     return card;
   }
 
-  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang), cache first. */
-  async getPrinting(set: string, collectorNumber: string, lang = "en"): Promise<ScryfallCard | null> {
+  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang), cache first; `fresh` as in getCard. */
+  async getPrinting(set: string, collectorNumber: string, lang = "en", opts: { fresh?: boolean } = {}): Promise<ScryfallCard | null> {
     const code = normaliseSet(set);
-    const cached = await this.cacheGetPrinting(code, collectorNumber, lang).catch((e) => {
+    const cached = opts.fresh ? null : await this.cacheGetPrinting(code, collectorNumber, lang).catch((e) => {
       reportCacheFailure("read", e);
       return null;
     });

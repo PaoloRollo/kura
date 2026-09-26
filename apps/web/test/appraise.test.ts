@@ -342,6 +342,17 @@ describe("lookupPrice", () => {
     expect(appraised.quote).toEqual(display);
   });
 
+  it("threads fresh through to both Scryfall lookups", async () => {
+    // A Japanese printing with no USD price, so the quote also looks up the English printing.
+    const ja = { ...lotus, id: "ja", lang: "ja", prices: { usd: null, usd_foil: null, eur: null } };
+    const { s } = client(ja);
+    const getCard = vi.spyOn(s, "getCard");
+    const getPrinting = vi.spyOn(s, "getPrinting");
+    await marketPriceForCard({ id: 1n, scryfallId: "ja", condition: "NM" }, s, { description: null, fresh: true });
+    expect(getCard).toHaveBeenCalledWith("ja", { fresh: true });
+    expect(getPrinting).toHaveBeenCalledWith(ja.set, ja.collector_number, "en", { fresh: true });
+  });
+
   it("records the market price under the priced printing's id, etched included", async () => {
     const etched = { ...lotus, id: "etched", finishes: ["etched"], prices: { usd: null, usd_foil: null, usd_etched: "12.50", eur: null } };
     const { s } = client(etched);

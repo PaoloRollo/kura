@@ -13,6 +13,8 @@ type CardRow = Row<typeof schema.cards>;
 
 // Within every Vercel plan's limit; a few dozen cards at Scryfall's ~10 req/s take seconds.
 export const maxDuration = 60;
+/** Stop starting new cards past this, so the run returns before maxDuration kills it. */
+export const BUDGET_MS = 50_000;
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -25,10 +27,12 @@ function authorized(req: Request): boolean {
 /**
  * Daily (vercel.json, 03:00 UTC; Vercel Cron sends `Authorization: Bearer $CRON_SECRET`): today's `market_prices`
  * row for every vault card's printing (cards not released), plus the English printing when that is what the card is
- * priced at (lib/pricing's fallback). One row per printing and UTC day, upserted. Sequential, so Scryfall's cache and
- * rate limit hold. `{ updated, total }`: printings written, cards considered.
+ * priced at (lib/pricing's fallback). One row per printing and UTC day, upserted. Sequential, so Scryfall's rate limit
+ * holds; every lookup is `fresh` (past Scryfall's 24h cache), so a snapshot never records yesterday's price.
+ * `{ updated, total }`: printings written, cards considered; `partial: true` when the run stopped at BUDGET_MS.
  */
 export async function GET(req: Request) {
+  const start = Date.now();
   if (!authorized(req)) return jsonError("UNAUTHENTICATED", "bad secret", 401);
   let cards: CardRow[];
   try {
@@ -47,11 +51,18 @@ export async function GET(req: Request) {
       .onConflictDoUpdate({ target: [marketPrices.scryfallId, marketPrices.date], set: row });
     done.add(printing.id);
   };
-  for (const card of cards) {
+  const fresh = { fresh: true };
+  for (const [i, card] of cards.entries()) {
+    const elapsed = Date.now() - start;
+    if (elapsed > BUDGET_MS) {
+      console.warn(`cron prices: stopped after ${Math.round(elapsed / 1000)}s at card ${i + 1} of ${cards.length}; the rest wait for the next run`);
+      return NextResponse.json({ updated: done.size, total: cards.length, partial: true });
+    }
     try {
-      await snapshot(await s.getCard(card.scryfallId));
-      const quote = await marketPriceForCard(card, s);
-      if (quote?.source.englishFallback && quote.source.printingId) await snapshot(await s.getCard(quote.source.printingId));
+      if (!done.has(card.scryfallId)) await snapshot(await s.getCard(card.scryfallId, fresh));
+      const quote = await marketPriceForCard(card, s, fresh);
+      const fallback = quote?.source.englishFallback ? quote.source.printingId : null;
+      if (fallback && !done.has(fallback)) await snapshot(await s.getCard(fallback, fresh));
     } catch (e) {
       console.error(`cron prices: card ${card.id} failed`, e);
     }

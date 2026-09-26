@@ -20,14 +20,15 @@ export async function mintDescription(cardId: bigint): Promise<string | null> {
  * The market price quote for a vault card (lib/pricing's rule): its printing's Scryfall price for its finish (finishOf),
  * the English printing as fallback, times the condition multiplier. Null when the card or its printing is unknown.
  * `description`: the mint description when the caller already has it (undefined looks it up in the indexer).
+ * `fresh`: read Scryfall past its 24h cache (the daily snapshot cron).
  */
 export async function marketPriceForCard(
   card: { id: bigint; scryfallId: string; condition: string },
   scryfall: Scryfall = sharedScryfall(),
-  opts: { description?: string | null } = {},
+  opts: { description?: string | null; fresh?: boolean } = {},
 ): Promise<PriceQuote | null> {
   const [printing, description] = await Promise.all([
-    scryfall.getCard(card.scryfallId),
+    scryfall.getCard(card.scryfallId, { fresh: opts.fresh }),
     opts.description !== undefined ? opts.description : mintDescription(card.id),
   ]);
   if (!printing) return null;
@@ -35,6 +36,6 @@ export async function marketPriceForCard(
     printing,
     finish: finishOf(description, printing),
     condition: card.condition,
-    englishPrinting: (set, number) => scryfall.getPrinting(set, number, "en"),
+    englishPrinting: (set, number) => scryfall.getPrinting(set, number, "en", { fresh: opts.fresh }),
   });
 }

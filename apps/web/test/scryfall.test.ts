@@ -187,4 +187,21 @@ describe("Scryfall", () => {
     expect((await p2)?.id).toBe(lotus.id);
     expect(calls).toHaveLength(1);
   });
+
+  it("fresh skips the cache read but still refreshes the cache", async () => {
+    let usd = "25000.00";
+    const { fn, calls } = fakeFetch(() => ({ status: 200, body: { ...lotus, prices: { ...lotus.prices, usd } } }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const run = async <T,>(p: Promise<T>) => { await vi.runAllTimersAsync(); return p; };
+    await run(s.getCard(lotus.id));
+    usd = "26000.00";
+    // A cached read keeps the old price; a fresh one goes to Scryfall and writes the new price back.
+    expect((await run(s.getCard(lotus.id)))?.prices.usd).toBe("25000.00");
+    expect((await run(s.getCard(lotus.id, { fresh: true })))?.prices.usd).toBe("26000.00");
+    expect(calls).toHaveLength(2);
+    expect((await run(s.getCard(lotus.id)))?.prices.usd).toBe("26000.00");
+    expect((await run(s.getPrinting("lea", "232", "en", { fresh: true })))?.prices.usd).toBe("26000.00");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toContain("/cards/lea/232/en");
+  });
 });
