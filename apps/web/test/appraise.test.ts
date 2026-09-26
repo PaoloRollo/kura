@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { appraisals } from "@/lib/db/schema";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
-import { ENS_REWRITE_SEC, computeUsdcPerShard, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendWithFreshNonce, type Deps, type PriceLookup } from "@/lib/appraise";
+import { ENS_REWRITE_SEC, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendWithFreshNonce, type Deps, type PriceLookup } from "@/lib/appraise";
 import { marketPrices } from "@/lib/db/schema";
 import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
@@ -170,6 +170,19 @@ describe("appraise", () => {
     await runAppraise({ cardId: "1" }, off);
     expect(off.ensWriteLock).not.toHaveBeenCalled();
     expect(off.writeEnsRecord).not.toHaveBeenCalled();
+  });
+
+  it("says what publishAppraisalRecord did, for the cron's counts", async () => {
+    const d = deps();
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", deps({ ensWritesEnabled: () => false }))).toBe("disabled");
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", d)).toBe("written");
+    expect(d.writeEnsRecord).toHaveBeenCalledWith("0xabc", "8.50");
+    // The same price again within the hour: deduplicated.
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", d)).toBe("unchanged");
+    expect(await publishAppraisalRecord(6n, "0xabc", "8.50", deps({ ensWriteLock: vi.fn(async () => false) }))).toBe("locked");
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await publishAppraisalRecord(7n, "0xabc", "8.50", deps({ writeEnsRecord: vi.fn(async () => { throw new Error("no gas"); }) }))).toBe("failed");
+    err.mockRestore();
   });
 
   it("takes the Postgres advisory lock in a transaction", async () => {
@@ -351,6 +364,14 @@ describe("lookupPrice", () => {
     await marketPriceForCard({ id: 1n, scryfallId: "ja", condition: "NM" }, s, { description: null, fresh: true });
     expect(getCard).toHaveBeenCalledWith("ja", { fresh: true });
     expect(getPrinting).toHaveBeenCalledWith(ja.set, ja.collector_number, "en", { fresh: true });
+  });
+
+  it("prices a printing the caller already fetched without fetching it again", async () => {
+    const { s } = client(lotus);
+    const getCard = vi.spyOn(s, "getCard");
+    const q = await marketPriceForCard({ id: 1n, scryfallId: "lotus", condition: "NM" }, s, { description: null, printing: lotus as never });
+    expect(getCard).not.toHaveBeenCalled();
+    expect(q?.usd).toBe(lotus.prices.usd);
   });
 
   it("records the market price under the priced printing's id, etched included", async () => {

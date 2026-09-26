@@ -54,7 +54,7 @@ Built for **ETHGlobal Tokyo 2026**.
    │ /api/appraise        ─► Scryfall prices (lib/pricing)    ─► signs appraisals,        │
    │                                                             writes appraisal.* ENS  │
    │ /api/scan/match      ─► card image index (private Vercel Blob)                       │
-   │ /api/cron/prices     ─► daily market_prices snapshots                                │
+   │ /api/cron/prices     ─► daily market_prices snapshots, appraisal.* ENS (sharded)     │
    └───────┬──────────────────────────────────────┬───────────────────────────────┬──────┘
            │ Drizzle                               │ @ponder/client (SQL over HTTP)│ txs / reads
            ▼                                       ▼                               ▼
@@ -133,7 +133,7 @@ Real-time:
 - Pages read the indexer through Ponder live queries, so bids, settles and transfers appear without a reload.
 - With `NEXT_PUBLIC_ALCHEMY_WS_URL` set, signed-in pages also watch `BidSubmitted`, `AuctionSettled` and `CardRedeemed` over a websocket and show a toast (`apps/web/src/lib/live-events.ts`). Your own transactions are not toasted again.
 - The bell in the top bar derives notifications from the indexer: outbid, payout ready, ending soon, your auction settled, shards received and redemption unlocked (`apps/web/src/lib/notifications.ts`).
-- A daily Vercel cron snapshots market prices for the price history (`apps/web/src/app/api/cron/prices/route.ts`).
+- A daily Vercel cron snapshots market prices for the price history and publishes each sharded card's ENS appraisal (`apps/web/src/app/api/cron/prices/route.ts`).
 
 ## Sponsor tech
 
@@ -170,7 +170,7 @@ Every shard sale is a CCA v2.1.0 auction, created and settled by the vault.
 - **Registry and resolver:** [`SetupEns.s.sol`](contracts/script/SetupEns.s.sol#L57-L107) deploys `kura.eth`'s own ENSv2 UserRegistry and PermissionedResolver through the VerifiableFactory, then registers `kura.eth` and names the appraiser agent (lines 112–158).
 - **Card names:** [`CardNames.registerCard`](contracts/src/CardNames.sol#L126-L152) issues `<slug>-<set>-<id>.kura.eth`, owned by the adapter itself with no transfer role ([`EnsRoles`](contracts/src/libraries/EnsRoles.sol#L27-L28)), so card names are **non-transferable**. It writes the records in one multicall and grants scoped **EAC** text roles: `condition` and `grade` to the vendor, `appraisal.usd` and `appraisal.at` to the appraiser (lines 145–148). [`setState`](contracts/src/CardNames.sol#L155-L170) mirrors the vault state, shard token, auction and clearing price, and [`revoke`](contracts/src/CardNames.sol#L178-L184) unregisters the name when the card is released.
 - **Collector handles:** [`registerCollector`](contracts/src/CardNames.sol#L189-L209) deploys a PermissionedResolver for the collector, with the collector as its sole admin, and registers `<handle>.kura.eth` to them.
-- **Agent namespace:** `appraiser.kura.eth` resolves to the signer. With `APPRAISER_WRITE_ENS=true`, that signer publishes each appraisal on the card's name as `appraisal.usd` and `appraisal.at`, using its EAC grant, in one resolver multicall ([`writeAppraisalText`](apps/web/src/lib/appraise.ts#L186-L202)). Writes are serialized: an in-process queue plus a per-card Postgres advisory lock ([`pgEnsWriteLock`](apps/web/src/lib/appraise.ts#L109-L139)), each sent with the chain's pending nonce and retried once on a nonce clash ([`sendWithFreshNonce`](apps/web/src/lib/appraise.ts#L155-L183)). [`publishAppraisalRecord`](apps/web/src/lib/appraise.ts#L241-L267) skips the write unless the price changed or the record is over an hour old.
+- **Agent namespace:** `appraiser.kura.eth` resolves to the signer. With `APPRAISER_WRITE_ENS=true`, that signer publishes each appraisal on the card's name as `appraisal.usd` and `appraisal.at`, using its EAC grant, in one resolver multicall ([`writeAppraisalText`](apps/web/src/lib/appraise.ts#L186-L202)). Writes are serialized: an in-process queue plus a per-card Postgres advisory lock ([`pgEnsWriteLock`](apps/web/src/lib/appraise.ts#L109-L139)), each sent with the chain's pending nonce and retried once on a nonce clash ([`sendWithFreshNonce`](apps/web/src/lib/appraise.ts#L155-L183)). [`publishAppraisalRecord`](apps/web/src/lib/appraise.ts#L248-L283) skips the write unless the price changed or the record is over an hour old. Records are written on a buyout appraisal and, so every sharded card carries one without a buyout, by the daily price cron: after each card's snapshot, [`/api/cron/prices`](apps/web/src/app/api/cron/prices/route.ts) publishes the market price of every sharded or auctioning card through the same path (whole and released cards, and cards with no USD price, are skipped). A failed write never fails the snapshot; the cron reports `appraised` and `appraisalErrors`. On Vercel this needs `SIGNER_PRIVATE_KEY`, `APPRAISER_WRITE_ENS=true`, `ALCHEMY_HTTP_URL` and `CRON_SECRET`.
 
 ### Curvegrid: real-world asset dashboards
 

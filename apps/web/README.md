@@ -54,6 +54,15 @@ output too instead of stubbing it out there.
 - **Daily cron.** `vercel.json` schedules `GET /api/cron/prices` at 03:00 UTC. It writes one `market_prices`
   row per vault card printing and UTC day. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, so set
   `CRON_SECRET` in the Vercel project; without it the route answers 401 to everyone.
+  - **ENS appraisals.** With `APPRAISER_WRITE_ENS=true`, the cron also publishes `appraisal.usd` and
+    `appraisal.at` on the ENS name of every sharded or auctioning card with a USD price (the market price at
+    its finish and condition), through the buyout appraisal's write path in `src/lib/appraise.ts`
+    (`publishAppraisalRecord`: one write queue, a per-card advisory lock, the pending nonce with one retry,
+    and a rewrite only on a price change or after an hour). Whole and released cards are skipped. It needs
+    `SIGNER_PRIVATE_KEY` (the appraiser, holding Sepolia ETH), `APPRAISER_WRITE_ENS`, `ALCHEMY_HTTP_URL` and
+    `CRON_SECRET` in Vercel. A failed write is logged and counted, never failing the snapshot: the route
+    answers `{ updated, total, appraised, appraisalErrors }`, plus `partial: true` when it stopped at its 50 s
+    budget or left writes for the next run.
 - **Migration.** `drizzle/0004_market_price_etched.sql` adds `market_prices.usd_etched`. Apply it with
   `pnpm --filter web db:migrate` against the production `DATABASE_URL` before the cron runs; until then
   every snapshot insert fails.

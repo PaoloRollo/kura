@@ -239,31 +239,47 @@ export function needsEnsWrite(current: { usd: string | null; at: number | null }
 }
 
 /**
+ * What publishAppraisalRecord did: `written`; `unchanged` (the record or this instance's last write is current);
+ * `disabled` (APPRAISER_WRITE_ENS off); `busy` (a write for the card is in flight here); `locked` (another instance holds
+ * the card's lock); `failed` (the write threw, logged); `timeout` (still pending after ENS_WRITE_TIMEOUT_MS).
+ */
+export type PublishOutcome = "written" | "unchanged" | "disabled" | "busy" | "locked" | "failed" | "timeout";
+
+/**
  * Publishes the appraisal on the card's ENS name (appraisal.usd / appraisal.at), deduplicated per card: skipped while a
  * write for the card is in flight here (registered before any await), while another instance holds the card's lock, and
  * when neither the indexed record nor this instance's last write needs replacing. Awaited with a short timeout, so a
- * serverless request never leaves the write running unobserved.
+ * serverless request never leaves the write running unobserved. Never throws. Used by runAppraise (the buyout) and the
+ * daily price cron.
  */
-async function publishAppraisalRecord(id: bigint, node: Hex, usd: string, deps: Deps) {
+export async function publishAppraisalRecord(id: bigint, node: Hex, usd: string, deps: Deps = defaultDeps): Promise<PublishOutcome> {
   const key = id.toString();
-  if (!deps.ensWritesEnabled() || inFlight.has(key)) return;
+  if (!deps.ensWritesEnabled()) return "disabled";
+  if (inFlight.has(key)) return "busy";
   const now = Math.floor(Date.now() / 1000);
-  const write = (async () => {
+  const write = (async (): Promise<PublishOutcome> => {
     const mem = lastWrite.get(key);
-    if (mem && !needsEnsWrite(mem, usd, now)) return;
+    if (mem && !needsEnsWrite(mem, usd, now)) return "unchanged";
+    let outcome: PublishOutcome = "unchanged";
     const acquired = await deps.ensWriteLock(id, async () => {
       const [cur, at] = await Promise.all([deps.loadEnsText(node, "appraisal.usd"), deps.loadEnsText(node, "appraisal.at")]).catch(() => [null, null] as const);
       if (!needsEnsWrite({ usd: cur, at: at && /^\d+$/.test(at) ? Number(at) : null }, usd, now)) return;
       await deps.writeEnsRecord(node, usd);
       lastWrite.set(key, { usd, at: now });
+      outcome = "written";
     });
-    if (!acquired) console.info(`appraise: card ${key}'s ENS write is running on another instance, skipped`);
-  })().catch((e) => { console.error("appraise: ENS record write failed", e); }).finally(() => inFlight.delete(key));
-  inFlight.set(key, write);
+    if (!acquired) {
+      console.info(`appraise: card ${key}'s ENS write is running on another instance, skipped`);
+      return "locked";
+    }
+    return outcome;
+  })().catch((e): PublishOutcome => { console.error("appraise: ENS record write failed", e); return "failed"; }).finally(() => inFlight.delete(key));
+  inFlight.set(key, write.then(() => undefined));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((r) => { timer = setTimeout(() => { console.error(`appraise: ENS write for card ${key} still pending after ${ENS_WRITE_TIMEOUT_MS} ms`); r(); }, ENS_WRITE_TIMEOUT_MS); });
-  await Promise.race([write, timeout]);
+  const timeout = new Promise<PublishOutcome>((r) => { timer = setTimeout(() => { console.error(`appraise: ENS write for card ${key} still pending after ${ENS_WRITE_TIMEOUT_MS} ms`); r("timeout"); }, ENS_WRITE_TIMEOUT_MS); });
+  const outcome = await Promise.race([write, timeout]);
   clearTimeout(timer);
+  return outcome;
 }
 
 /** Signs a 10-minute appraisal of the card's live sharding at the market price per shard. */
