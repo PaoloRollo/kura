@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { AnalyticsDashboard } from "@/components/analytics-dashboard";
 import { DailyBars } from "@/components/charts/daily-bars";
 import type { AnalyticsView } from "@/lib/analytics-view";
+import type { RecentPanel } from "@/components/multibaas-recent";
+import { recentFromRows } from "@/lib/multibaas/recent";
 
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: { sepolia: { block: { number: 1000, timestamp: Math.floor(Date.now() / 1000) } } } }) }));
 
@@ -23,6 +25,7 @@ const view = (over: Partial<AnalyticsView> = {}): AnalyticsView => ({
   languages: [{ label: "English", count: 15 }],
   volume: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26"].map((date, i) => ({ date, value: i * 1000 })),
   empty: false,
+  source: "indexer",
   ...over,
 });
 
@@ -68,5 +71,50 @@ describe("Analytics dashboard (Y1eNn)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Table" }));
     expect(screen.getByText("Hour (UTC)")).toBeTruthy();
     expect(screen.getByText("2026-09-26 14:00")).toBeTruthy();
+  });
+
+  it("says where the aggregates came from, per range", () => {
+    const { rerender } = render(<AnalyticsDashboard view={view({ source: "multibaas" })} isLoading={false} feeBps={250} range="24h" onRange={() => {}} />);
+    expect(screen.getByText("Data: MultiBaas").getAttribute("title")).toMatch(/MultiBaas Event Queries/);
+    rerender(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="24h" onRange={() => {}} />);
+    expect(screen.getByText("Data: indexer").getAttribute("title")).toMatch(/unavailable or not configured.*Ponder indexer/);
+    rerender(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="7d" onRange={() => {}} />);
+    expect(screen.getByText("Data: indexer").getAttribute("title")).toMatch(/7d and All come from the Ponder indexer/);
+    expect(screen.queryByText(/24h via MultiBaas/)).toBeNull(); // MultiBaas unavailable: not claimed
+    expect(screen.queryByRole("region", { name: /Recent vault events/ })).toBeNull();
+  });
+
+  const now = Date.UTC(2026, 8, 26, 11, 30) / 1000;
+  const since = Date.UTC(2026, 8, 26, 9, 2) / 1000;
+  const panel = (rows: Partial<Parameters<typeof recentFromRows>[0]> = {}): RecentPanel => ({
+    recent: recentFromRows({ settles: [], redeems: [], mints: [], fees: [], ...rows }, { startBlock: 11_785_122, since, fromDeploy: false }),
+    names: new Map([["1", "Black Lotus"]]),
+    now,
+  });
+
+  it("shows MultiBaas's recent events newest first, with since when it indexes the vault", () => {
+    const tx = `0x${"ab".repeat(32)}`;
+    render(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="7d" onRange={() => {}} recent={panel({
+      settles: [{ at: new Date((now - 3600) * 1000).toISOString(), block: 11_785_500, tx, card: "1", raised: "3400000000", graduated: true }],
+      fees: [{ at: new Date((now - 3600) * 1000).toISOString(), block: 11_785_500, tx, card: "1", kind: "0", amount: "85000000" }],
+      mints: [{ at: new Date((now - 7200) * 1000).toISOString(), block: 11_785_200, tx: "0x1", card: "9" }],
+    })} />);
+    const region = screen.getByRole("region", { name: "Recent vault events · via MultiBaas" });
+    const items = within(region).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items[0]).toMatch(/^Fee to vault ·\s?Black Lotus\$85\.00 · sale/);
+    expect(items[1]).toMatch(/^Auction settled ·\s?Black Lotus\$3,400\.00 raised.*1h$/);
+    expect(items[2]).toMatch(/^Minted ·\s?Card #9card #9.*2h$/);
+    expect(within(region).getByText(/Indexed by MultiBaas since Sep 26, 09:02 UTC · 3 events held/)).toBeTruthy();
+    expect(within(region).getAllByRole("link", { name: /0xaba…bab/ })[0]!.getAttribute("href")).toBe(`https://sepolia.etherscan.io/tx/${tx}`);
+    expect(screen.getByText("24h via MultiBaas")).toBeTruthy();
+  });
+
+  it("says MultiBaas holds nothing yet, and when it takes over the 24h figures", () => {
+    render(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="24h" onRange={() => {}} recent={panel()} />);
+    const region = screen.getByRole("region", { name: "Recent vault events · via MultiBaas" });
+    expect(within(region).getByText("No vault events indexed by MultiBaas yet · since Sep 26, 09:02 UTC")).toBeTruthy();
+    expect(within(region).queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.getByText("MultiBaas from Sep 27, 09:00 UTC")).toBeTruthy();
+    expect(screen.getByText("Data: indexer").getAttribute("title")).toMatch(/once it has indexed a full day \(from Sep 27, 09:00 UTC\)/);
   });
 });

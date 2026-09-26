@@ -6,6 +6,7 @@ import type { LeaderboardRow } from "@/components/charts/leaderboard";
 import type { TreemapItem } from "@/components/charts/market-treemap";
 import type { ShareRow } from "@/components/charts/share-bars";
 import { PREMIUM_NEUTRAL, premiumLabel } from "@/lib/chart-colors";
+import type { MultibaasFigures } from "@/lib/multibaas/figures";
 import { currentSharding } from "@/lib/card-view";
 import { languageName } from "@/lib/explore";
 import { impliedValueUsdc, premium } from "@/lib/metrics";
@@ -95,6 +96,9 @@ export type AnalyticsTiles = {
   collectors: number;
 };
 
+/** Where raised, fees, mints and volume came from: MultiBaas Event Queries (24h only), or the Ponder indexer. */
+export type AnalyticsSource = "multibaas" | "indexer";
+
 export type AnalyticsView = {
   window: RangeWindow;
   tiles: AnalyticsTiles;
@@ -104,6 +108,7 @@ export type AnalyticsView = {
   volume: DailyPoint[];
   /** No card in the vault at all. */
   empty: boolean;
+  source: AnalyticsSource;
 };
 
 export const cardHref = (id: bigint) => `/app/cards/${id}?tab=analytics`;
@@ -200,6 +205,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     languages,
     volume: buckets.map((b) => ({ date: b.date, value: toUsd(b.volumeUsdc) })),
     empty: inVault.length === 0,
+    source: "indexer",
   };
 }
 
@@ -207,4 +213,22 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
 export function mintedSub(range: AnalyticsRange, n: number): string {
   if (range === "all") return `${n} minted`;
   return `+${n} ${range === "24h" ? "in 24h" : "this week"}`;
+}
+
+/**
+ * The view with MultiBaas's raised, fees, minted-in-range and volume (everything else stays the indexer's live state)
+ * for the 24h range, when the route answered figures for it. MultiBaas keeps 72 h of events from when the vault was
+ * linked, so 7d and All always stay the indexer's, and the route only answers 24h once it covers the whole window.
+ * An empty answer is a quiet day, not a broken query: MultiBaas holds no mint from before its link, so its total mint
+ * count says nothing about the vault's. Otherwise the view unchanged.
+ */
+export function withMultibaas(view: AnalyticsView, f: MultibaasFigures | null, range: AnalyticsRange): AnalyticsView {
+  if (!f || range !== "24h" || f.range !== range) return view;
+  return {
+    ...view,
+    source: "multibaas",
+    window: f.window,
+    tiles: { ...view.tiles, raised: f.raised, raisedAuctions: f.raisedAuctions, fees: f.fees, mintedInRange: f.mintedInRange },
+    volume: f.volume.map((b) => ({ date: b.date, value: toUsd(b.volumeUsdc) })),
+  };
 }

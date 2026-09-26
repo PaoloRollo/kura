@@ -13,6 +13,8 @@ import { MobilePageTitle } from "@/components/page-title";
 import { IndexerLoading } from "@/components/sync-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RANGES, mintedSub, type AnalyticsRange, type AnalyticsView } from "@/lib/analytics-view";
+import { fullDayCoveredAt } from "@/lib/multibaas/recent";
+import { RecentVaultEvents, utcTime, type RecentPanel } from "@/components/multibaas-recent";
 import { money } from "@/lib/format";
 import { Countdown } from "@/components/countdown";
 
@@ -24,6 +26,30 @@ function NotePanel({ title, subtitle, note, className }: { title: string; subtit
     <ChartFrame title={title} subtitle={subtitle} table={{ columns: [title], rows: [[note]] }} className={className}>
       <p className="py-8 text-center text-[12px] text-muted-foreground">{note}</p>
     </ChartFrame>
+  );
+}
+
+/**
+ * Which source the aggregates came from, under the KPI strip. 24h reads MultiBaas once it has indexed a full day; 7d
+ * and All always read the indexer (MultiBaas keeps 72 h of events). The title says what each one covers.
+ */
+function SourceNote({ view, range, recent }: { view: AnalyticsView; range: AnalyticsRange; recent: RecentPanel | null }) {
+  const multibaas = view.source === "multibaas";
+  const takeover = recent ? fullDayCoveredAt(recent.recent.coverage) : null;
+  const pending = !multibaas && range === "24h" && takeover != null && takeover > recent!.now;
+  const title = multibaas
+    ? "24h raised, fees, mints and volume from MultiBaas Event Queries; live state from the Ponder indexer"
+    : range !== "24h"
+      ? "MultiBaas keeps 72 h of events, so 7d and All come from the Ponder indexer; 24h reads MultiBaas once it has indexed a full day"
+      : pending
+        ? `MultiBaas answers the 24h figures once it has indexed a full day (from ${utcTime(takeover!)}); until then every figure comes from the Ponder indexer`
+        : "MultiBaas is unavailable or not configured; every figure comes from the Ponder indexer";
+  const extra = multibaas ? null : pending ? `MultiBaas from ${utcTime(takeover!)}` : range !== "24h" && recent ? "24h via MultiBaas" : null;
+  return (
+    <p className="-mt-3 text-right text-[11px] text-muted-foreground lg:-mt-5">
+      <span title={title}>{multibaas ? "Data: MultiBaas" : "Data: indexer"}</span>
+      {extra && <> · <span>{extra}</span></>}
+    </p>
   );
 }
 
@@ -56,14 +82,17 @@ function DashboardSkeleton() {
 
 /**
  * Collector · Analytics (Y1eNn 1440, WABQw 390): the heading and range control, the KPI strip, the market map, then
- * daily volume, richest premiums and cards by language. Phones get four tiles, no market map and no language panel.
+ * daily volume, richest premiums and cards by language, then MultiBaas's recent vault events when it answers. Phones
+ * get four tiles, no market map and no language panel.
  */
-export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange }: {
+export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange, recent = null }: {
   view: AnalyticsView | null;
   isLoading: boolean;
   feeBps: number | null;
   range: AnalyticsRange;
   onRange: (r: AnalyticsRange) => void;
+  /** MultiBaas's newest vault events; null while unavailable (the panel is left out). */
+  recent?: RecentPanel | null;
 }) {
   return (
     <div className="flex flex-col gap-6 lg:gap-8">
@@ -89,6 +118,7 @@ export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange }: 
       ) : (
         <>
           <KpiStrip items={tiles(view, range, feeBps)} />
+          <SourceNote view={view} range={range} recent={recent} />
           <div className="max-md:hidden">
             {view.empty ? (
               <NotePanel title="Market map" subtitle="Size is implied value. Color is premium or discount to the Scryfall price." note={EMPTY} />
@@ -111,6 +141,7 @@ export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange }: 
               {view.empty ? <NotePanel title="By language" subtitle="Cards in vault" note={EMPTY} /> : <ShareBars rows={view.languages} />}
             </div>
           </div>
+          {recent && <RecentVaultEvents {...recent} />}
         </>
       )}
     </div>

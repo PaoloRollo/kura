@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { usdcPerShardToQ96 } from "@kura/shared";
-import { analyticsView, mintedSub, parseRange, rangeWindow, type AnalyticsCard, type AnalyticsInput } from "@/lib/analytics-view";
+import { analyticsView, mintedSub, parseRange, rangeWindow, withMultibaas, type AnalyticsCard, type AnalyticsInput } from "@/lib/analytics-view";
+import type { MultibaasFigures } from "@/lib/multibaas/figures";
 
 const H = 3600;
 const D = 86_400;
@@ -139,5 +140,39 @@ describe("analytics view", () => {
     expect(mintedSub("7d", 4)).toBe("+4 this week");
     expect(mintedSub("24h", 1)).toBe("+1 in 24h");
     expect(mintedSub("all", 23)).toBe("23 minted");
+  });
+});
+
+const figures = (over: Partial<MultibaasFigures> = {}): MultibaasFigures => ({
+  range: "24h", window: { from: now - 23 * H, to: now, unit: "hour" }, raised: usd(9999), raisedAuctions: 3, fees: usd(250),
+  mintedInRange: 5, totalMints: 6, volume: [{ date: "2026-09-26T14", volumeUsdc: usd(42) }], ...over,
+});
+
+describe("withMultibaas", () => {
+  it("takes raised, fees, mints and volume from MultiBaas for 24h and keeps the indexer's live state", () => {
+    const base = analyticsView(input({ range: "24h" }));
+    const v = withMultibaas(base, figures(), "24h");
+    expect(v.source).toBe("multibaas");
+    expect(v.window).toEqual(figures().window);
+    expect(v.tiles).toEqual({ ...base.tiles, raised: usd(9999), raisedAuctions: 3, fees: usd(250), mintedInRange: 5 });
+    expect(v.volume).toEqual([{ date: "2026-09-26T14", value: 42 }]);
+    expect(v.treemap).toBe(base.treemap);
+    expect(v.premiums).toBe(base.premiums);
+  });
+
+  it("keeps the indexer's figures without MultiBaas, for 7d and All, and for another range's figures", () => {
+    const base = analyticsView(input());
+    expect(base.source).toBe("indexer");
+    expect(withMultibaas(base, null, "24h")).toBe(base);
+    expect(withMultibaas(base, figures({ range: "7d" }), "7d")).toBe(base);
+    expect(withMultibaas(base, figures({ range: "all" }), "all")).toBe(base);
+    expect(withMultibaas(base, figures(), "7d")).toBe(base);
+  });
+
+  it("reads a quiet day as a quiet day: MultiBaas holds no mint from before its link", () => {
+    const base = analyticsView(input({ range: "24h" }));
+    const v = withMultibaas(base, figures({ totalMints: 0, mintedInRange: 0, raised: 0n, raisedAuctions: 0, fees: 0n }), "24h");
+    expect(v.source).toBe("multibaas");
+    expect(v.tiles).toMatchObject({ raised: 0n, fees: 0n, mintedInRange: 0, cardsInVault: base.tiles.cardsInVault });
   });
 });

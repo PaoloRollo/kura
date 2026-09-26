@@ -6,8 +6,10 @@ import { usePonderQuery } from "@ponder/react";
 import { useIsFetching } from "@tanstack/react-query";
 import { useAttributes, useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
 import { useNow } from "@/hooks/use-now";
+import { useMultibaasFigures, useMultibaasRecent } from "@/hooks/use-multibaas-figures";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
-import { analyticsView, type AnalyticsRange, type AnalyticsView } from "@/lib/analytics-view";
+import type { RecentPanel } from "@/components/multibaas-recent";
+import { analyticsView, withMultibaas, type AnalyticsRange, type AnalyticsView } from "@/lib/analytics-view";
 import { schema, t, type Row } from "@/lib/ponder";
 
 type Db = Parameters<Parameters<typeof usePonderQuery>[0]["queryFn"]>[0];
@@ -37,12 +39,14 @@ const feesQuery = (db: Db) =>
   db.select({ amountUsdc: t(schema.feeEvents.amountUsdc), timestamp: t(schema.feeEvents.timestamp) }).from(t(schema.feeEvents)) as Promise<FeeRow[]>;
 const collectorsQuery = (db: Db) => db.select({ n: count() }).from(t(schema.bidderBindings)) as Promise<{ n: number }[]>;
 
-export type AnalyticsData = { view: AnalyticsView | null; isLoading: boolean; feeBps: number | null };
+export type AnalyticsData = { view: AnalyticsView | null; isLoading: boolean; feeBps: number | null; recent: RecentPanel | null };
 
 /**
  * The Analytics dashboard's live data: cards, shardings, active auctions and their latest checkpoints, settle and redeem
  * activities, fees and the World ID bindings count from the indexer; one batched attributes request (name, art) and
- * one batched market-price request for the sharded and auctioning cards; the live feeBps.
+ * one batched market-price request for the sharded and auctioning cards; the live feeBps. For 24h, raised, fees, mints
+ * and volume come from MultiBaas Event Queries when `/api/analytics/multibaas` answers (lib/analytics-view
+ * `withMultibaas`), the indexer's otherwise; and MultiBaas's newest vault events for the recent panel, when it answers.
  */
 export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const cards = usePonderQuery({ queryFn: cardsQuery });
@@ -54,6 +58,8 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const block = useIndexerBlock();
   const now = useNow(30_000);
   const feeBps = useVaultFeeBps();
+  const mb = useMultibaasFigures(range);
+  const mbRecent = useMultibaasRecent();
 
   const auctions = (active.data ?? []).map((a) => a.auction).sort();
   const auctionsKey = auctions.join(",");
@@ -78,8 +84,8 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const pricesFetching = useIsFetching({ queryKey: ["card-prices"] }) > 0;
   const pricesPending = pricesFetching && mapped.some((c) => !markets.has(c.id.toString()));
 
-  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || checkpoints.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || pricesPending || block == null;
-  const view = isLoading || block == null ? null : analyticsView({
+  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || checkpoints.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || pricesPending || mb.pending || block == null;
+  const base = isLoading || block == null ? null : analyticsView({
     cards: cardRows,
     shardings: shardings.data ?? [],
     active: active.data ?? [],
@@ -93,5 +99,12 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
     now,
     range,
   });
-  return { view, isLoading, feeBps };
+  const view = base && withMultibaas(base, mb.figures, range);
+  // Names for MultiBaas's events: every card ever minted (released included), by id.
+  const names = useMemo(
+    () => new Map(cardRows.map((c) => [c.id.toString(), attributes[c.scryfallId]?.name || c.label])),
+    [cardRows, attributes],
+  );
+  const recent = mbRecent && { recent: mbRecent, names, now };
+  return { view, isLoading, feeBps, recent };
 }
