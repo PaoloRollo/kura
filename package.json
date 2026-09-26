@@ -2,13 +2,23 @@
   "name": "kura",
   "private": true,
   "packageManager": "pnpm@10.25.0",
-  "engines": { "node": ">=22 <25" },
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "test": "pnpm -r test",
     "contracts:build": "pnpm --dir contracts exec forge build",
     "contracts:test": "pnpm --dir contracts exec forge test",
-    "sync:deployments": "node scripts/sync-deployments.mjs"
+    "sync:deployments": "node scripts/sync-deployments.mjs",
+    "rehearse": "tsx scripts/rehearse.ts"
+  },
+  "devDependencies": {
+    "@kura/shared": "workspace:*",
+    "@ponder/client": "^0.17.11",
+    "tsx": "^4.23.15",
+    "viem": "^2.56.9",
+    "vitest": "^3.2.7"
   }
 }
