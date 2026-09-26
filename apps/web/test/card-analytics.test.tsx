@@ -51,16 +51,16 @@ describe("CardAnalytics", () => {
 
   it("shows the settled card as in LqnA2", async () => {
     renderAnalytics(cardFixture("sharded", NOW));
-    expect(kpi("Implied value").getByText("$27,392")).toBeTruthy();
+    expect(kpi("Implied value").getByText("$27,392.00")).toBeTruthy();
     expect(kpi("Premium").getByText("+9.6%")).toBeTruthy();
     expect(kpi("Concentration").getByText("0.67")).toBeTruthy();
     expect(kpi("To redemption").getByText("eligible")).toBeTruthy();
     expect(kpi("Fill rate").getByText("100%")).toBeTruthy();
     expect(kpi("Fill rate").getByText("3 of 3 shards sold")).toBeTruthy();
     expect(screen.getByText(/Market \$1,562\.50 \/ shard, flat over the window/)).toBeTruthy();
-    // The lowest level still in the money ($1,760) is marked; the note gives the clearing itself.
-    expect(document.querySelector("[data-clearing]")?.textContent).toContain("$1,760");
-    expect(screen.getByText("Clears at $1,712 where demand covers the 3 shards for sale.")).toBeTruthy();
+    // The lowest level still in the money ($1,760.00) is marked; the note gives the clearing itself.
+    expect(document.querySelector("[data-clearing]")?.textContent).toContain("$1,760.00");
+    expect(screen.getByText("Clears at $1,712.00 where demand covers the 3 shards for sale.")).toBeTruthy();
     expect(screen.getByText("$128.40", { selector: "dd.text-kin" })).toBeTruthy();
     expect(await screen.findByText("2.5% of proceeds, paid at settle and on buyout.")).toBeTruthy();
   });
@@ -98,7 +98,7 @@ describe("CardAnalytics", () => {
 
   it("shows the latest sharding's history after a buyout, implied n/a", () => {
     const v = view("whole-after-buyout");
-    expect(tile(v, "Implied value")).toMatchObject({ value: "n/a", sub: "bought out at $1,712/shard" });
+    expect(tile(v, "Implied value")).toMatchObject({ value: "n/a", sub: "bought out at $1,712.00/shard" });
     expect(v.price.marks.map((m) => m.label)).toEqual(expect.arrayContaining(["S", "B", "A"]));
     expect(v.fees).toMatchObject({ sale: 128_400_000n, buyout: 128_400_000n, total: 256_800_000n });
   });

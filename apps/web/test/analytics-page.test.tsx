@@ -30,7 +30,7 @@ describe("Analytics dashboard (Y1eNn)", () => {
   it("shows the six tiles with the design's copy and the live fee", () => {
     render(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="7d" onRange={() => {}} />);
     expect(screen.getByRole("heading", { name: "The vault, live" })).toBeTruthy();
-    for (const text of ["$412,860", "$96,420", "$2,410", "+4 this week", "across 11 auctions", "2.5% of sales + buyouts", "World ID, one per human"]) {
+    for (const text of ["$412,860.00", "$96,420.00", "$2,410.00", "+4 this week", "across 11 auctions", "2.5% of sales + buyouts", "World ID, one per human"]) {
       expect(screen.getByText(text)).toBeTruthy();
     }
     // 21 blocks at 12 s from the indexer head, ticking from there.
@@ -51,7 +51,7 @@ describe("Analytics dashboard (Y1eNn)", () => {
     const zero = { cardsInVault: 0, mintedInRange: 0, valueLocked: 0n, raised: 0n, raisedAuctions: 0, fees: 0n, liveAuctions: 0, nextEndsIn: null, nextEndBlock: null, collectors: 0 };
     render(<AnalyticsDashboard view={view({ empty: true, tiles: zero, treemap: [], premiums: [], languages: [] })} isLoading={false} feeBps={null} range="7d" onRange={() => {}} />);
     expect(screen.getAllByText("Nothing in the vault yet.")).toHaveLength(4);
-    expect(screen.getAllByText("$0").length).toBe(3);
+    expect(screen.getAllByText("$0.00").length).toBe(3);
     expect(screen.getByText("none running")).toBeTruthy();
   });
 

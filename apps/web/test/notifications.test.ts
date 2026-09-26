@@ -47,7 +47,7 @@ describe("deriveNotifications", () => {
       ],
     }));
     expect(rows).toEqual([{
-      id: `outbid-${a(0x201)}`, kind: "outbid", cardId: 1n, title: "You were outbid on Black Lotus", body: "Clearing $1,772 passed your $1,760 max",
+      id: `outbid-${a(0x201)}`, kind: "outbid", cardId: 1n, title: "You were outbid on Black Lotus", body: "Clearing $1,772.00 passed your $1,760.00 max",
       time: NOW - 120, href: "/app/cards/1?tab=auction", action: "Raise bid",
     }]);
   });
@@ -69,7 +69,7 @@ describe("deriveNotifications", () => {
       activities: [{ id: "r", kind: "redeem", cardId: 2n, actor: AIKO, amount: 0n, meta: { shardToken: s.shardToken }, timestamp: NOW - 840 }],
     });
     expect(deriveNotifications(base)).toEqual([{
-      id: `payout-${s.shardToken}`, kind: "payout", cardId: 2n, title: "Payout ready: $1,840", body: "Time Walk was bought out by aiko.kura.eth",
+      id: `payout-${s.shardToken}`, kind: "payout", cardId: 2n, title: "Payout ready: $1,840.00", body: "Time Walk was bought out by aiko.kura.eth",
       time: NOW - 840, href: "/app/cards/2", action: "Claim",
     }]);
     // A claimed payout is not "ready".
@@ -84,7 +84,7 @@ describe("deriveNotifications", () => {
       checkpoints: [{ auction: a(0x203), blockNumber: 990n, clearingPriceQ96: q(662), timestamp: NOW - 100 }],
     }));
     expect(rows).toEqual([{
-      id: `ends-${a(0x203)}`, kind: "ends-soon", cardId: 3n, title: "Ancestral Recall ends in 10 minutes", body: "You're in at $662 per shard",
+      id: `ends-${a(0x203)}`, kind: "ends-soon", cardId: 3n, title: "Ancestral Recall ends in 10 minutes", body: "You're in at $662.00 per shard",
       time: NOW, href: "/app/cards/3?tab=auction",
     }]);
     // Anchored on chain time: a lagging indexer (same block, later clock) keeps the row's time.

@@ -110,7 +110,7 @@ describe("format", () => {
   });
 
   it("groups money and fixes shard decimals", () => {
-    expect(money(1_712_000_000n, 0)).toBe("$1,712");
+    expect(money(1_712_000_000n, 0)).toBe("$1,712.00");
     expect(money(27_386_400_000n)).toBe("$27,386.40");
     expect(money(2_000_000_000n)).toBe("$2,000.00");
     expect(shardsFixed(13n * 10n ** 18n)).toBe("13.0");

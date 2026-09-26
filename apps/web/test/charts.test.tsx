@@ -52,12 +52,12 @@ describe("DemandBars", () => {
   it("lists levels highest first and marks the clearing row in s2", () => {
     const { container } = render(<DemandBars points={points} clearing={1712} forSale={3} />);
     const rows = container.querySelectorAll("li");
-    expect([...rows].map((r) => r.firstElementChild?.textContent)).toEqual(["$1,800", "$1,712", "$1,700"]);
+    expect([...rows].map((r) => r.firstElementChild?.textContent)).toEqual(["$1,800.00", "$1,712.00", "$1,700.00"]);
     const clearing = container.querySelector("li[data-clearing]")!;
     expect(clearing.firstElementChild?.className).toContain("text-s2");
     expect(clearing.querySelector(".bg-s2")).toBeTruthy();
     expect(container.querySelectorAll(".bg-s2")).toHaveLength(1);
-    expect(screen.getByText("Clears at $1,712 where demand covers the 3 shards for sale.")).toBeTruthy();
+    expect(screen.getByText("Clears at $1,712.00 where demand covers the 3 shards for sale.")).toBeTruthy();
   });
 
   it("windows long curves around the clearing level", () => {

@@ -117,7 +117,7 @@ describe("liveToast", () => {
   it("a bid on my card, with the bidder, amount and max", () => {
     expect(liveToast(bid(), ctx())).toEqual({
       title: "New bid on your Black Lotus",
-      body: "kenji.kura.eth · $2,568 up to $1,760",
+      body: "kenji.kura.eth · $2,568.00 up to $1,760.00",
       tone: "shu",
       icon: "bid",
       action: { label: "View", href: "/app/cards/1?tab=auction" },
@@ -128,14 +128,14 @@ describe("liveToast", () => {
 
   it("a settlement: shards sold and raised, or reserve not met", () => {
     const settled: LiveEvent = { kind: "settled", cardId: 1n, shardToken: "0xt" as Address, clearingPriceQ96: usdcPerShardToQ96(usd(1712)), raisedUsdc: usd(5136), feeUsdc: usd(128.4), graduated: true, txHash: hash(20), logIndex: 0 };
-    expect(liveToast(settled, ctx())).toMatchObject({ title: "Your auction settled", body: "3 Black Lotus shards sold · $5,136", tone: "good", icon: "settled" });
+    expect(liveToast(settled, ctx())).toMatchObject({ title: "Your auction settled", body: "3 Black Lotus shards sold · $5,136.00", tone: "good", icon: "settled" });
     expect(liveToast({ ...settled, cardId: 2n, graduated: false }, ctx())).toMatchObject({ title: "Auction settled", body: "Reserve not met · bids refunded" });
   });
 
   it("a buyout: my payout when I hold shards, else the price", () => {
     const redeemed: LiveEvent = { kind: "redeemed", cardId: 2n, shardToken: "0xt" as Address, redeemer: KENJI as Address, buyoutPerShard: usd(1840), payoutUsdc: 0n, feeUsdc: 0n, txHash: hash(30), logIndex: 0 };
-    expect(liveToast(redeemed, ctx())).toMatchObject({ title: "Time Walk was bought out", body: "by kenji.kura.eth at $1,840/shard", tone: "kin", action: { label: "View", href: "/app/cards/2" } });
-    expect(liveToast(redeemed, ctx({ balance: () => 10n ** 18n }))).toMatchObject({ body: "Payout ready: $1,840 · by kenji.kura.eth", action: { label: "Claim", href: "/app/cards/2" } });
+    expect(liveToast(redeemed, ctx())).toMatchObject({ title: "Time Walk was bought out", body: "by kenji.kura.eth at $1,840.00/shard", tone: "kin", action: { label: "View", href: "/app/cards/2" } });
+    expect(liveToast(redeemed, ctx({ balance: () => 10n ** 18n }))).toMatchObject({ body: "Payout ready: $1,840.00 · by kenji.kura.eth", action: { label: "Claim", href: "/app/cards/2" } });
   });
 
   it("helpers: the live key ignores ended auctions; label names", () => {
@@ -185,7 +185,7 @@ describe("useLiveEvents", () => {
     const log = { args: { id: 1n, owner: KENJI, priceQ96: usdcPerShardToQ96(usd(1760)), amount: usd(2568) }, transactionHash: hash(40), logIndex: 2 };
     f.calls[0]!.onLogs([log, log]);
     expect(state.notify).toHaveBeenCalledTimes(1);
-    expect(state.notify!.mock.calls[0]![0]).toMatchObject({ title: "New bid on your Black Lotus", body: "kenji.kura.eth · $2,568 up to $1,760", tone: "shu", duration: 6000 });
+    expect(state.notify!.mock.calls[0]![0]).toMatchObject({ title: "New bid on your Black Lotus", body: "kenji.kura.eth · $2,568.00 up to $1,760.00", tone: "shu", duration: 6000 });
   });
 
   it("does nothing without NEXT_PUBLIC_ALCHEMY_WS_URL", () => {

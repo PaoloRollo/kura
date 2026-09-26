@@ -39,7 +39,7 @@ describe("CardPageView", () => {
     expect(screen.getByRole("link", { name: /Shard this card/ }).getAttribute("href")).toBe("/app/cards/1/shard");
     expect(screen.getByRole("button", { name: /Collect at the counter/ })).toBeTruthy();
     expect(screen.getByText("You own")).toBeTruthy();
-    expect(screen.getByText("$25,000")).toBeTruthy();
+    expect(screen.getByText("$25,000.00")).toBeTruthy();
     expect(screen.getByText("Scryfall USD · nonfoil · EN printing · NM ×1.00")).toBeTruthy();
   });
 
@@ -175,7 +175,7 @@ describe("CardPageView", () => {
   it("shows the bought-out sharding's auction as history", () => {
     renderCard("whole-after-buyout", { tab: "auction" });
     expect(screen.getByText("Past auction · history")).toBeTruthy();
-    expect(screen.getByText("per shard · paid $5,136")).toBeTruthy();
+    expect(screen.getByText("per shard · paid $5,136.00")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open the auction" })).toBeNull();
   });
 

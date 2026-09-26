@@ -84,7 +84,7 @@ describe("ShardWizard", () => {
     toPricing();
 
     expect(screen.getByText("2 of 3")).toBeTruthy();
-    expect(screen.getByText("Scryfall market $25,000")).toBeTruthy();
+    expect(screen.getByText("Scryfall market $25,000.00")).toBeTruthy();
     expect(input("Floor price per shard").value).toBe("781.25");
     expect(input("Price tick").value).toBe("7.8125");
     expect(screen.getByLabelText("Reserve (total, optional)")).toBeTruthy();
@@ -111,7 +111,7 @@ describe("ShardWizard", () => {
     fireEvent.change(input("Floor price per shard"), { target: { value: "1,200" } });
     act(() => handle.forward());
     expect(screen.getByText("3 of 3")).toBeTruthy();
-    expect(screen.getByText("$1,200 · $12")).toBeTruthy();
+    expect(screen.getByText("$1,200.00 · $12.00")).toBeTruthy();
     // The Nav row's back chevron is the same history step.
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByText("2 of 3")).toBeTruthy();
@@ -233,8 +233,8 @@ describe("ShardWizard", () => {
 });
 
 describe("price", () => {
-  it("shows whole dollars, cents, or every digit that carries value", () => {
-    expect(price(1_200_000_000n)).toBe("$1,200");
+  it("shows two decimals, or every digit that carries value", () => {
+    expect(price(1_200_000_000n)).toBe("$1,200.00");
     expect(price(781_250_000n)).toBe("$781.25");
     expect(price(7_812_500n)).toBe("$7.8125");
     expect(price(9_360_039_000n)).toBe("$9,360.039");

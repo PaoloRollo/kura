@@ -39,9 +39,9 @@ describe("formatting", () => {
     expect(countdownSeconds(-5)).toBe("00:00");
   });
 
-  it("keeps cents under $100 so small bids don't read $0", () => {
+  it("shows cents on every amount so small bids don't read $0", () => {
     expect(moneyShort(220_000n)).toBe("$0.22");
     expect(moneyShort(17_500_000n)).toBe("$17.50");
-    expect(moneyShort(1_712_000_000n)).toBe("$1,712");
+    expect(moneyShort(1_712_000_000n)).toBe("$1,712.00");
   });
 });
