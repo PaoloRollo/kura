@@ -16,11 +16,11 @@ The seeded collectors from `pnpm rehearse --broadcast` fill the vault's history 
 
 | State | Card | Id |
 |---|---|---|
-| Live auction with one pre-seeded bid | A, re-sharded after its buyout | `<from scripts/seed/sepolia.json>` |
-| Sharded after a graduated auction | B | `<from scripts/seed/sepolia.json>` |
-| Reserve not met, bids refunded | C | `<from scripts/seed/sepolia.json>` |
-| Released at the counter | D | `<from scripts/seed/sepolia.json>` |
-| Whole, owned by `seedaiko` | E | `<from scripts/seed/sepolia.json>` |
+| Live auction with one pre-seeded bid | A, Lightning Bolt, re-sharded after its buyout | #3 `lightning-bolt-4ed-3` |
+| Sharded after a graduated auction | B, Counterspell | #4 `counterspell-a25-4` |
+| Reserve not met, bids refunded | C, Llanowar Elves | #5 `llanowar-elves-btd-5` |
+| Released at the counter | D, Dark Ritual | #6 `dark-ritual-sum-6` |
+| Whole, owned by `seedaiko` | E, Swords to Plowshares | #7 `swords-to-plowshares-mb2-7` |
 
 ## Before you start
 
@@ -51,7 +51,7 @@ Say: the physical card stays in the vendor's vault; its twin is an ERC-721 with 
 2. Approve and bid (USDC → Permit2, Permit2 → auction, bid). The bid lands; the big screen shows the toast and the chart ticks.
 3. Refusal: sign in on phone 2 with another Kura account and verify with the same World ID. The refusal sheet explains that this World ID is already linked to another wallet. **Screen: `p5hrR` Bid · World ID refused.**
 
-**If the World ID step fails (30 seconds):** say "World's staging verifier is down, so here is the same auction with a bid placed earlier". Open the fallback **live auction, card A**, at `https://kuravault.xyz/app/cards/<from scripts/seed/sepolia.json>?tab=auction`. `seedyuki.kura.eth` has a bid on it, placed through the same `BidGateHook` with a signed HUMAN ticket. Show the bid in the order book and the Activity tab, then go on with step 4 on card A's history.
+**If the World ID step fails (30 seconds):** say "World's staging verifier is down, so here is the same auction with a bid placed earlier". Open the fallback **live auction, card A** (#3, Lightning Bolt), at `https://kuravault.xyz/app/cards/3?tab=auction`. `seedyuki.kura.eth` has a bid on it, placed through the same `BidGateHook` with a signed HUMAN ticket. Show the bid in the order book and the Activity tab, then go on with step 4 on card A's history.
 
 ## 4. Settle, exit and claim
 
