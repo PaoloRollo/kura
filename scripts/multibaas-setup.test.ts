@@ -210,3 +210,25 @@ describe("runSetup against a fake MultiBaas", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("past logs depth", () => {
+  it("starts the sync at the deepest block the plan allows when the deploy block is out of reach", async () => {
+    const { clampStartingBlock, desiredState } = await import("./multibaas-setup");
+    const lines: string[] = [];
+    const want = desiredState(deployments, null);
+    clampStartingBlock(want, 11_785_206, 100, (l) => lines.push(l));
+    expect(want.address.startingBlock).toBe("-95");
+    expect(lines[0]).toMatch(/at most 100 blocks back/);
+  });
+
+  it("keeps the deploy block when it is within reach or the plan is unlimited", async () => {
+    const { clampStartingBlock, desiredState } = await import("./multibaas-setup");
+    const want = desiredState(deployments, null);
+    const from = want.address.startingBlock;
+    clampStartingBlock(want, Number(from) + 50, 100, () => {});
+    expect(want.address.startingBlock).toBe(from);
+    clampStartingBlock(want, Number(from) + 1_000_000, null, () => {});
+    expect(want.address.startingBlock).toBe(from);
+  });
+});
+

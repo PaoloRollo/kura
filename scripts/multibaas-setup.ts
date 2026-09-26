@@ -247,6 +247,30 @@ function secretLines(secret: string | undefined): string[] {
  * The whole CLI after argument and env parsing, so tests can drive it with a fake fetch. Answers the exit code.
  * Only `--apply` gets the caller's fetch as is; every other mode goes through `readOnly`.
  */
+/** The plan's `past_logs_max_depth` (how far back event sync may start), or null when unlimited or unreadable. */
+async function pastLogsDepth(io: Io): Promise<number | null> {
+  const plan = await mbRequest<{ limits?: { name: string; limit: number | null }[] }>(io.cfg, "GET", "/plan", { fetch: io.fetch, timeoutMs: 15_000 }).catch(() => null);
+  const limit = plan?.limits?.find((l) => l.name === "past_logs_max_depth")?.limit;
+  return typeof limit === "number" && limit > 0 ? limit : null;
+}
+
+/** Blocks of slack under the plan's depth, since the chain moves on between this read and the link request. */
+export const DEPTH_MARGIN = 5;
+
+/**
+ * Plans with a `past_logs_max_depth` refuse a link whose sync starts further back than that (403). When the deploy
+ * block is out of reach, start from the deepest block the plan allows (relative, resolved by MultiBaas at link time):
+ * earlier events are then only in the Ponder indexer, which the dashboard falls back to.
+ */
+export function clampStartingBlock(want: Desired, latest: number | undefined, depth: number | null, log: (line: string) => void): void {
+  if (depth == null || latest == null) return;
+  const from = Number(want.address.startingBlock);
+  if (latest - from <= depth - DEPTH_MARGIN) return;
+  const back = Math.max(1, depth - DEPTH_MARGIN);
+  log(`note: this MultiBaas plan syncs at most ${depth} blocks back; the deploy block ${from} is ${latest - from} back, so events sync from ${back} blocks before the latest (earlier history stays in the Ponder indexer)`);
+  want.address.startingBlock = `-${back}`;
+}
+
 export async function runSetup(
   args: Args,
   deps: { cfg: MbConfig; deployments: unknown; fetch?: MbFetch; log?: (line: string) => void; error?: (line: string) => void },
@@ -258,6 +282,7 @@ export async function runSetup(
   const want = desiredState(deps.deployments, args.webhookBase);
   const status = await mbRequest<{ chainID: number; blockNumber?: number }>(io.cfg, "GET", "/chains/ethereum/status", { fetch: io.fetch, timeoutMs: 15_000 });
   if (status?.chainID !== SEPOLIA) throw new Error(`MultiBaas is on chain ${status?.chainID}, expected Sepolia (${SEPOLIA})`);
+  clampStartingBlock(want, status.blockNumber, await pastLogsDepth(io), log);
   if (args.verify) {
     await verify(io, want, status.blockNumber);
     return 0;
