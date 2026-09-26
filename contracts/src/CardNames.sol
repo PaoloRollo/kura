@@ -6,13 +6,17 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ICardNames} from "./interfaces/ICardNames.sol";
-import {IENSRegistryV2, IENSResolverV2, IVerifiableFactory} from "./interfaces/IENSv2.sol";
+import {EnsGrant, IENSRegistryV2, IENSResolverV2, IVerifiableFactory} from "./interfaces/IENSv2.sol";
 import {EnsRoles} from "./libraries/EnsRoles.sol";
 import {DnsName} from "./libraries/DnsName.sol";
 
 /// @notice ENSv2 adapter for Kura. Issues one non-transferable subname per card under the vault's name, keeps its
 /// records in sync with vault state, delegates scoped record rights to the vendor and the appraiser agent, revokes the
 /// name on physical release, and lets collectors claim a dash-free handle with their own permissioned resolver.
+/// @dev PermissionedResolver records are written by DNS-encoded name. Its per-argument rights are keyed by the text key
+/// alone, so the vendor's `condition`/`grade` and the appraiser's `appraisal.usd`/`appraisal.at` rights cover every
+/// name on the shared resolver (all of them card names or the appraiser's own name) and are granted once, on the first
+/// card registered after the parties are set.
 contract CardNames is ICardNames, IERC1155Receiver, Ownable {
     using Strings for uint256;
     using Strings for address;
@@ -48,6 +52,8 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
     mapping(uint256 cardId => string label) public cardLabels;
     mapping(address collector => string label) public collectorLabels;
     mapping(bytes32 labelHash => bool) public reserved;
+    /// @notice Whether the current vendor and appraiser hold their per-key text rights on the shared resolver.
+    bool public partiesGranted;
 
     event CardNamed(uint256 indexed cardId, string label, bytes32 node);
     event CardNameRevoked(uint256 indexed cardId, string label);
@@ -94,11 +100,13 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
         emit VaultUpdated(v);
     }
 
-    /// @notice Set the vendor and appraiser agent that receive scoped record rights on names registered from now on.
-    /// Owner only; rights already granted on existing names are unchanged.
+    /// @notice Set the vendor and appraiser agent that hold scoped record rights on card names. Owner only. Once rights
+    /// have been granted, the previous parties lose theirs and the new ones receive them in the same call.
     function setParties(address vendor_, address appraiser_) external onlyOwner {
+        if (partiesGranted) _setPartyRoles(false);
         vendor = vendor_;
         appraiser = appraiser_;
+        if (partiesGranted) _setPartyRoles(true);
         emit PartiesUpdated(vendor_, appraiser_);
     }
 
@@ -129,26 +137,25 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
     {
         registry.register(label, address(this), address(0), address(resolver), EnsRoles.CARD_TOKEN_ROLES, _expiry());
 
-        bytes32 node = nodeOf(label);
+        bytes memory dns = dnsOf(label);
         bytes[] memory calls = new bytes[](8);
-        calls[0] = abi.encodeCall(IENSResolverV2.setText, (node, "avatar", r.imageUrl));
-        calls[1] = abi.encodeCall(IENSResolverV2.setText, (node, "description", r.description));
-        calls[2] = abi.encodeCall(IENSResolverV2.setText, (node, "url", r.url));
-        calls[3] = abi.encodeCall(IENSResolverV2.setText, (node, "scryfall", r.scryfallId));
-        calls[4] = abi.encodeCall(IENSResolverV2.setText, (node, "condition", r.condition));
-        calls[5] = abi.encodeCall(IENSResolverV2.setText, (node, "language", r.language));
-        calls[6] = abi.encodeCall(IENSResolverV2.setText, (node, "vault.state", "whole"));
-        calls[7] = abi.encodeCall(IENSResolverV2.setAddr, (node, owner));
+        calls[0] = _text(dns, "avatar", r.imageUrl);
+        calls[1] = _text(dns, "description", r.description);
+        calls[2] = _text(dns, "url", r.url);
+        calls[3] = _text(dns, "scryfall", r.scryfallId);
+        calls[4] = _text(dns, "condition", r.condition);
+        calls[5] = _text(dns, "language", r.language);
+        calls[6] = _text(dns, "vault.state", "whole");
+        calls[7] = _addrCall(dns, owner);
         resolver.multicall(calls);
 
-        bytes memory dns = dnsOf(label);
-        resolver.authorizeTextRoles(dns, "condition", vendor, true);
-        resolver.authorizeTextRoles(dns, "grade", vendor, true);
-        resolver.authorizeTextRoles(dns, "appraisal.usd", appraiser, true);
-        resolver.authorizeTextRoles(dns, "appraisal.at", appraiser, true);
+        if (!partiesGranted) {
+            partiesGranted = true;
+            _setPartyRoles(true);
+        }
 
         cardLabels[cardId] = label;
-        emit CardNamed(cardId, label, node);
+        emit CardNamed(cardId, label, nodeOf(label));
     }
 
     /// @notice Mirror the vault lifecycle state, shard token, auction and clearing price into the card records. Vault only.
@@ -159,19 +166,18 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
         address auction,
         uint256 clearingUsdcPerShard
     ) external onlyVault {
-        bytes32 node = _nodeOfCard(cardId);
+        bytes memory dns = _dnsOfCard(cardId);
         bytes[] memory calls = new bytes[](4);
-        calls[0] = abi.encodeCall(IENSResolverV2.setText, (node, "vault.state", state));
-        calls[1] = abi.encodeCall(IENSResolverV2.setText, (node, "vault.shards", _addrString(shardToken)));
-        calls[2] = abi.encodeCall(IENSResolverV2.setText, (node, "vault.auction", _addrString(auction)));
-        calls[3] =
-            abi.encodeCall(IENSResolverV2.setText, (node, "vault.clearing_usdc", clearingUsdcPerShard.toString()));
+        calls[0] = _text(dns, "vault.state", state);
+        calls[1] = _text(dns, "vault.shards", _addrString(shardToken));
+        calls[2] = _text(dns, "vault.auction", _addrString(auction));
+        calls[3] = _text(dns, "vault.clearing_usdc", clearingUsdcPerShard.toString());
         resolver.multicall(calls);
     }
 
     /// @notice Point the card name's address record at its current beneficial owner. Vault only.
     function setOwnerRecord(uint256 cardId, address owner) external onlyVault {
-        resolver.setAddr(_nodeOfCard(cardId), owner);
+        resolver.setAddress(_dnsOfCard(cardId), EnsRoles.COIN_TYPE_ETH, abi.encodePacked(owner));
     }
 
     /// @notice Unregister the card name on physical release. Vault only.
@@ -192,20 +198,21 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
         if (!isAvailable(label)) revert HandleTaken();
         if (bytes(collectorLabels[msg.sender]).length != 0) revert AlreadyNamed();
 
-        bytes32 node = nodeOf(label);
         // The resolver's initializer runs its setter calls without permission checks, so the address record is
         // written during deployment and the collector is the sole admin from the first block. CardNames holds no role.
+        EnsGrant[] memory grants = new EnsGrant[](1);
+        grants[0] = EnsGrant({account: msg.sender, roleBitmap: EnsRoles.ALL_ROLES});
         bytes[] memory setters = new bytes[](1);
-        setters[0] = abi.encodeCall(IENSResolverV2.setAddr, (node, msg.sender));
+        setters[0] = _addrCall(dnsOf(label), msg.sender);
         collectorResolver = factory.deployProxy(
             resolverImpl,
             uint256(keccak256(abi.encode(label, msg.sender))),
-            abi.encodeCall(IENSResolverV2.initialize, (msg.sender, EnsRoles.ALL_ROLES, setters))
+            abi.encodeCall(IENSResolverV2.initialize, (grants, setters))
         );
 
         registry.register(label, msg.sender, address(0), collectorResolver, EnsRoles.COLLECTOR_TOKEN_ROLES, _expiry());
         collectorLabels[msg.sender] = label;
-        emit CollectorNamed(msg.sender, label, collectorResolver, node);
+        emit CollectorNamed(msg.sender, label, collectorResolver, nodeOf(label));
     }
 
     // ---------------------------------------------------------------- ERC1155 receiver
@@ -238,10 +245,35 @@ contract CardNames is ICardNames, IERC1155Receiver, Ownable {
         return uint64(block.timestamp) + NAME_TTL;
     }
 
-    function _nodeOfCard(uint256 cardId) internal view returns (bytes32) {
+    function _dnsOfCard(uint256 cardId) internal view returns (bytes memory) {
         string memory label = cardLabels[cardId];
         if (bytes(label).length == 0) revert UnknownCard();
-        return nodeOf(label);
+        return dnsOf(label);
+    }
+
+    function _text(bytes memory dns, string memory key, string memory value) internal pure returns (bytes memory) {
+        return abi.encodeCall(IENSResolverV2.setText, (dns, key, value));
+    }
+
+    function _addrCall(bytes memory dns, address a) internal pure returns (bytes memory) {
+        return abi.encodeCall(IENSResolverV2.setAddress, (dns, EnsRoles.COIN_TYPE_ETH, abi.encodePacked(a)));
+    }
+
+    /// @dev Grant (or revoke) the vendor's condition/grade and the appraiser's appraisal.* text rights.
+    function _setPartyRoles(bool grant) internal {
+        _setKeyRole("condition", vendor, grant);
+        _setKeyRole("grade", vendor, grant);
+        _setKeyRole("appraisal.usd", appraiser, grant);
+        _setKeyRole("appraisal.at", appraiser, grant);
+    }
+
+    function _setKeyRole(string memory key, address account, bool grant) internal {
+        if (account == address(0)) return;
+        if (grant) {
+            resolver.grantSetterRoles(_text("", key, ""), account);
+        } else {
+            resolver.revokeRoles(EnsRoles.textResource(key), EnsRoles.RES_SET_TEXT, account);
+        }
     }
 
     function _addrString(address a) internal pure returns (string memory) {
