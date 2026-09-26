@@ -1,0 +1,35 @@
+import { NextResponse } from "next/server";
+import { MultibaasError } from "@kura/shared";
+import { parseRange } from "@/lib/analytics-view";
+import { jsonError } from "@/lib/http";
+import { MbShapeError, toWire } from "@/lib/multibaas/figures";
+import { MB_RETENTION_HOURS, cachedMultibaasFigures, isMultibaasRange, multibaasConfig } from "@/lib/multibaas/server";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * Public: the analytics dashboard's MultiBaas figures for `?range=24h` (lib/multibaas/figures: raised, fees, mints,
+ * volume, amounts as decimal strings). 503 UNCONFIGURED without MULTIBAAS_URL / MULTIBAAS_API_KEY; 503 RANGE_UNSUPPORTED
+ * for 7d and all, without calling MultiBaas (its plan keeps only the last MB_RETENTION_HOURS of events); 503
+ * UNAVAILABLE when MultiBaas is down, slow (over MULTIBAAS_BUDGET_MS in all), on another chain, unlinked, still
+ * syncing, behind, missing a query, or answers rows of another shape (logged). The dashboard then shows the indexer's
+ * figures. The API key never leaves the server.
+ */
+export async function GET(req: Request) {
+  const range = parseRange(new URL(req.url).searchParams.get("range"));
+  const cfg = multibaasConfig();
+  if (!cfg) return jsonError("UNCONFIGURED", "MultiBaas is not configured", 503);
+  if (!isMultibaasRange(range))
+    return jsonError("RANGE_UNSUPPORTED", `MultiBaas keeps the last ${MB_RETENTION_HOURS} h of events; the ${range} range comes from the indexer`, 503);
+  try {
+    const figures = await cachedMultibaasFigures(cfg, range);
+    return NextResponse.json(toWire(figures), { headers: { "cache-control": "no-store" } });
+  } catch (e) {
+    if (e instanceof MultibaasError || e instanceof MbShapeError) {
+      console.warn(`analytics: MultiBaas unavailable, the dashboard shows the indexer's figures (${e.message})`);
+      return jsonError("UNAVAILABLE", "MultiBaas is unavailable", 503);
+    }
+    console.error("analytics: MultiBaas figures failed", e);
+    return jsonError("INTERNAL", "unexpected error", 500);
+  }
+}
