@@ -6,9 +6,7 @@ import {
   AUCTION_SHAPES,
   BUYER,
   FOR_SALE,
-  cardLabel,
   handleStatus,
-  plannedLabels,
   TRADES_B,
   buyoutEstimate,
   minOut,
@@ -130,6 +128,15 @@ describe("budget", () => {
     expect("forSale" in p).toBe(false);
     expect(FOR_SALE).toBe(8);
     for (const a of Object.values(AUCTION_SHAPES)) expect("forSale" in a).toBe(false);
+  });
+
+  it("each wallet's ETH floor (half its target) covers twice the gas it spent in the dry run at ~1 gwei", () => {
+    const b = budget(planScenario(markets, 7200), 250n);
+    // Measured on an anvil fork of Sepolia, 2026-09-26 (Gas spent summary), in ETH × 1e6.
+    const spent = { owner0: 12_919n, owner1: 7_229n, bidder0: 7_475n, bidder1: 880n, bidder2: 1_381n, bidder3: 2_151n, vendor: 7_551n };
+    for (const [role, micro] of Object.entries(spent)) {
+      expect(b.ethTarget[role as keyof typeof spent] / 2n, role).toBeGreaterThanOrEqual(micro * 10n ** 12n * 2n);
+    }
   });
 
   it("tops up only below half the target, and says where to get USDC when the deployer is short", () => {
@@ -453,11 +460,6 @@ describe("ENS names across redeploys", () => {
   it("a handle this wallet still owns from an earlier deployment counts as done; anyone else's is a conflict", () => {
     expect(handleStatus({ recorded: "", available: false, ensOwner: me.toLowerCase() as Address, wallet: me })).toBe("owned");
     expect(handleStatus({ recorded: "", available: false, ensOwner: other, wallet: me })).toBe("taken");
-  });
-  it("card names are <slug>-<set>-<id>, and the unminted cards take the next ids in order", () => {
-    expect(cardLabel("lightning-bolt", "4ed", 3n)).toBe("lightning-bolt-4ed-3");
-    const cards = { A: { slug: "lightning-bolt", setCode: "4ed" }, B: { slug: "counterspell", setCode: "a25" }, C: { slug: "x", setCode: "y" } };
-    expect(plannedLabels(cards, 5n, new Set(["B"]))).toEqual({ A: "lightning-bolt-4ed-5", C: "x-y-6" });
   });
 });
 

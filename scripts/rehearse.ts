@@ -251,8 +251,9 @@ export function budget(plan: ScenarioPlan, feeBps: bigint): Budget {
     totalUsdc,
     buyoutUsdc,
     tradesUsdc,
-    // The buyer bids twice, buys from the pool in chunks, redeems (which unwinds the pool) and re-shards card A.
-    ethTarget: { owner0: parseEther("0.02"), owner1: parseEther("0.02"), bidder0: parseEther("0.04"), bidder1: parseEther("0.015"), bidder2: parseEther("0.015"), bidder3: parseEther("0.015"), vendor: parseEther("0.02") },
+    // Half of each target (the top-up threshold) is at least twice the gas the role spent in a fork dry run at ~1 gwei:
+    // owner0 shards twice and settles A and C (each settle now seeds a pool), the buyer swaps, redeems and re-shards.
+    ethTarget: { owner0: parseEther("0.06"), owner1: parseEther("0.03"), bidder0: parseEther("0.03"), bidder1: parseEther("0.01"), bidder2: parseEther("0.01"), bidder3: parseEther("0.01"), vendor: parseEther("0.04") },
   };
 }
 
@@ -276,20 +277,6 @@ export function handleStatus(h: { recorded: string; available: boolean; ensOwner
   if (h.recorded) return "recorded";
   if (h.available) return "register";
   return h.ensOwner.toLowerCase() === h.wallet.toLowerCase() ? "owned" : "taken";
-}
-
-/** CardNames' card label, as the vault issues it at mint. */
-export const cardLabel = (slug: string, setCode: string, id: bigint) => `${slug}-${setCode}-${id}`;
-
-/** The labels the cards not yet minted will get, minted in order from the vault's next id. */
-export function plannedLabels<K extends string>(cards: Record<K, { slug: string; setCode: string }>, nextId: bigint, minted: Set<string>): Partial<Record<K, string>> {
-  const out: Partial<Record<K, string>> = {};
-  let id = nextId;
-  for (const k of Object.keys(cards) as K[]) {
-    if (minted.has(k)) continue;
-    out[k] = cardLabel(cards[k].slug, cards[k].setCode, id++);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -859,19 +846,6 @@ async function approvePermit2(ctx: Ctx, plan: ScenarioPlan) {
   }
 }
 
-/** Card names embed the id and a new vault restarts ids, so a label may already exist in ENS: refuse before minting. */
-async function checkCardLabels(ctx: Ctx, cards: Record<CardKey, CardInfo>) {
-  const minted = new Set((Object.keys(CARDS) as CardKey[]).filter((k) => isStarted(ctx.state.steps[`mint-${k}`])));
-  if (minted.size) return; // a resumed run's ids are already fixed
-  const nextId = await read<bigint>(ctx, ctx.d.cardVault, abi.cardVault, "nextId");
-  const labels = plannedLabels(cards, nextId, minted);
-  for (const [k, label] of Object.entries(labels) as [CardKey, string][]) {
-    const taken = !(await read<boolean>(ctx, ctx.d.cardNames, abi.cardNames, "isAvailable", [label]));
-    if (taken) throw new Error(`card ${k} would be #${label.split("-").at(-1)} and ${label}.kura.eth already exists in ENS (an earlier deployment), so its mint would revert; mint a throwaway card first to move the ids on`);
-  }
-  assert(true, `the card names ${Object.values(labels).join(", ")} are free in ENS`);
-}
-
 async function mintCards(ctx: Ctx, cards: Record<CardKey, CardInfo>): Promise<Record<CardKey, bigint>> {
   console.log("\nMint (vendor → owners)");
   const ids = {} as Record<CardKey, bigint>;
@@ -968,7 +942,12 @@ async function waitForBlock(ctx: Ctx, target: bigint) {
   const now = await ctx.pub.getBlockNumber();
   if (now >= target) return;
   if (ctx.network === "fork") {
-    await ctx.pub.request({ method: "anvil_mine" as never, params: [toHex(target - now)] as never });
+    // In chunks: one large anvil_mine on a fork outlasts the RPC client's timeout.
+    for (let at = now; at < target; ) {
+      const n = target - at > 500n ? 500n : target - at;
+      await ctx.pub.request({ method: "anvil_mine" as never, params: [toHex(n)] as never });
+      at += n;
+    }
     console.log(`  mined ${target - now} blocks on the fork (anvil_mine) to block ${target}`);
     return;
   }
@@ -1478,8 +1457,6 @@ async function main() {
   const payoutAddr = await read<Address>(ctx, d.cardVault, abi.cardVault, "payout");
   const payoutBefore = await usdcOf(ctx, payoutAddr);
 
-  console.log("\nPre-flight");
-  await checkCardLabels(ctx, cards);
   await fundWallets(ctx, b);
   await registerHandles(ctx);
   await approvePermit2(ctx, plan);
