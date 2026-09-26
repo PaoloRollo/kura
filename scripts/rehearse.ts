@@ -714,19 +714,28 @@ const shards = (v: bigint) => formatUnits(v, 18);
 
 type Pool = { cardId: bigint; key: PoolKey; poolId: Hex; shardIsCurrency0: boolean };
 
-/** The card's pool as ShardMarket records it, cross-checked against the shared v4 helpers (sorting, pool id, fee). */
-async function poolOf(ctx: Ctx, cardId: bigint, shardToken: Address): Promise<Pool> {
-  const [currency0, currency1, fee, tickSpacing, hooks] = await read<readonly [Address, Address, number, number, Address]>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolKeyOf", [cardId]);
-  const poolId = await read<Hex>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolIdOf", [cardId]);
-  if (poolId === ZERO32) throw new Error(`card #${cardId} has no pool`);
-  const key: PoolKey = { currency0, currency1, fee: Number(fee), tickSpacing: Number(tickSpacing), hooks };
+/**
+ * A sharding's pool, rebuilt from its PoolSeeded event with the shared v4 helpers (sorted currencies, Kura fee and
+ * spacing, ShardMarket as the hook) and checked: poolIdOf(key) must be the event's pool id, and while it is still the
+ * card's current pool, ShardMarket.poolKeyOf must return the same key. (A re-sharded card gets a new pool at settle.)
+ */
+async function poolOf(ctx: Ctx, cardId: bigint, shardToken: Address, seededPoolId: Hex): Promise<Pool> {
   const sorted = sortCurrencies(shardToken, ctx.d.usdc);
-  const same = (a: Address, b: Address) => a.toLowerCase() === b.toLowerCase();
-  if (!same(key.currency0, sorted.currency0) || !same(key.currency1, sorted.currency1)) throw new Error(`card #${cardId}: pool currencies ${currency0}/${currency1} are not the sorted shard token and USDC`);
-  if (key.fee !== KURA_POOL_FEE || key.tickSpacing !== KURA_TICK_SPACING || !same(hooks, ctx.d.shardMarket)) throw new Error(`card #${cardId}: unexpected pool key (fee ${fee}, spacing ${tickSpacing}, hooks ${hooks})`);
-  if (poolIdOf(key) !== poolId) throw new Error(`card #${cardId}: poolIdOf(key) ${poolIdOf(key)} != ShardMarket.poolIdOf ${poolId}`);
-  return { cardId, key, poolId, shardIsCurrency0: sorted.shardIsCurrency0 };
+  const key: PoolKey = { currency0: sorted.currency0, currency1: sorted.currency1, fee: KURA_POOL_FEE, tickSpacing: KURA_TICK_SPACING, hooks: ctx.d.shardMarket };
+  if (poolIdOf(key) !== seededPoolId) throw new Error(`card #${cardId}: poolIdOf(key) ${poolIdOf(key)} != PoolSeeded.poolId ${seededPoolId}`);
+  const current = await read<Hex>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolIdOf", [cardId]);
+  if (current === seededPoolId) {
+    const [currency0, currency1, fee, tickSpacing, hooks] = await read<readonly [Address, Address, number, number, Address]>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolKeyOf", [cardId]);
+    const same = (a: Address, b: Address) => a.toLowerCase() === b.toLowerCase();
+    if (!same(currency0, key.currency0) || !same(currency1, key.currency1) || Number(fee) !== key.fee || Number(tickSpacing) !== key.tickSpacing || !same(hooks, key.hooks)) {
+      throw new Error(`card #${cardId}: ShardMarket.poolKeyOf (${currency0}, ${currency1}, ${fee}, ${tickSpacing}, ${hooks}) differs from the key the shared helpers build`);
+    }
+  }
+  return { cardId, key, poolId: seededPoolId, shardIsCurrency0: sorted.shardIsCurrency0 };
 }
+
+/** Whether this pool is still the card's current one (not replaced by a re-sharding's pool). */
+const isCurrentPool = async (ctx: Ctx, pool: Pool) => (await read<Hex>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolIdOf", [pool.cardId])) === pool.poolId;
 
 const quoteParams = (pool: Pool, zeroForOne: boolean, exactAmount: bigint) => [{ poolKey: pool.key, zeroForOne, exactAmount, hookData: "0x" as Hex }] as const;
 /** V4 Quoter, exact in: what `amountIn` buys. */
@@ -955,8 +964,8 @@ async function checkSeeding(ctx: Ctx, key: string, cardId: bigint, s: Sharded, s
   }
   assert(seeded.length === 1, `card ${key}: settle seeded its Uniswap v4 pool (PoolSeeded)`);
   if (set.fresh) assert((await shardsOf(ctx, s.token, owner.address)) === 0n, `card ${key}: the owner holds no shards (the held half went to the pool)`);
-  const pool = await poolOf(ctx, cardId, s.token);
   const e = seeded[0].args;
+  const pool = await poolOf(ctx, cardId, s.token, e.poolId as Hex);
   const opened = usdcPerShardFromSqrtPrice(e.sqrtPriceX96 as bigint, pool.shardIsCurrency0);
   assert((e.shardIsCurrency0 as boolean) === pool.shardIsCurrency0, `card ${key}: PoolSeeded.shardIsCurrency0 matches the address sort (shard is currency${pool.shardIsCurrency0 ? 0 : 1})`);
   console.log(`    pool ${pool.poolId}: opened at ${usd(opened)}/shard (clearing ${usd(q96ToUsdcPerShard(set.clearingQ96))}) with ${shards(e.shardAmount as bigint)} shards and ${usd(e.usdcAmount as bigint)}`);
@@ -1171,7 +1180,9 @@ async function redeemA(ctx: Ctx, cardId: bigint, s: Sharded, buyer: Wallet, plan
   const lp = ctx.seeds[CARDS.A.owner];
   const [unwound] = await findLogs(ctx, ctx.d.shardMarket, abi.shardMarket, "Unwound", { cardId });
   assert(unwound && (unwound.args.lpOwner as string).toLowerCase() === lp.address.toLowerCase(), `redeem unwound card A's pool to ${HANDLES[CARDS.A.owner]} (${unwound ? `${shards(unwound.args.shardAmount as bigint)} shards, ${usd(unwound.args.usdcAmount as bigint)}` : "no Unwound event"})`);
-  assert(await read<boolean>(ctx, ctx.d.shardMarket, abi.shardMarket, "isFrozen", [cardId]), "card A's pool is frozen");
+  if (await isCurrentPool(ctx, pool)) {
+    assert(await read<boolean>(ctx, ctx.d.shardMarket, abi.shardMarket, "isFrozen", [cardId]), "card A's pool is frozen");
+  } else console.log("  · card A has a newer pool (the live auction settled): isFrozen(cardId) now reads that one");
   await assertSwapReverts(ctx, pool, buyer);
   return { price: BigInt(o.price) };
 }
