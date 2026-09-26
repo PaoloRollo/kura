@@ -2,7 +2,7 @@
 
 Ponder indexer for the Kura contracts on Sepolia. Tables: cards, shardings, active_auctions, shard_balances,
 shard_transfers, bids, auction_ticks, checkpoints, fee_events, payout_claims, activities, ens_names, ens_records,
-collectors, bidder_bindings.
+ens_record_links, ens_resolver_records, collectors, bidder_bindings.
 
     pnpm sync:deployments          # copies contracts/deployments/sepolia.json into generated/
     cp .env.example .env.local     # set PONDER_RPC_URL_11155111 (Ponder loads .env.local, not .env)

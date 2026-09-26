@@ -10,7 +10,9 @@ const indexedColumns = (table: object): string[][] => {
   const t = table as Record<symbol, unknown>;
   const build = t[Symbol.for("drizzle:ExtraConfigBuilder")] as ((c: unknown) => Record<string, { config: { columns: { name: string }[] } }>) | undefined;
   if (!build) return [];
-  return Object.values(build(t[Symbol.for("drizzle:ExtraConfigColumns")])).map((i) => i.config.columns.map((c) => c.name));
+  return Object.values(build(t[Symbol.for("drizzle:ExtraConfigColumns")]))
+    .filter((i) => i.config) // primary keys have no index config
+    .map((i) => i.config.columns.map((c) => c.name));
 };
 
 describe("schema", () => {
@@ -68,5 +70,14 @@ describe("schema", () => {
   });
   it("has activity kinds for the pool opening and swaps", () => {
     expect(schema.activityKind.enumValues).toEqual(expect.arrayContaining(["pool_opened", "swap"]));
+  });
+  it("keeps ENSv2 resolver records by record id, with the nodes linked to each", () => {
+    expect(columnsOf(schema.ensRecordLinks)).toEqual(["resolver", "node", "recordId", "name", "updatedBlock", "updatedAt"].sort());
+    expect(indexedColumns(schema.ensRecordLinks)).toContainEqual(["resolver", "record_id"]);
+    expect(columnsOf(schema.ensResolverRecords)).toEqual(
+      ["resolver", "recordId", "key", "value", "setBy", "updatedBlock", "updatedAt"].sort(),
+    );
+    const c = schema.ensResolverRecords as unknown as Record<string, { columnType: string }>;
+    expect(c.recordId!.columnType).toBe("PgEvmBigint");
   });
 });
