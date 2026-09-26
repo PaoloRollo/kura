@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ChartFrame } from "@/components/charts/chart-frame";
 import { DemandBars, demandRows } from "@/components/charts/demand-bars";
-import { KpiStrip } from "@/components/charts/kpi-strip";
+import { KpiStrip, fitFontSize } from "@/components/charts/kpi-strip";
 import { Leaderboard } from "@/components/charts/leaderboard";
 import { squarify } from "@/components/charts/market-treemap";
 import { ownershipRows } from "@/components/charts/ownership-bar";
@@ -153,5 +153,15 @@ describe("Leaderboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Table" }));
     expect(screen.getByText("+3.1% (live)")).toBeTruthy();
     expect(screen.getByText("+9.6%")).toBeTruthy();
+  });
+});
+
+describe("fitFontSize", () => {
+  it("caps text values at the design size and shrinks long ones to their tile; leaves other nodes alone", () => {
+    // 11 characters at 0.6em fill 96% of the tile at 14.5cqi.
+    expect(fitFontSize("$101,180.16")).toBe("min(var(--kpi-fs), 14.5cqi)");
+    expect(fitFontSize("58")).toBe("min(var(--kpi-fs), 80cqi)");
+    expect(fitFontSize(null)).toBeUndefined();
+    expect(fitFontSize(<span>eligible</span>)).toBeUndefined();
   });
 });
