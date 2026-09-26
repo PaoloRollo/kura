@@ -86,10 +86,22 @@ contract MigrateNames is EnsEnv {
 
     // ---------------------------------------------------------------- setup
 
+    function vaultAddress() internal view returns (address) {
+        return vm.envOr("KURA_VAULT", LIVE_VAULT);
+    }
+
+    function oldNamesAddress() internal view returns (address) {
+        return vm.envOr("OLD_CARD_NAMES", LIVE_OLD_NAMES);
+    }
+
+    function newNamesAddress() internal view returns (address) {
+        return vm.envOr("KURA_NEW_CARD_NAMES", address(0));
+    }
+
     function _context() internal view returns (Ctx memory c) {
-        c.pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        c.pk = deployerKey();
         c.deployer = vm.addr(c.pk);
-        c.vault = CardVault(vm.envOr("KURA_VAULT", LIVE_VAULT));
+        c.vault = CardVault(vaultAddress());
         require(c.vault.owner() == c.deployer, "DEPLOYER_PRIVATE_KEY is not the vault owner");
 
         string memory ens = vm.readFile(string.concat(deploymentsDir(), "/sepolia.ens.json"));
@@ -104,7 +116,7 @@ contract MigrateNames is EnsEnv {
         );
         require(c.resolver.hasRootRoles(EnsRoles.ALL_ROLES, c.deployer), "deployer is not the resolver admin");
 
-        c.oldNames = CardNames(vm.envOr("OLD_CARD_NAMES", LIVE_OLD_NAMES));
+        c.oldNames = CardNames(oldNamesAddress());
         c.oldResolver = ILegacyResolver(address(c.oldNames.resolver()));
     }
 
@@ -112,7 +124,7 @@ contract MigrateNames is EnsEnv {
     /// whichever is a CardNames on the new registry. Otherwise deploy one with the old adapter's vendor and appraiser.
     function _names(Ctx memory c) internal returns (CardNames) {
         address[3] memory candidates = [
-            vm.envOr("KURA_NEW_CARD_NAMES", address(0)),
+            newNamesAddress(),
             address(c.vault.names()),
             _jsonAddress(string.concat(deploymentsDir(), "/sepolia.json"), ".cardNames")
         ];

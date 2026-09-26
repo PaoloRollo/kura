@@ -59,7 +59,36 @@ abstract contract EnsEnv is Script {
     /// Output directory for deployment JSON, relative to contracts/. Overridable so fork tests never overwrite the real
     /// deployment files.
     function deploymentsDir() internal view returns (string memory) {
-        return vm.envOr("KURA_DEPLOYMENTS_DIR", string("deployments"));
+        return bytes(_inputs.dir).length != 0 ? _inputs.dir : vm.envOr("KURA_DEPLOYMENTS_DIR", string("deployments"));
+    }
+
+    /// Run inputs, read from the environment unless a fork test passed them with {useInputs}.
+    struct Inputs {
+        string dir;
+        uint256 deployerKey;
+        string label;
+        address signer;
+    }
+
+    Inputs internal _inputs;
+
+    /// Fork tests pass inputs here instead of `vm.setEnv`, which is process-wide and races between test suites running
+    /// in parallel. Scripts are never deployed, so this setter only ever exists in a local EVM.
+    function useInputs(Inputs calldata i) external returns (EnsEnv) {
+        _inputs = i;
+        return this;
+    }
+
+    function deployerKey() internal view returns (uint256) {
+        return _inputs.deployerKey != 0 ? _inputs.deployerKey : vm.envUint("DEPLOYER_PRIVATE_KEY");
+    }
+
+    function ensLabel() internal view returns (string memory) {
+        return bytes(_inputs.label).length != 0 ? _inputs.label : vm.envString("VAULT_ENS_LABEL");
+    }
+
+    function signerAddress() internal view returns (address) {
+        return _inputs.signer != address(0) ? _inputs.signer : vm.envAddress("SIGNER_ADDRESS");
     }
 
     uint64 internal constant DURATION = 365 days; // registrar minimum is 28 days
@@ -70,10 +99,10 @@ contract SetupEnsCommit is EnsEnv {
     function run() external {
         require(block.chainid == 11155111, "Deploy targets Sepolia only");
 
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 pk = deployerKey();
         address deployer = vm.addr(pk);
         require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
-        string memory label = vm.envString("VAULT_ENS_LABEL");
+        string memory label = ensLabel();
         IETHRegistrar registrar = IETHRegistrar(ethRegistrar());
         require(
             registrar.isAvailable(label), "label not available: set VAULT_ENS_LABEL to a free label such as kuravault"
@@ -126,10 +155,10 @@ contract SetupEnsRegister is EnsEnv {
     function run() external {
         require(block.chainid == 11155111, "Deploy targets Sepolia only");
 
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 pk = deployerKey();
         address deployer = vm.addr(pk);
         require(deployer.code.length == 0, "deployer must be a plain EOA (no EIP-7702 delegation)");
-        address signer = vm.envAddress("SIGNER_ADDRESS");
+        address signer = signerAddress();
         string memory pending = vm.readFile(string.concat(deploymentsDir(), "/sepolia.ens.pending.json"));
         string memory label = vm.parseJsonString(pending, ".label");
         address registry = vm.parseJsonAddress(pending, ".registry");

@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 import {Vm} from "forge-std/Vm.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {SetupEnsCommit, SetupEnsRegister} from "../script/SetupEns.s.sol";
+import {EnsEnv, SetupEnsCommit, SetupEnsRegister} from "../script/SetupEns.s.sol";
 import {MigrateNames} from "../script/MigrateNames.s.sol";
 import {CardVault} from "../src/CardVault.sol";
 import {CardNames} from "../src/CardNames.sol";
@@ -45,15 +45,24 @@ contract MigrateNamesForkTest is EnsFork {
 
         vm.createDir(DIR, true);
         vm.copyFile("deployments/sepolia.json", string.concat(DIR, "/sepolia.json"));
-        vm.setEnv("KURA_DEPLOYMENTS_DIR", DIR);
-        vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(deployerPk));
-        vm.setEnv("VAULT_ENS_LABEL", LABEL);
-        vm.setEnv("SIGNER_ADDRESS", vm.toString(signer));
-        vm.setEnv("KURA_NEW_CARD_NAMES", vm.toString(address(0)));
-
-        new SetupEnsCommit().run();
+        SetupEnsCommit commit = new SetupEnsCommit();
+        commit.useInputs(_inputs());
+        commit.run();
         vm.warp(block.timestamp + 61);
-        new SetupEnsRegister().run();
+        SetupEnsRegister register = new SetupEnsRegister();
+        register.useInputs(_inputs());
+        register.run();
+    }
+
+    /// @dev Script inputs without `vm.setEnv`, which is process-wide and would race with test/Scripts.fork.t.sol.
+    function _inputs() internal view returns (EnsEnv.Inputs memory) {
+        return EnsEnv.Inputs({dir: DIR, deployerKey: deployerPk, label: LABEL, signer: signer});
+    }
+
+    function _migrate() internal returns (CardNames) {
+        MigrateNames m = new MigrateNames();
+        m.useInputs(_inputs());
+        return m.run();
     }
 
     function _live(uint256 id) internal view returns (bool) {
@@ -70,7 +79,7 @@ contract MigrateNamesForkTest is EnsFork {
     }
 
     function test_migratesEveryLiveCardAndStaysInSync() public {
-        CardNames names = new MigrateNames().run();
+        CardNames names = _migrate();
 
         // wiring
         assertEq(address(VAULT.names()), address(names), "vault points at the new adapter");
@@ -119,7 +128,7 @@ contract MigrateNamesForkTest is EnsFork {
 
         // a second run changes nothing: no new adapter, no record writes
         vm.recordLogs();
-        CardNames again = new MigrateNames().run();
+        CardNames again = _migrate();
         assertEq(address(again), address(names), "rerun reuses the adapter");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
@@ -161,7 +170,7 @@ contract MigrateNamesForkTest is EnsFork {
             string.concat('"', vm.toString(address(halfDone)), '"'), string.concat(DIR, "/sepolia.json"), ".cardNames"
         );
 
-        CardNames names = new MigrateNames().run();
+        CardNames names = _migrate();
         assertEq(address(names), address(halfDone), "resumed on the recorded adapter");
         assertEq(address(VAULT.names()), address(halfDone));
         assertEq(halfDone.vault(), address(VAULT));
