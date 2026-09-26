@@ -56,6 +56,22 @@ Role bitmaps are in `src/libraries/EnsRoles.sol`.
 CREATE2 salts are derived from the label, so rerunning the commit with the same label would collide with the proxies
 already deployed.
 
+## Migrating the live vault's names
+
+`script/MigrateNames.s.sol` moves the live CardVault's card names to the ENS deployment in `deployments/sepolia.ens.json`
+(run SetupEns first). It deploys a new CardNames, grants it the registry and resolver roles, registers every card that
+is not Released exactly as `CardVault.mint` would, reconciles each record with the vault's current state (records the
+vault never stores, such as avatar, description, grade and appraisal, are copied from the old resolver), then calls
+`names.setVault(vault)` and `vault.setNames(names)`. CardVault is not changed.
+
+    forge script script/MigrateNames.s.sol:MigrateNames --rpc-url sepolia              # dry run, writes nothing
+    forge script script/MigrateNames.s.sol:MigrateNames --rpc-url sepolia --broadcast
+
+It is idempotent: every step checks chain state and only differing records are written, so after an interrupted
+broadcast rerun the same command (it reuses the adapter recorded in `deployments/sepolia.json`, or `KURA_NEW_CARD_NAMES`),
+and a rerun after success sends nothing. `KURA_VAULT` and `OLD_CARD_NAMES` override the live vault and old adapter.
+`test/MigrateNames.fork.t.sol` runs SetupEns and the migration against the live vault on a fork.
+
 ## Uniswap integration
 
 - Auction creation: `CardVault.shardAndAuction` builds `AuctionParameters` and calls the CCA factory.
