@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { recoverTypedDataAddress, type Hex } from "viem";
+import { keccak256, recoverTypedDataAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { TICKET_TYPES, bidGateDomain, q96ToUsdcPerShard } from "@kura/shared";
 import {
   AUCTION_SHAPES,
+  MAX_TOTAL_ETH,
+  MAX_TOTAL_USDC,
+  budgetCapError,
+  redact,
+  txHashOf,
   MIN_FLOOR_USDC,
   TICK_USDC,
   bidBudget,
@@ -76,62 +81,94 @@ describe("budget", () => {
 
 describe("resumable steps", () => {
   const ok = (hash: Hex): ReceiptLike => ({ status: "success", blockNumber: 1n, transactionHash: hash });
-  const H1 = "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex;
-  const H2 = "0x2222222222222222222222222222222222222222222222222222222222222222" as Hex;
+  const RAW1 = "0x02f86b0101" as Hex;
+  const RAW2 = "0x02f86b0102" as Hex;
+  const H1 = keccak256(RAW1);
+  const H2 = keccak256(RAW2);
+  const io = (over: Partial<Parameters<typeof runStep>[2]> = {}) => ({
+    sign: vi.fn(async () => RAW1),
+    broadcast: vi.fn(async () => undefined),
+    wait: vi.fn(async (h: Hex) => ok(h)),
+    save: vi.fn(),
+    ...over,
+  });
 
   it("skips a finished step without touching the chain", async () => {
     const s = newState("sepolia");
     s.steps.mint = { status: "done", hash: H1, out: "7" };
-    const send = vi.fn();
-    const wait = vi.fn();
-    const r = await runStep(s, "mint", { send, wait, save: () => {} });
+    const x = io();
+    const r = await runStep(s, "mint", x);
     expect(r).toEqual({ out: "7", hash: H1, fresh: false });
-    expect(send).not.toHaveBeenCalled();
-    expect(wait).not.toHaveBeenCalled();
+    expect(x.sign).not.toHaveBeenCalled();
+    expect(x.broadcast).not.toHaveBeenCalled();
+    expect(x.wait).not.toHaveBeenCalled();
   });
 
-  it("a hash without a receipt is waited for, never sent again", async () => {
+  it("saves the hash and the raw tx as sent before broadcasting", async () => {
+    const order: string[] = [];
+    const saved: RehearseState[] = [];
     const s = newState("sepolia");
-    s.steps.bid = { status: "sent", hash: H1 };
-    const send = vi.fn(async () => H2);
+    await runStep(s, "settle", io({
+      sign: vi.fn(async () => { order.push("sign"); return RAW1; }),
+      save: vi.fn((x: RehearseState) => { order.push(`save:${x.steps.settle.status}`); saved.push(structuredClone(x)); }),
+      broadcast: vi.fn(async () => { order.push("broadcast"); }),
+      wait: vi.fn(async (h: Hex) => { order.push("wait"); return ok(h); }),
+    }));
+    expect(order).toEqual(["sign", "save:sent", "broadcast", "wait", "save:done"]);
+    expect(saved[0].steps.settle).toEqual({ status: "sent", hash: H1, raw: RAW1, failed: undefined });
+    expect(txHashOf(RAW1)).toBe(H1);
+  });
+
+  it("a crash after saving but before broadcasting still resumes with that tx", async () => {
+    const s = newState("sepolia");
+    await expect(runStep(s, "bid", io({ broadcast: vi.fn(async () => { throw new Error("socket hang up"); }) }))).rejects.toThrow(/socket/);
+    expect(s.steps.bid).toEqual({ status: "sent", hash: H1, raw: RAW1, failed: undefined });
+    // Next run: not found at first, so the same raw tx is re-broadcast; nothing is signed again.
+    const wait = vi.fn<(h: Hex) => Promise<ReceiptLike | null>>().mockResolvedValueOnce(null).mockImplementation(async (h) => ok(h));
+    const x = io({ sign: vi.fn(async () => RAW2), wait });
+    const r = await runStep(s, "bid", x);
+    expect(x.sign).not.toHaveBeenCalled();
+    expect(x.broadcast).toHaveBeenCalledExactlyOnceWith(RAW1);
+    expect(r.hash).toBe(H1);
+    expect(s.steps.bid.status).toBe("done");
+  });
+
+  it("a hash with a receipt on resume is only awaited, never sent again", async () => {
+    const s = newState("sepolia");
+    s.steps.bid = { status: "sent", hash: H1, raw: RAW1 };
     const skip = vi.fn(async () => "on chain");
-    const wait = vi.fn(async (h: Hex) => ok(h));
-    const r = await runStep(s, "bid", { send, skip, wait, parse: () => "id-3", save: () => {} });
-    expect(send).not.toHaveBeenCalled();
+    const x = io({ skip, parse: () => "id-3" });
+    const r = await runStep(s, "bid", x);
+    expect(x.sign).not.toHaveBeenCalled();
+    expect(x.broadcast).not.toHaveBeenCalled();
     expect(skip).not.toHaveBeenCalled();
-    expect(wait).toHaveBeenCalledWith(H1);
+    expect(x.wait).toHaveBeenCalledWith(H1);
     expect(r.fresh).toBe(true);
     expect(s.steps.bid).toEqual({ status: "done", hash: H1, out: "id-3", failed: undefined });
   });
 
-  it("records the hash before waiting, so a crash mid-wait resumes by waiting", async () => {
-    const saved: RehearseState[] = [];
+  it("keeps a tx that never shows up as sent, for the next run to wait on", async () => {
     const s = newState("sepolia");
-    const wait = vi.fn(async (h: Hex) => {
-      expect(saved.at(-1)?.steps.settle).toEqual({ status: "sent", hash: H1, failed: undefined });
-      return ok(h);
-    });
-    await runStep(s, "settle", { send: async () => H1, wait, save: (x) => saved.push(structuredClone(x)) });
-    expect(wait).toHaveBeenCalledOnce();
-    expect(s.steps.settle.status).toBe("done");
+    await expect(runStep(s, "x", io({ wait: vi.fn(async () => null) }))).rejects.toThrow(/not mined yet/);
+    expect(s.steps.x.status).toBe("sent");
   });
 
   it("marks a step skipped when its effect is already on chain", async () => {
     const s = newState("sepolia");
-    const send = vi.fn(async () => H1);
-    const r = await runStep(s, "handle", { skip: async () => "seedaiko", send, wait: async (h) => ok(h), save: () => {} });
-    expect(send).not.toHaveBeenCalled();
+    const x = io({ skip: async () => "seedaiko" });
+    const r = await runStep(s, "handle", x);
+    expect(x.sign).not.toHaveBeenCalled();
     expect(r.out).toBe("seedaiko");
     expect(s.steps.handle.status).toBe("skipped");
   });
 
-  it("a reverted step is cleared and sent afresh on the next run", async () => {
+  it("a reverted step is marked failed and signed afresh on the next run", async () => {
     const s = newState("sepolia");
-    await expect(runStep(s, "redeem", { send: async () => H1, wait: async (h) => ({ ...ok(h), status: "reverted" as const }), save: () => {} })).rejects.toThrow(/reverted/);
+    await expect(runStep(s, "redeem", io({ wait: async (h: Hex) => ({ ...ok(h), status: "reverted" as const }) }))).rejects.toThrow(/reverted/);
     expect(s.steps.redeem).toEqual({ status: "failed", failed: [H1] });
-    const send = vi.fn(async () => H2);
-    await runStep(s, "redeem", { send, wait: async (h) => ok(h), save: () => {} });
-    expect(send).toHaveBeenCalledOnce();
+    const x = io({ sign: vi.fn(async () => RAW2) });
+    await runStep(s, "redeem", x);
+    expect(x.sign).toHaveBeenCalledOnce();
     expect(s.steps.redeem).toEqual({ status: "done", hash: H2, out: null, failed: [H1] });
   });
 
@@ -142,6 +179,23 @@ describe("resumable steps", () => {
     const back = decodeState(encodeState(s));
     expect(back).toEqual(s);
     expect(back.plan!.auctions.C.reserveUsdc).toBe(5n * U);
+  });
+});
+
+describe("caps and redaction", () => {
+  it("refuses a plan above 10 USDC or the ETH cap", () => {
+    const b = budget(planScenario(markets, 7200), 250n);
+    expect(budgetCapError(b)).toBeNull();
+    expect(budgetCapError({ ...b, totalUsdc: MAX_TOTAL_USDC + 1n })).toMatch(/above the 10 USDC cap/);
+    expect(budgetCapError({ ...b, ethTarget: { ...b.ethTarget, vendor: MAX_TOTAL_ETH } })).toMatch(/ETH cap/);
+  });
+
+  it("hides RPC keys in printed errors", () => {
+    const url = "https://eth-sepolia.g.alchemy.com/v2/abcDEF123456789xyz";
+    const msg = `HTTP request failed.\nURL: ${url}\nRequest body: {}`;
+    expect(redact(msg, [url])).toBe("HTTP request failed.\nURL: https://eth-sepolia.g.alchemy.com/<redacted>\nRequest body: {}");
+    expect(redact("wss://eth-sepolia.g.alchemy.com/v2/abcDEF123456789xyz")).toBe("wss://eth-sepolia.g.alchemy.com/v2/<redacted>");
+    expect(redact("URL: http://127.0.0.1:8546")).toBe("URL: http://127.0.0.1:8546");
   });
 });
 

@@ -41,7 +41,7 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] Every server variable in `apps/web/src/env.ts` is set (a missing one makes every authenticated route answer 500)
 - [ ] `CRON_SECRET` is set, and the daily `/api/cron/prices` cron shows up under Settings → Cron Jobs
 - [ ] `NEXT_PUBLIC_ALCHEMY_WS_URL` is set for the live toasts (then redeploy: it is baked in at build time)
-- [ ] `NEXT_PUBLIC_WORLD_ENV` and `WORLD_ENV` are `staging`, and `WORLD_STAGING_VERIFICATION_TOKEN` holds a token from a staging window that is open through the judging (the current window closes 2026-09-27 04:23 UTC)
+- [ ] `NEXT_PUBLIC_WORLD_ENV` and `WORLD_ENV` are `staging`, and `WORLD_STAGING_VERIFICATION_TOKEN` holds a token from a staging window that is open through the judging (the current window closes 2026-09-27 04:23:41 UTC). Before the demo, re-check it with the World Developer Portal's `get_app_config` and reopen it (`set_world_id_staging_verification`) if it has closed or will close during judging; if that issues a new token, update `WORLD_STAGING_VERIFICATION_TOKEN` in Vercel and redeploy
 - [ ] `APPRAISER_WRITE_ENS=true`, and the signer `0x3Ee6…b731` still holds Sepolia ETH for the ENS writes
 - [ ] The card index: `CARD_INDEX_URL`, `CARD_INDEX_BLOB_ACCESS=private` and the connected Blob store's `BLOB_READ_WRITE_TOKEN`
 

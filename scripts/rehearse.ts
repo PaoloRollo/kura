@@ -17,6 +17,8 @@ import {
   createPublicClient,
   createWalletClient,
   encodeAbiParameters,
+  encodeFunctionData,
+  WaitForTransactionReceiptTimeoutError,
   formatEther,
   formatUnits,
   http,
@@ -215,9 +217,12 @@ export const isBroadcastConfirmation = (answer: string) => answer.trim() === "BR
 // Resumable steps (pure logic, injected chain calls)
 
 export type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
-/** `failed`: the last send reverted (hashes kept for the record); the step runs afresh next time. */
-export type StepRecord = { status: "sent" | "done" | "skipped" | "failed"; hash?: Hex; out?: Json; failed?: Hex[] };
-export type RehearseState = { version: 1; network: string; wallets?: Record<string, Address>; plan?: ScenarioPlan; steps: Record<string, StepRecord> };
+/**
+ * `sent`: signed, its hash and raw bytes saved before broadcast; `failed`: the last send reverted (hashes kept for the
+ * record) and the step runs afresh next time.
+ */
+export type StepRecord = { status: "sent" | "done" | "skipped" | "failed"; hash?: Hex; raw?: Hex; out?: Json; failed?: Hex[] };
+export type RehearseState = { version: 1; network: string; fromBlock?: string; wallets?: Record<string, Address>; plan?: ScenarioPlan; steps: Record<string, StepRecord> };
 
 export const newState = (network: string): RehearseState => ({ version: 1, network, steps: {} });
 
@@ -225,8 +230,12 @@ export type ReceiptLike = { status: "success" | "reverted"; blockNumber: bigint;
 export type StepIO<R extends ReceiptLike> = {
   /** Returns a value when the step's effect is already on chain (no tx needed), else undefined. */
   skip?: () => Promise<Json | undefined>;
-  send: () => Promise<Hex>;
-  wait: (hash: Hex) => Promise<R>;
+  /** Simulates and signs the transaction locally (explicit nonce); returns the serialized signed tx. Nothing is sent. */
+  sign: () => Promise<Hex>;
+  /** Broadcasts a signed tx (eth_sendRawTransaction). */
+  broadcast: (raw: Hex) => Promise<unknown>;
+  /** The receipt, or null when the tx isn't found or mined within the wait. */
+  wait: (hash: Hex) => Promise<R | null>;
   parse?: (receipt: R) => Json;
   save: (state: RehearseState) => void;
 };
@@ -234,16 +243,30 @@ export type StepIO<R extends ReceiptLike> = {
 /** A step already sent or finished: it must not be prepared (or sent) again. */
 export const isStarted = (rec: StepRecord | undefined) => rec?.status === "done" || rec?.status === "skipped" || rec?.status === "sent";
 
+/** The tx hash of a serialized signed transaction (legacy and typed alike). */
+export const txHashOf = (raw: Hex) => keccak256(raw);
+
 /**
- * Runs one step at most once. Done or skipped: returns the recorded output. Sent (a hash, no receipt yet): waits for
- * that receipt and never sends again, the same rule as the web tx layer. New: checks `skip`, sends, records the hash
- * before waiting. A reverted receipt clears the step (a revert can't land later), so a rerun sends it afresh.
+ * Runs one step at most once. Done or skipped: returns the recorded output. New: checks `skip`, signs locally, saves
+ * the hash and the raw tx as "sent", and only then broadcasts, so no crash can leave a tx on the wire that the state
+ * doesn't know. Sent: waits for that hash; if it never shows up, re-broadcasts the same raw tx (same nonce, same
+ * hash), never a new one. A reverted receipt marks the step failed (a revert can't land later), so a rerun signs anew.
  */
 export async function runStep<R extends ReceiptLike>(state: RehearseState, id: string, io: StepIO<R>): Promise<{ out: Json; hash?: Hex; fresh: boolean; receipt?: R }> {
   const rec = state.steps[id];
   if (rec && (rec.status === "done" || rec.status === "skipped")) return { out: rec.out ?? null, hash: rec.hash, fresh: false };
-  let hash = rec?.status === "sent" ? rec.hash : undefined;
-  if (!hash) {
+  let hash: Hex;
+  let raw: Hex | undefined;
+  let receipt: R | null;
+  if (rec?.status === "sent" && rec.hash) {
+    hash = rec.hash;
+    raw = rec.raw;
+    receipt = await io.wait(hash);
+    if (!receipt && raw) {
+      await io.broadcast(raw).catch(() => undefined); // "already known" / "nonce too low" mean it is out there already
+      receipt = await io.wait(hash);
+    }
+  } else {
     if (io.skip) {
       const already = await io.skip();
       if (already !== undefined) {
@@ -252,11 +275,14 @@ export async function runStep<R extends ReceiptLike>(state: RehearseState, id: s
         return { out: already, fresh: false };
       }
     }
-    hash = await io.send();
-    state.steps[id] = { status: "sent", hash, failed: rec?.failed };
+    raw = await io.sign();
+    hash = txHashOf(raw);
+    state.steps[id] = { status: "sent", hash, raw, failed: rec?.failed };
     io.save(state);
+    await io.broadcast(raw);
+    receipt = await io.wait(hash);
   }
-  const receipt = await io.wait(hash);
+  if (!receipt) throw new Error(`step ${id}: ${hash} not mined yet; rerun to keep waiting (the same signed tx is re-broadcast, never a new one)`);
   if (receipt.status !== "success") {
     state.steps[id] = { status: "failed", failed: [...(rec?.failed ?? []), hash] };
     io.save(state);
@@ -266,6 +292,35 @@ export async function runStep<R extends ReceiptLike>(state: RehearseState, id: s
   state.steps[id] = { status: "done", hash, out, failed: rec?.failed };
   io.save(state);
   return { out, hash, fresh: true, receipt };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Caps and redaction (pure)
+
+/** Hard ceilings: a plan above either is refused before anything is signed. */
+export const MAX_TOTAL_USDC = 10n * USDC;
+export const MAX_TOTAL_ETH = parseEther("0.2");
+
+export function budgetCapError(b: Budget): string | null {
+  const eth = Object.values(b.ethTarget).reduce((x, y) => x + y, 0n);
+  if (b.totalUsdc > MAX_TOTAL_USDC) return `the plan needs ${formatUnits(b.totalUsdc, 6)} USDC, above the ${formatUnits(MAX_TOTAL_USDC, 6)} USDC cap; pick cheaper cards`;
+  if (eth > MAX_TOTAL_ETH) return `the ETH top-ups reach ${formatEther(eth)} ETH, above the ${formatEther(MAX_TOTAL_ETH)} ETH cap`;
+  return null;
+}
+
+/** Hides RPC keys in anything printed: an Alchemy-style /v2/<key> segment and any configured RPC URL's path. */
+export function redact(text: string, urls: readonly (string | undefined)[] = []): string {
+  let out = text;
+  for (const u of urls) {
+    if (!u) continue;
+    try {
+      const { origin } = new URL(u);
+      out = out.split(u).join(`${origin}/<redacted>`);
+    } catch {
+      /* not a URL */
+    }
+  }
+  return out.replace(/(\/v[23]\/)[A-Za-z0-9_-]{8,}/g, "$1<redacted>");
 }
 
 const BIG = "$big:";
@@ -376,23 +431,58 @@ function saveState(ctx: Ctx) {
   writeFileSync(ctx.statePath, encodeState(ctx.state));
 }
 
-async function step(ctx: Ctx, id: string, from: Wallet, call: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint }, opts: { skip?: () => Promise<Json | undefined>; parse?: (r: TransactionReceipt) => Json; note?: string } = {}) {
+/**
+ * Chain calls for runStep: `sign` simulates the call (so a revert is decoded before anything is signed), prepares it
+ * with the account's pending nonce and signs it locally; `broadcast` sends the raw bytes; `wait` gives up with null.
+ */
+function txIO(ctx: Ctx, from: Wallet, tx: () => Promise<{ to: Address; data?: Hex; value?: bigint; simulate?: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint } }>) {
   const wallet = createWalletClient({ account: from.account, chain: sepolia, transport: http(ctx.rpcUrl) });
+  return {
+    sign: async () => {
+      const t = await tx();
+      if (t.simulate) await ctx.pub.simulateContract({ ...t.simulate, account: from.account } as never);
+      const nonce = await ctx.pub.getTransactionCount({ address: from.address, blockTag: "pending" });
+      const prepared = await wallet.prepareTransactionRequest({ account: from.account, chain: sepolia, to: t.to, data: t.data, value: t.value, nonce } as never);
+      return wallet.signTransaction(prepared as never) as Promise<Hex>;
+    },
+    broadcast: (raw: Hex) => wallet.sendRawTransaction({ serializedTransaction: raw }),
+    wait: (hash: Hex) =>
+      ctx.pub.waitForTransactionReceipt({ hash, timeout: (ctx.network === "fork" ? 1 : 5) * 60_000, pollingInterval: ctx.network === "fork" ? 200 : 4_000 }).catch((e) => {
+        if (e instanceof WaitForTransactionReceiptTimeoutError) return null;
+        throw e;
+      }),
+  };
+}
+
+async function step(ctx: Ctx, id: string, from: Wallet, call: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint }, opts: { skip?: () => Promise<Json | undefined>; parse?: (r: TransactionReceipt) => Json; note?: string; fees?: boolean } = {}) {
   const res = await runStep<TransactionReceipt>(ctx.state, id, {
     skip: opts.skip,
-    send: async () => {
-      const { request } = await ctx.pub.simulateContract({ ...call, account: from.account } as never);
-      return wallet.writeContract(request as never);
-    },
-    wait: (hash) => ctx.pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: ctx.network === "fork" ? 200 : 4_000 }),
+    ...txIO(ctx, from, async () => ({ to: call.address, data: encodeFunctionData(call as never), value: call.value, simulate: call })),
     parse: opts.parse,
     save: () => saveState(ctx),
   });
+  // Fee totals are asserted as a balance delta over this run: any fee step not sent now makes that unknowable.
+  if (!res.fresh && opts.fees) ctx.resumed = true;
   if (!res.fresh && ctx.state.steps[id]?.status === "done") ctx.resumed = true;
   if (res.receipt) ctx.gas.set(from.role, (ctx.gas.get(from.role) ?? 0n) + res.receipt.gasUsed * res.receipt.effectiveGasPrice);
   ctx.log.push({ id, hash: res.hash, note: res.fresh ? opts.note : `${opts.note ?? ""} (${ctx.state.steps[id]?.status === "skipped" ? "already on chain" : "resumed"})`.trim() });
   console.log(`  ${res.fresh ? "✓" : "·"} ${id.padEnd(26)} ${res.hash ? txUrl(ctx.network, res.hash) : "skipped: already on chain"}${opts.note ? `  ${opts.note}` : ""}`);
   return res;
+}
+
+/**
+ * Logs since the run's first block (`state.fromBlock`), fetched in 500-block windows (RPC range limits). The on-chain
+ * skips use it to recognise a step whose tx landed although the state file never heard back.
+ */
+async function findLogs(ctx: Ctx, address: Address, a: Abi, eventName: string, args: Record<string, unknown>) {
+  const latest = await ctx.pub.getBlockNumber();
+  const out: { args: Record<string, unknown>; blockNumber: bigint }[] = [];
+  for (let from = BigInt(ctx.state.fromBlock ?? latest); from <= latest; from += 500n) {
+    const to = from + 499n > latest ? latest : from + 499n;
+    const logs = await ctx.pub.getContractEvents({ address, abi: a, eventName, args, fromBlock: from, toBlock: to } as never);
+    out.push(...(logs as unknown as { args: Record<string, unknown>; blockNumber: bigint }[]));
+  }
+  return out;
 }
 
 const events = (r: TransactionReceipt, a: Abi, eventName: string) => parseEventLogs({ abi: a, logs: r.logs, eventName } as never) as unknown as { args: Record<string, unknown>; address: Address }[];
@@ -422,8 +512,6 @@ function assert(cond: unknown, msg: string): asserts cond {
 async function fundWallets(ctx: Ctx, b: Budget) {
   console.log("\nFunding (from the deployer)");
   const targets: Wallet[] = [...ROLES.map((r) => ctx.seeds[r]), ctx.vendor];
-  const wallet = createWalletClient({ account: ctx.deployer.account, chain: sepolia, transport: http(ctx.rpcUrl) });
-  const wait = (hash: Hex) => ctx.pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: ctx.network === "fork" ? 200 : 4_000 });
   for (const w of targets) {
     const target = b.ethTarget[w.role as Role | "vendor"];
     const id = `eth-${w.role}`;
@@ -433,8 +521,7 @@ async function fundWallets(ctx: Ctx, b: Budget) {
         topUp = ethTopUp(await ctx.pub.getBalance({ address: w.address }), target);
         return topUp === 0n ? "enough" : undefined;
       },
-      send: () => wallet.sendTransaction({ to: w.address, value: topUp }),
-      wait,
+      ...txIO(ctx, ctx.deployer, async () => ({ to: w.address, value: topUp })),
       save: () => saveState(ctx),
     });
     ctx.log.push({ id, hash: res.hash });
@@ -450,8 +537,10 @@ async function fundWallets(ctx: Ctx, b: Budget) {
         topUp = usdcTopUp(await usdcOf(ctx, ctx.seeds[r].address), want);
         return topUp === 0n ? "enough" : undefined;
       },
-      send: () => wallet.writeContract({ address: ctx.d.usdc, abi: abi.erc20, functionName: "transfer", args: [ctx.seeds[r].address, topUp] }),
-      wait,
+      ...txIO(ctx, ctx.deployer, async () => {
+        const call = { address: ctx.d.usdc, abi: abi.erc20 as Abi, functionName: "transfer", args: [ctx.seeds[r].address, topUp] as const };
+        return { to: ctx.d.usdc, data: encodeFunctionData(call as never), simulate: call };
+      }),
       save: () => saveState(ctx),
     });
     ctx.log.push({ id, hash: res.hash });
@@ -496,7 +585,15 @@ async function mintCards(ctx: Ctx, cards: Record<CardKey, CardInfo>): Promise<Re
     const res = await step(ctx, `mint-${k}`, ctx.vendor, {
       address: ctx.d.cardVault, abi: abi.cardVault, functionName: "mint",
       args: [{ to, scryfallId: c.scryfallId, slug: c.slug, setCode: c.setCode, condition: "NM", language: c.lang, imageUrl: c.imageUrl, description: c.description }],
-    }, { parse: (r) => String(events(r, abi.cardVault, "CardMinted")[0].args.id), note: `${c.name} → ${HANDLES[CARDS[k].owner]}` });
+    }, {
+      parse: (r) => String(events(r, abi.cardVault, "CardMinted")[0].args.id),
+      note: `${c.name} → ${HANDLES[CARDS[k].owner]}`,
+      // Already minted to this owner for this printing in this run (each seed owner gets each printing once).
+      skip: async () => {
+        const [m] = (await findLogs(ctx, ctx.d.cardVault, abi.cardVault, "CardMinted", { to })).filter((l) => l.args.scryfallId === c.scryfallId);
+        return m ? String(m.args.id) : undefined;
+      },
+    });
     ids[k] = BigInt(res.out as string);
   }
   for (const k of Object.keys(ids) as CardKey[]) console.log(`  card ${k} = #${ids[k]} (${cards[k].slug}-${cards[k].setCode}-${ids[k]}.kura.eth)`);
@@ -505,15 +602,18 @@ async function mintCards(ctx: Ctx, cards: Record<CardKey, CardInfo>): Promise<Re
 
 type Sharded = { token: Address; auction: Address; startBlock: bigint; endBlock: bigint };
 
-async function shard(ctx: Ctx, key: string, cardId: bigint, owner: Wallet, a: AuctionPlan): Promise<Sharded> {
+/** `nth`: which sharding of this card in this run the step is (0 first, 1 the re-shard). */
+async function shard(ctx: Ctx, key: string, cardId: bigint, owner: Wallet, a: AuctionPlan, nth = 0): Promise<Sharded> {
+  const outOf = (e: Record<string, unknown>) => ({ token: e.shardToken as string, auction: e.auction as string, startBlock: String(e.startBlock), endBlock: String(e.endBlock) });
   const res = await step(ctx, `shard-${key}`, owner, {
     address: ctx.d.cardVault, abi: abi.cardVault, functionName: "shardAndAuction",
     args: [cardId, { totalShards: TOTAL_SHARDS, forSale: a.forSale, floorUsdcPerShard: a.floorUsdc, tickUsdcPerShard: TICK_USDC, reserveUsdc: a.reserveUsdc, durationBlocks: a.durationBlocks }],
   }, {
     note: `${a.forSale}/16 for sale, ${a.durationBlocks} blocks`,
-    parse: (r) => {
-      const e = events(r, abi.cardVault, "CardSharded")[0].args;
-      return { token: e.shardToken as string, auction: e.auction as string, startBlock: String(e.startBlock), endBlock: String(e.endBlock) };
+    parse: (r) => outOf(events(r, abi.cardVault, "CardSharded")[0].args),
+    skip: async () => {
+      const e = (await findLogs(ctx, ctx.d.cardVault, abi.cardVault, "CardSharded", { id: cardId }))[nth];
+      return e ? outOf(e.args) : undefined;
     },
   });
   const o = res.out as Record<string, string>;
@@ -556,6 +656,11 @@ async function placeBids(ctx: Ctx, key: string, s: Sharded, a: AuctionPlan): Pro
         const e = events(r, abi.ccaAuction, "BidSubmitted")[0].args;
         return { bidId: String(e.id), maxQ96: String(e.priceQ96), block: String(r.blockNumber) };
       },
+      // One bid per bidder per auction in this scenario: an existing one is this step's.
+      skip: async () => {
+        const [e] = await findLogs(ctx, s.auction, abi.ccaAuction, "BidSubmitted", { owner: w.address });
+        return e ? { bidId: String(e.args.id), maxQ96: String(e.args.priceQ96), block: String(e.blockNumber) } : undefined;
+      },
     });
     const o = res.out as Record<string, string>;
     placed.push({ key, bidder: b.bidder, bidId: BigInt(o.bidId), maxQ96: BigInt(o.maxQ96), amount, block: BigInt(o.block) });
@@ -582,11 +687,14 @@ async function waitForBlock(ctx: Ctx, target: bigint) {
 
 type Settled = { graduated: boolean; clearingQ96: bigint; raised: bigint; fee: bigint };
 
-async function settle(ctx: Ctx, key: string, cardId: bigint, from: Wallet): Promise<Settled> {
+async function settle(ctx: Ctx, key: string, cardId: bigint, token: Address, from: Wallet): Promise<Settled> {
+  const outOf = (e: Record<string, unknown>) => ({ graduated: e.graduated as boolean, clearingQ96: String(e.clearingPriceQ96), raised: String(e.raisedUsdc), fee: String(e.feeUsdc) });
   const res = await step(ctx, `settle-${key}`, from, { address: ctx.d.cardVault, abi: abi.cardVault, functionName: "settle", args: [cardId] }, {
-    parse: (r) => {
-      const e = events(r, abi.cardVault, "AuctionSettled")[0].args;
-      return { graduated: e.graduated as boolean, clearingQ96: String(e.clearingPriceQ96), raised: String(e.raisedUsdc), fee: String(e.feeUsdc) };
+    fees: true,
+    parse: (r) => outOf(events(r, abi.cardVault, "AuctionSettled")[0].args),
+    skip: async () => {
+      const [e] = await findLogs(ctx, ctx.d.cardVault, abi.cardVault, "AuctionSettled", { shardToken: token });
+      return e ? outOf(e.args) : undefined;
     },
   });
   const o = res.out as Record<string, string | boolean>;
@@ -655,10 +763,13 @@ async function redeemA(ctx: Ctx, cardId: bigint, s: Sharded, owner: Wallet, plan
   });
   const appr = { cardId, shardToken: s.token, usdcPerShard: appraisal, expiresAt: (await chainNow(ctx)) + APPRAISAL_TTL_SEC };
   const sig = await ctx.signer.signTypedData({ domain: cardVaultDomain(ctx.d.cardVault), types: APPRAISAL_TYPES, primaryType: "Appraisal", message: appr });
+  const outOf = (e: Record<string, unknown>) => ({ price: String(e.buyoutPerShard), payout: String(e.payoutUsdc), fee: String(e.feeUsdc) });
   const res = await step(ctx, "redeem-A", owner, { address: ctx.d.cardVault, abi: abi.cardVault, functionName: "redeem", args: [cardId, appr, sig] }, {
-    parse: (r) => {
-      const e = events(r, abi.cardVault, "CardRedeemed")[0].args;
-      return { price: String(e.buyoutPerShard), payout: String(e.payoutUsdc), fee: String(e.feeUsdc) };
+    fees: true,
+    parse: (r) => outOf(events(r, abi.cardVault, "CardRedeemed")[0].args),
+    skip: async () => {
+      const [e] = await findLogs(ctx, ctx.d.cardVault, abi.cardVault, "CardRedeemed", { shardToken: s.token });
+      return e ? outOf(e.args) : undefined;
     },
   });
   const o = res.out as Record<string, string>;
@@ -794,6 +905,8 @@ async function main() {
     const b = budget(plan, feeBps);
     const mnemonic = process.env.SEED_MNEMONIC;
     printPlan(cards, plan, b, mnemonic ? seedWallets(mnemonic) : null, feeBps);
+    const cap = budgetCapError(b);
+    if (cap) throw new Error(cap);
     if (rpc && process.env.DEPLOYER_PRIVATE_KEY) {
       const deployer = privateKeyToAccount(process.env.DEPLOYER_PRIVATE_KEY as Hex).address;
       const have = await createPublicClient({ chain: sepolia, transport: http(rpc) }).readContract({ address: d.usdc, abi: abi.erc20, functionName: "balanceOf", args: [deployer] });
@@ -846,8 +959,11 @@ async function main() {
   state.wallets = wallets;
   const feeBps = BigInt(await pub.readContract({ address: d.cardVault, abi: abi.cardVault, functionName: "feeBps" }));
   state.plan ??= planScenario(markets, liveBlocks); // a resumed run keeps the prices and bids it started with
+  state.fromBlock ??= String(await pub.getBlockNumber());
   const plan = state.plan;
   const b = budget(plan, feeBps);
+  const cap = budgetCapError(b); // before any prompt, signature or fork funding
+  if (cap) throw new Error(cap);
 
   const ctx: Ctx = {
     mode, network, pub, rpcUrl, d, state, statePath, signer,
@@ -902,11 +1018,11 @@ async function main() {
 
   console.log("\nSettle");
   await waitForBlock(ctx, sA.endBlock);
-  const setA = await settle(ctx, "A", ids.A, seeds[CARDS.A.owner]);
+  const setA = await settle(ctx, "A", ids.A, sA.token, seeds[CARDS.A.owner]);
   await waitForBlock(ctx, sB.endBlock);
-  const setB = await settle(ctx, "B", ids.B, seeds[CARDS.B.owner]);
+  const setB = await settle(ctx, "B", ids.B, sB.token, seeds[CARDS.B.owner]);
   await waitForBlock(ctx, sC.endBlock);
-  const setC = await settle(ctx, "C", ids.C, seeds[CARDS.C.owner]);
+  const setC = await settle(ctx, "C", ids.C, sC.token, seeds[CARDS.C.owner]);
   for (const s of [setA, setB, setC]) ctx.fees += s.fee;
 
   console.log("\nExit and claim");
@@ -918,7 +1034,14 @@ async function main() {
   await claimPayouts(ctx, sA, price, [...new Set(bidsA.map((x) => x.bidder))]);
 
   console.log("\nCard B: a holder sends 0.5 shards");
-  await step(ctx, "send-B", seeds[CARDS.B.owner], { address: sB.token, abi: abi.shardToken, functionName: "transfer", args: [seeds.bidder0.address, SHARD / 2n] }, { note: `${HANDLES[CARDS.B.owner]} → ${HANDLES.bidder0}` });
+  await step(ctx, "send-B", seeds[CARDS.B.owner], { address: sB.token, abi: abi.shardToken, functionName: "transfer", args: [seeds.bidder0.address, SHARD / 2n] }, {
+    note: `${HANDLES[CARDS.B.owner]} → ${HANDLES.bidder0}`,
+    // bidder0 also holds B shards from its own bid, so look for this exact transfer rather than at the balance.
+    skip: async () => {
+      const sent = await findLogs(ctx, sB.token, abi.shardToken, "Transfer", { from: seeds[CARDS.B.owner].address, to: seeds.bidder0.address });
+      return sent.some((l) => l.args.value === SHARD / 2n) ? "sent" : undefined;
+    },
+  });
 
   console.log("\nCard D: release at the counter");
   const holderD = await read<Address>(ctx, d.cardVault, abi.cardVault, "ownerOf", [ids.D]);
@@ -930,7 +1053,7 @@ async function main() {
   });
 
   console.log(`\nCard A: re-shard as the live auction (${plan.liveBlocks} blocks)`);
-  const sA2 = await shard(ctx, "A2", ids.A, seeds[CARDS.A.owner], plan.auctions.A2);
+  const sA2 = await shard(ctx, "A2", ids.A, seeds[CARDS.A.owner], plan.auctions.A2, 1);
   await placeBids(ctx, "A2", sA2, plan.auctions.A2);
 
   console.log("\nAssertions (on chain)");
@@ -970,7 +1093,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   main().then(
     () => process.exit(0),
     (e) => {
-      console.error(`\n✗ ${e instanceof Error ? e.message : String(e)}`);
+      const urls = [process.env.ALCHEMY_HTTP_URL, process.env.SEPOLIA_RPC_URL, process.env.NEXT_PUBLIC_ALCHEMY_HTTP_URL, process.env.PONDER_URL];
+      console.error(`\n✗ ${redact(e instanceof Error ? e.message : String(e), urls)}`);
       process.exit(1);
     },
   );
