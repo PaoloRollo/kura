@@ -4,6 +4,8 @@ import type * as React from "react";
 import { ShieldCheckIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { CardArt, EnsName, Pill } from "@/components/kura";
+import { CardShowcase } from "@/components/card-showcase";
+import type { Finish } from "@/lib/pricing";
 import type { CardRow, ShardingRow } from "@/hooks/use-card";
 import { setRarity } from "@/lib/card-view";
 import { cardStatus } from "@/lib/card-status";
@@ -88,12 +90,26 @@ export function CompactHeader({ card, identity, shards, sharding, block }: {
 }
 
 /** The left column's art: the card in a surface frame, the custody line and the credit line. */
-export function CardArtColumn({ identity, condition, released, children }: { identity: Identity; condition: string; released: boolean; children?: React.ReactNode }) {
+export function CardArtColumn({ identity, condition, language, ensName, finish = "nonfoil", released, children }: {
+  identity: Identity;
+  condition: string;
+  language: string;
+  ensName?: string | null;
+  finish?: Finish;
+  released: boolean;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-5">
       <div className="rounded-3xl border border-border bg-surface p-5 md:p-8">
         {identity.image ? (
-          <CardArt src={identity.image} alt={identity.name} className={cn("mx-auto w-full max-w-[230px] md:max-w-[340px]", released && "opacity-70")} />
+          <CardShowcase
+            src={identity.image}
+            alt={identity.name}
+            finish={finish}
+            certificate={{ name: identity.name, set: identity.set, rarity: identity.rarity, condition, language, ensName, released }}
+            className={cn("max-w-[230px] md:max-w-[340px]", released && "opacity-70")}
+          />
         ) : (
           <div className="mx-auto aspect-[63/88] w-full max-w-[230px] animate-pulse md:max-w-[340px] rounded-[4.5%/3.3%] bg-surface-2" />
         )}
