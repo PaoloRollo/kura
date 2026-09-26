@@ -133,9 +133,13 @@ export function PastAuction({ s, settledAt }: { s: ShardingRow; settledAt: strin
   );
 }
 
-/** Released: the card left the vault. Task 8 fills in the handover details. */
+/**
+ * Released (mWV0E): the card left the vault. The buyout tiles come from the latest sharding and show only when it was
+ * bought out; the release tx and date from the `release` activity.
+ */
 export function ReleasedSummary({ c }: { c: CardData }) {
-  const s = c.sharding;
+  const latest = c.allShardings[0];
+  const s = latest?.buyoutPerShard != null ? latest : null;
   const release = c.activities.find((a) => a.kind === "release");
   return (
     <Panel className="flex flex-col gap-5 p-6 md:p-7">
@@ -148,13 +152,15 @@ export function ReleasedSummary({ c }: { c: CardData }) {
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 rounded-2xl bg-bg/60 p-4 lg:grid-cols-4">
-        <Stat small label="Final buyout" value={s?.buyoutPerShard != null ? `${money(s.buyoutPerShard, 0)} / shard` : "n/a"} />
-        <Stat small label="Paid to holders" value={s?.payoutUsdc != null ? money(s.payoutUsdc, 0) : "n/a"} />
+      <div className={cn("grid grid-cols-2 gap-4 rounded-2xl bg-bg/60 p-4", s && "lg:grid-cols-4")}>
+        {s && <Stat small label="Final buyout" value={`${money(s.buyoutPerShard!, 0)} / shard`} />}
+        {s && <Stat small label="Paid to holders" value={s.payoutUsdc != null ? money(s.payoutUsdc, 0) : "n/a"} />}
         <Stat small label="Release tx" value={release ? <a href={explorerTx(release.txHash)} target="_blank" rel="noreferrer" className="hover:underline">{shortHash(release.txHash)}</a> : "n/a"} />
         <Stat small label="Token" value="kept as a record" />
       </div>
-      <p className="text-[13px] text-text-2">Nothing more can be sharded or bid here. Holders who haven&apos;t claimed their payout still can, from their portfolio.</p>
+      <p className="text-[13px] text-text-2">
+        Nothing more can be sharded or bid here.{s ? " Holders who haven't claimed their payout still can, from their portfolio." : ""}
+      </p>
     </Panel>
   );
 }

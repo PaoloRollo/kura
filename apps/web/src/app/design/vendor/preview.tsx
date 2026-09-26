@@ -6,10 +6,12 @@ import { CircleDollarSignIcon } from "lucide-react";
 import { BarChip, TopBar } from "@/components/kura";
 import { NAV } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
+import { ReleaseBody, ReleaseShell, StaticConfirm } from "@/components/release-panel";
 import { Fees, FeesView, type LedgerEntry } from "@/components/vendor/fees";
 import { Inventory, InventoryView, type InventoryItem } from "@/components/vendor/inventory";
 import { usePayoutBalance } from "@/hooks/use-vendor-data";
 import { usdc } from "@/lib/format";
+import type { ReleaseStage } from "@/lib/release";
 import { cn } from "@/lib/utils";
 import type { InventoryTab } from "@/lib/vendor";
 
@@ -37,19 +39,39 @@ const DAYS = [
   [40, 2], [180, 60], [90, 4], [260, 130], [120, 30], [370, 200], [430, 170],
 ].map(([sale, buyout], i) => ({ day: `2026-09-${20 + i}`, sale: BigInt(sale) * 1_000_000n, buyout: BigInt(buyout) * 1_000_000n }));
 
+const HOLDER = "0xDeADaD159DF0923dAF871f8B4740eD7f7F417ee9" as const;
+const TICKET_TTL = 15 * 60;
+const nowSec = () => Math.floor(Date.now() / 1000);
+/** The fixture panel stage for a `handover-<stage>` view. */
+function fixtureStage(view: string, now: number): ReleaseStage | null {
+  const issued = { ticket: { kind: 2, subject: HOLDER, nullifier: "1", expiresAt: String(now + TICKET_TTL - 40) }, signature: "0x" as const, credential: "passport" };
+  switch (view) {
+    case "handover-idle": return { kind: "idle" };
+    case "handover-waiting": return { kind: "waiting", uri: "https://world.org/verify?t=wld&i=kura-preview-release-request&k=preview", secondsLeft: 892, scanned: false };
+    case "handover-verifying": return { kind: "verifying" };
+    case "handover-verified": return { kind: "verified", issued, secondsLeft: TICKET_TTL - 48 };
+    case "handover-refused": return { kind: "refused", message: "A stronger credential is required for this step." };
+    case "handover-expired": return { kind: "expired", what: "ticket" };
+    case "handover-released": return { kind: "released", hash: "0x7e1a8c0f6b2d4e9a1c3f5b7d9e0a2c4f6b8d0e1a3c5f7b9d1e3a5c7f9b1d3b9" };
+    default: return null;
+  }
+}
+
 function LiveFeesChip() {
   const b = usePayoutBalance();
   return <BarChip icon={CircleDollarSignIcon} className="hidden lg:inline-flex">Fees {b != null ? usdc(b) : "…"} USDC</BarChip>;
 }
 
 export function VendorPreview({ view, views }: { view: string; views: readonly string[] }) {
-  const [tab, setTab] = useState<InventoryTab>(view === "handover" ? "whole" : "all");
+  const [tab, setTab] = useState<InventoryTab>(view.startsWith("handover") ? "whole" : "all");
   const fees = view.startsWith("fees");
+  const stage = fixtureStage(view, nowSec());
+  const handoverItems = ITEMS.map((i) => (i.id === 1n ? { ...i, owner: HOLDER, redeemedAt: nowSec() - 12 * 60 } : i));
   return (
     <div className="min-h-screen">
       <TopBar
         nav={NAV.vendor}
-        pathname={fees ? "/vendor/fees" : view === "handover" ? "/vendor/vault?tab=whole" : "/vendor/vault"}
+        pathname={fees ? "/vendor/fees" : view.startsWith("handover") ? "/vendor/vault?tab=whole" : "/vendor/vault"}
         right={
           <>
             <LiveFeesChip />
@@ -68,7 +90,20 @@ export function VendorPreview({ view, views }: { view: string; views: readonly s
         ))}
       </nav>
       <main className="mx-auto w-full max-w-[1440px] px-4 pt-6 pb-24 sm:px-6 md:pb-10 lg:px-12 lg:pt-8">
-        {view === "inventory" || view === "handover" ? (
+        {stage ? (
+          <InventoryView
+            items={handoverItems}
+            stats={STATS}
+            tab={tab}
+            onTab={setTab}
+            initialSelected={1n}
+            renderPanel={({ key, cardId, holder, card, redeemedAt, onClose, onShowReleased }) => (
+              <ReleaseShell key={key} card={card} onClose={onClose}>
+                <ReleaseBody cardId={cardId} card={card} holder={holder} redeemedAt={redeemedAt} stage={stage} now={nowSec()} onStart={() => {}} onClose={onClose} onShowReleased={onShowReleased} confirm={<StaticConfirm enabled={stage.kind === "verified"} />} />
+              </ReleaseShell>
+            )}
+          />
+        ) : view === "inventory" || view === "handover" ? (
           <Inventory tab={tab} onTab={setTab} />
         ) : view === "inventory-fixture" ? (
           <InventoryView items={ITEMS} stats={STATS} tab={tab} onTab={setTab} />

@@ -1,5 +1,6 @@
 "use client";
 
+import type * as React from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { PackageOpenIcon, ScanLineIcon } from "lucide-react";
@@ -16,11 +17,11 @@ import { metaCardName, metaTrait } from "@/lib/meta";
 import { cn } from "@/lib/utils";
 import {
   INVENTORY_TABS,
-  awaitingHandover,
   feeTotals,
   holderCounts,
   inTab,
   matchesSearch,
+  redeemedAt,
   tabCounts,
   type CardState,
   type InventoryTab,
@@ -40,6 +41,8 @@ export type InventoryItem = {
   /** Shard holders, for cards on auction or sharded. */
   holders?: number;
   awaiting: boolean;
+  /** When a card awaiting handover was redeemed (unix seconds). */
+  redeemedAt?: number | null;
 };
 
 export type InventoryStats = { inCustody: number; feesTotal: bigint; feesWeek: bigint; awaiting: number; released: number };
@@ -112,17 +115,29 @@ export function InventoryView({
   stats,
   tab,
   onTab,
+  renderPanel = ({ key, ...p }) => <ReleasePanel key={key} {...p} />,
+  initialSelected = null,
 }: {
   items: InventoryItem[];
   stats: InventoryStats;
   tab: InventoryTab;
   onTab: (tab: InventoryTab) => void;
+  /** The hand-over panel for the selected row; previews swap in a fixture. */
+  renderPanel?: (p: React.ComponentProps<typeof ReleasePanel> & { key: string }) => React.ReactNode;
+  /** A row whose panel starts open (previews). */
+  initialSelected?: bigint | null;
 }) {
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<bigint | null>(null);
+  const [selectedId, setSelectedId] = useState<bigint | null>(initialSelected);
+  // A card just handed over keeps its panel (the confirmation) after the indexer marks it released.
+  const [handedOver, setHandedOver] = useState<bigint | null>(null);
   const counts = tabCounts(items);
   const shown = items.filter((i) => inTab(i.state, tab) && matchesSearch({ name: i.name, ensName: i.ensName, owner: i.owner }, query));
-  const selected = items.find((i) => i.id === selectedId && i.state === "whole") ?? null;
+  const selected = items.find((i) => i.id === selectedId && (i.state === "whole" || i.id === handedOver)) ?? null;
+  const close = () => {
+    setSelectedId(null);
+    setHandedOver(null);
+  };
 
   return (
     <div className={cn("grid grid-cols-[minmax(0,1fr)] items-start gap-6", selected && "xl:grid-cols-[minmax(0,1fr)_400px]")}>
@@ -202,9 +217,20 @@ export function InventoryView({
         </section>
       </div>
 
-      {selected && (
-        <ReleasePanel cardId={selected.id} name={selected.name ?? `card #${selected.id}`} holder={selected.owner ?? ""} onClose={() => setSelectedId(null)} />
-      )}
+      {selected?.owner &&
+        renderPanel({
+          key: selected.id.toString(),
+          cardId: selected.id,
+          holder: selected.owner as `0x${string}`,
+          card: { name: selected.name ?? `Card #${selected.id}`, image: selected.image, ensName: selected.ensName },
+          redeemedAt: selected.redeemedAt,
+          onClose: close,
+          onReleased: () => setHandedOver(selected.id),
+          onShowReleased: () => {
+            close();
+            onTab("released");
+          },
+        })}
     </div>
   );
 }
@@ -225,7 +251,7 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
   if (!cards.data) return <IndexerLoading title="Loading the vault" className="mx-auto w-full max-w-md" />;
 
   const holders = holderCounts(cards.data, balances.data ?? [], addresses.cardVault);
-  const awaiting = awaitingHandover(cards.data, shardings.data ?? []);
+  const awaiting = redeemedAt(cards.data, shardings.data ?? []);
   const items: InventoryItem[] = cards.data.map((c) => {
     const meta = metas.get(c.id);
     const shardedState = c.state === "auctioning" || c.state === "sharded";
@@ -240,6 +266,7 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
       owner: shardedState ? undefined : c.state === "released" ? c.beneficialOwner : c.ownerOf,
       holders: shardedState ? (holders.get(c.id) ?? 0) : undefined,
       awaiting: awaiting.has(c.id),
+      redeemedAt: awaiting.get(c.id),
     };
   });
   const totals = feeTotals(fees.data ?? [], now);

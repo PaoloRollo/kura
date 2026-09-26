@@ -1,29 +1,483 @@
 "use client";
 
-import { LockIcon, XIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import type * as React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { passport, useIDKitRequest, type RpContext } from "@worldcoin/idkit";
+import { QRCodeSVG } from "qrcode.react";
+import { BadgeCheckIcon, CheckIcon, CircleCheckIcon, ExternalLinkIcon, LoaderIcon, LockIcon, PackageCheckIcon, PackageOpenIcon, RotateCcwIcon, ScanFaceIcon, TimerOffIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { abi } from "@kura/shared";
+import { AddressName } from "@/components/address-name";
+import { Button, CardArt, notify } from "@/components/kura";
+import { TxStepper, useIsDesktop } from "@/components/tx-stepper";
+import { worldIdErrorMessage } from "@/components/world-id-gate";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { publicEnv } from "@/env";
+import { useDisplayName } from "@/hooks/use-handles";
+import { useNow } from "@/hooks/use-now";
+import { WorldIdError, useWorldIdTicket, type IssuedTicket } from "@/hooks/use-world-id-ticket";
+import { addresses, explorerTx, publicClient } from "@/lib/chain";
+import { agoLong } from "@/lib/card-view";
+import { shortHash } from "@/lib/format";
+import {
+  CHECKLIST,
+  RELEASED_STATE,
+  checklist,
+  describeReleaseError,
+  mmss,
+  releaseArgs,
+  releaseRetryable,
+  releaseStage,
+  type CheckStatus,
+  type ReleaseStage,
+} from "@/lib/release";
+import { useSendTx, type Step } from "@/lib/tx";
+import { cn } from "@/lib/utils";
 
-/** The "Hand over" panel on the inventory (tM3Hy). Stub until Task 8 wires the Passport check and release. */
-export function ReleasePanel({ cardId, name, holder, onClose }: { cardId: bigint; name: string; holder: string; onClose?: () => void }) {
+export type ReleaseCard = { name: string; image?: string; ensName: string };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Live flow: the inline Passport QR (headless IDKit), the backend ticket, then confirmRelease from the vendor wallet.
+
+// useIDKitRequest reads its config only when a request opens; until the real rp context arrives this stands in.
+const NO_RP: RpContext = { rp_id: "", nonce: "", created_at: 0, expires_at: 0, signature: "" };
+
+/** The Passport check for `holder`, rendered inline as a QR (tM3Hy) instead of IDKit's modal. */
+export function useReleaseCheck(holder: `0x${string}`) {
+  const env = publicEnv();
+  const { ready, rpContext, verify } = useWorldIdTicket({ action: "release", subject: holder });
+  const [rp, setRp] = useState<RpContext | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [issued, setIssued] = useState<IssuedTicket | null>(null);
+  const openPending = useRef(false);
+  const handled = useRef<unknown>(null);
+
+  const idkit = useIDKitRequest({
+    app_id: env.NEXT_PUBLIC_WORLD_APP_ID as `app_${string}`,
+    action: "release",
+    rp_context: rp ?? NO_RP,
+    allow_legacy_proofs: true,
+    environment: env.NEXT_PUBLIC_WORLD_ENV,
+    preset: passport({ signal: holder }),
+  });
+  const { open, reset: resetIdkit } = idkit;
+
+  const reset = useCallback(() => {
+    resetIdkit();
+    handled.current = null;
+    openPending.current = false;
+    setRp(null);
+    setError(null);
+    setIssued(null);
+    setVerifying(false);
+  }, [resetIdkit]);
+
+  const start = useCallback(async () => {
+    reset();
+    setStarting(true);
+    try {
+      const ctx = await rpContext();
+      openPending.current = true;
+      setRp(ctx);
+    } catch {
+      setError(worldIdErrorMessage("START_FAILED"));
+      notify({ title: "Couldn't start the Passport check", body: "Try again in a moment.", tone: "shu", icon: <XIcon /> });
+    } finally {
+      setStarting(false);
+    }
+  }, [reset, rpContext]);
+
+  // Open the request once its rp context is in the config (the hook reads it when the request starts).
+  useEffect(() => {
+    if (rp && openPending.current) {
+      openPending.current = false;
+      open();
+    }
+  }, [rp, open]);
+
+  // World confirmed a proof: the backend checks it against the holder and signs the ticket (once per result).
+  const { isSuccess, result, isError, errorCode } = idkit;
+  useEffect(() => {
+    if (!isSuccess || !result || handled.current === result) return;
+    handled.current = result;
+    setVerifying(true);
+    verify(result)
+      .then((t) => {
+        setIssued(t);
+        notify({ title: "Passport verified", body: "Release ticket signed for the holder's wallet.", tone: "good", icon: <BadgeCheckIcon /> });
+      })
+      .catch((e: unknown) => {
+        const message = e instanceof WorldIdError ? worldIdErrorMessage(e.code) : "Verification failed.";
+        setError(e instanceof WorldIdError && e.code === "VERIFY_FAILED" ? e.message : message);
+        notify({ title: "World refused the Passport check", body: message, tone: "shu", icon: <XIcon /> });
+      })
+      .finally(() => setVerifying(false));
+  }, [isSuccess, result, verify]);
+
+  useEffect(() => {
+    if (!isError || !errorCode || handled.current === errorCode) return;
+    handled.current = errorCode;
+    const message = errorCode === "user_rejected" ? "The holder declined in World App." : worldIdErrorMessage(String(errorCode));
+    setError(message);
+    notify({ title: "World refused the Passport check", body: message, tone: "shu", icon: <XIcon /> });
+  }, [isError, errorCode]);
+
+  return {
+    ready,
+    start,
+    reset,
+    inputs: {
+      starting,
+      rpExpiresAt: rp ? rp.expires_at : null,
+      uri: idkit.connectorURI,
+      scanned: idkit.isAwaitingUserConfirmation,
+      verifying,
+      error,
+      issued,
+    },
+  };
+}
+
+/** Hand over a Whole card (tM3Hy, ykB2t): the holder's Passport check, then `confirmRelease` from the vendor wallet. */
+export function ReleasePanel({
+  cardId,
+  holder,
+  card,
+  redeemedAt,
+  onClose,
+  onReleased,
+  onShowReleased,
+}: {
+  cardId: bigint;
+  holder: `0x${string}`;
+  card: ReleaseCard;
+  /** When the card came out of a buyout: the redeem time (unix seconds). */
+  redeemedAt?: number | null;
+  onClose: () => void;
+  onReleased?: () => void;
+  /** "See it under Released" on the confirmation. */
+  onShowReleased?: () => void;
+}) {
+  const now = useNow(1000);
+  const check = useReleaseCheck(holder);
+  const { send, walletKind } = useSendTx();
+  const holderName = useDisplayName(holder);
+  const [released, setReleased] = useState<{ hash: `0x${string}` | null } | null>(null);
+  const stage = releaseStage({ ...check.inputs, released, now });
+
+  const issued = stage.kind === "verified" ? stage.issued : null;
+  const steps: Step[] = [
+    {
+      id: "release",
+      label: "Record release and revoke the ENS name",
+      // Re-read on retry: once the vault shows the card released, the release is not sent again.
+      skip: async () => {
+        const c = (await publicClient.readContract({ address: addresses.cardVault, abi: abi.cardVault, functionName: "cards", args: [cardId] })) as { state: number };
+        return Number(c.state) === RELEASED_STATE;
+      },
+      run: () => {
+        if (!issued) throw new Error("The release ticket expired. Run the Passport check again.");
+        return send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "confirmRelease", args: releaseArgs(cardId, issued) });
+      },
+    },
+  ];
+
   return (
-    <section
-      aria-label={`Hand over ${name}`}
-      data-card-id={cardId.toString()}
-      data-holder={holder}
-      className="flex flex-col gap-5 rounded-2xl border border-kin/40 bg-surface p-6"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <h2 className="font-display text-[24px] leading-tight font-semibold text-text">Hand over {name}</h2>
-        {onClose && (
-          <button type="button" aria-label="Close" onClick={onClose} className="text-muted-foreground hover:text-text">
-            <XIcon className="size-5" />
-          </button>
-        )}
-      </div>
-      <p className="text-[14px] leading-relaxed text-text-2">The Passport check and on-chain handover open here.</p>
-      <Button variant="disabled" size="md" className="w-full" aria-disabled>
-        <LockIcon />Confirm handover
-      </Button>
+    <ReleaseShell card={card} onClose={onClose}>
+      <ReleaseBody
+        cardId={cardId}
+        card={card}
+        holder={holder}
+        redeemedAt={redeemedAt}
+        stage={stage}
+        now={now}
+        ready={check.ready}
+        onStart={() => void check.start()}
+        onClose={onClose}
+        onShowReleased={onShowReleased}
+        confirm={
+          <TxStepper
+            steps={steps}
+            cta="Confirm handover"
+            ctaIcon={issued ? <PackageOpenIcon aria-hidden /> : <LockIcon aria-hidden />}
+            ctaClassName={issued ? "bg-kin text-kin-ink hover:bg-kin/90" : "bg-surface-2 text-muted-foreground disabled:opacity-100"}
+            disabled={!issued}
+            title="Handing over"
+            failedTitle="The handover didn't go through"
+            describeError={describeReleaseError}
+            retryable={releaseRetryable}
+            backLabel="Start a new Passport check"
+            onCancel={() => {
+              // A refused ticket is spent or stale: the next attempt starts from a fresh check.
+              if (!issued) check.reset();
+            }}
+            onError={(_r, revert) => {
+              if (!releaseRetryable(revert)) check.reset();
+            }}
+            onDone={(results) => {
+              const hash = results.find((r) => r.id === "release")?.hash ?? null;
+              setReleased({ hash });
+              notify({ title: "Handover confirmed", body: `${card.name} released to ${holderName}`, tone: "good", icon: <PackageCheckIcon /> });
+              onReleased?.();
+            }}
+            successToast={false}
+            walletKind={walletKind}
+          />
+        }
+      />
+    </ReleaseShell>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Presentational
+
+/** The right-hand panel next to the inventory from `md` up; a bottom sheet below. */
+export function ReleaseShell({ card, onClose, children }: { card: ReleaseCard; onClose: () => void; children: React.ReactNode }) {
+  const isDesktop = useIsDesktop();
+  const head = (
+    <div className="flex items-start justify-between gap-3">
+      <h2 className="font-display text-[24px] leading-tight font-semibold text-text">Hand over {card.name}</h2>
+      <button type="button" aria-label="Close" onClick={onClose} className="-mr-1 rounded-md p-1 text-text-2 outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring/50">
+        <XIcon className="size-5" />
+      </button>
+    </div>
+  );
+  if (!isDesktop) {
+    return (
+      <Sheet open onOpenChange={(o) => !o && onClose()}>
+        <SheetContent side="bottom" showCloseButton={false} className="max-h-[92dvh] overflow-y-auto rounded-t-2xl border-border bg-surface px-5 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]">
+          <span aria-hidden className="mx-auto h-1 w-9 rounded-full bg-border" />
+          <SheetTitle className="sr-only">Hand over {card.name}</SheetTitle>
+          <SheetDescription className="sr-only">Passport check and handover</SheetDescription>
+          <div className="flex flex-col gap-5">{head}{children}</div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+  return (
+    <section aria-label={`Hand over ${card.name}`} className="flex flex-col gap-5 rounded-2xl border border-kin/40 bg-surface p-6 xl:sticky xl:top-6">
+      {head}
+      {children}
     </section>
+  );
+}
+
+function Dot({ status }: { status: CheckStatus }) {
+  return <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status === "done" ? "bg-good" : status === "active" ? "bg-kin" : "bg-surface-2")} />;
+}
+
+function StatusRow({ icon, children, trailing }: { icon: React.ReactNode; children: React.ReactNode; trailing?: React.ReactNode }) {
+  return (
+    <div role="status" className="flex items-center gap-3 rounded-lg bg-bg px-4 py-3 text-[14px] text-text [&_svg]:size-4 [&_svg]:shrink-0">
+      {icon}
+      <span className="min-w-0 flex-1">{children}</span>
+      {trailing && <span className="shrink-0 font-mono text-[13px] text-text-2 tabular-nums">{trailing}</span>}
+    </div>
+  );
+}
+
+/** The white QR card with 蔵 in the middle. */
+function PassportQr({ uri }: { uri: string | null }) {
+  return (
+    <div className="flex aspect-[352/260] w-full items-center justify-center rounded-2xl bg-white p-5">
+      {uri ? (
+        <a href={uri} target="_blank" rel="noreferrer" aria-label="Open the Passport check in World App" className="relative block h-full max-h-[220px] aspect-square">
+          <QRCodeSVG value={uri} size={220} level="H" bgColor="#ffffff" fgColor="#111111" className="h-full w-full" />
+          <span lang="ja" aria-hidden className="absolute top-1/2 left-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center bg-white font-display text-[26px] text-shu">蔵</span>
+        </a>
+      ) : (
+        <LoaderIcon aria-label="Preparing the QR" className="size-6 animate-spin text-neutral-400" />
+      )}
+    </div>
+  );
+}
+
+function Notice({ tone, icon, title, body, action }: { tone: "shu" | "neutral"; icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode }) {
+  return (
+    <div className={cn("flex aspect-[352/260] w-full flex-col items-center justify-center gap-3 rounded-2xl border p-6 text-center", tone === "shu" ? "border-shu/30 bg-shu-soft" : "border-dashed border-border bg-bg")}>
+      <span className={cn("flex size-12 items-center justify-center rounded-full [&_svg]:size-6", tone === "shu" ? "bg-shu/15 text-shu" : "bg-surface-2 text-text-2")}>{icon}</span>
+      <div className="flex flex-col gap-1">
+        <p className="text-[16px] font-semibold text-text">{title}</p>
+        {body && <p className="text-[13px] text-text-2">{body}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function Verified({ holder }: { holder: string }) {
+  return (
+    <div className="flex aspect-[352/260] w-full flex-col items-center justify-center gap-4 rounded-2xl border border-good/40 bg-good-soft p-6 text-center">
+      <span className="flex size-24 items-center justify-center rounded-full border-2 border-good text-good [&_svg]:size-10">
+        <BadgeCheckIcon aria-hidden strokeWidth={1.75} />
+      </span>
+      <div className="flex flex-col gap-2">
+        <p className="text-[18px] font-semibold text-text">Passport verified</p>
+        <p className="inline-flex flex-wrap items-center justify-center gap-1.5 font-mono text-[13px] text-text-2">
+          Ticket issued for <AddressName address={holder} avatar={false} copyable={false} className="[&>span]:text-[13px] [&>span]:text-text-2" />
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const INSTRUCTIONS: Partial<Record<ReleaseStage["kind"], string>> = {
+  verified: "The holder passed the Passport check. Hand over the card, then confirm. This records the release and revokes the ENS name.",
+};
+const ASK = "Ask the holder to scan this with World App and complete the Passport check. The ticket names their wallet, so nobody else can collect.";
+
+/** Everything under the panel's title, for one stage. `confirm` is the Confirm handover control (a TxStepper live). */
+export function ReleaseBody({
+  cardId,
+  card,
+  holder,
+  redeemedAt,
+  stage,
+  now,
+  ready = true,
+  onStart,
+  onClose,
+  onShowReleased,
+  confirm,
+}: {
+  cardId: bigint;
+  card: ReleaseCard;
+  holder: string;
+  redeemedAt?: number | null;
+  stage: ReleaseStage;
+  now: number;
+  ready?: boolean;
+  onStart: () => void;
+  onClose: () => void;
+  onShowReleased?: () => void;
+  confirm: React.ReactNode;
+}) {
+  const dots = checklist(stage);
+  const holderName = useDisplayName(holder);
+
+  if (stage.kind === "released") {
+    return (
+      <>
+        <HolderRow card={card} holder={holder} redeemedAt={redeemedAt} now={now} />
+        <div className="flex flex-col items-center gap-4 rounded-2xl border border-good/40 bg-good-soft px-6 py-8 text-center">
+          <span className="flex size-16 items-center justify-center rounded-2xl bg-good/15 text-good [&_svg]:size-8">
+            <PackageCheckIcon aria-hidden />
+          </span>
+          <div className="flex flex-col gap-1.5">
+            <p className="font-display text-[22px] font-semibold text-text">Handover confirmed</p>
+            <p className="text-[14px] text-text-2">
+              {card.name} is released to {holderName}. The vault no longer holds it and <span className="font-mono text-[13px] text-muted-foreground">{card.ensName}</span> is revoked.
+            </p>
+          </div>
+        </div>
+        {stage.hash && (
+          <StatusRow icon={<CircleCheckIcon className="text-good" />} trailing={
+            <a href={explorerTx(stage.hash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-kin hover:underline">
+              {shortHash(stage.hash)}<ExternalLinkIcon className="size-3.5" />
+            </a>
+          }>
+            Release recorded on-chain
+          </StatusRow>
+        )}
+        <Checklist dots={dots} />
+        <div className="flex flex-col gap-2.5 sm:flex-row">
+          <Button asChild variant="secondary" size="md" className="sm:flex-1">
+            <Link href={`/app/cards/${cardId}`}>View card page</Link>
+          </Button>
+          <Button variant="redeem" size="md" className="sm:flex-1" onClick={onShowReleased ?? onClose}>
+            <CheckIcon aria-hidden />Done
+          </Button>
+        </div>
+      </>
+    );
+  }
+
+  const main =
+    stage.kind === "verified" ? <Verified holder={holder} />
+    : stage.kind === "waiting" ? <PassportQr uri={stage.uri} />
+    : stage.kind === "verifying" ? <PassportQr uri={null} />
+    : stage.kind === "refused" ? (
+      <Notice tone="shu" icon={<TriangleAlertIcon />} title="The Passport check didn't pass" body={stage.message} action={<Button variant="secondary" size="compact" onClick={onStart}><RotateCcwIcon />Try again</Button>} />
+    ) : stage.kind === "expired" ? (
+      <Notice
+        tone="neutral"
+        icon={<TimerOffIcon />}
+        title={stage.what === "ticket" ? "The release ticket expired" : "The Passport request timed out"}
+        body={stage.what === "ticket" ? "Tickets last 15 minutes. Run the check again with the holder." : "Start a new request and ask the holder to scan again."}
+        action={<Button variant="redeem" size="compact" onClick={onStart}><RotateCcwIcon />Start again</Button>}
+      />
+    ) : (
+      <Notice
+        tone="neutral"
+        icon={<ScanFaceIcon />}
+        title="Passport check"
+        body="Start when the holder is at the counter with World App."
+        action={<Button variant="redeem" size="compact" onClick={onStart} disabled={!ready || stage.kind === "starting"}>{stage.kind === "starting" ? <LoaderIcon className="animate-spin" /> : <ScanFaceIcon />}Start Passport check</Button>}
+      />
+    );
+
+  const status =
+    stage.kind === "waiting" ? (
+      <StatusRow icon={<LoaderIcon className="animate-spin text-kin" />} trailing={mmss(stage.secondsLeft)}>
+        {stage.scanned ? "Holder scanned · confirming in World App…" : "Waiting for Passport verification…"}
+      </StatusRow>
+    ) : stage.kind === "verifying" ? (
+      <StatusRow icon={<LoaderIcon className="animate-spin text-kin" />}>Signing the release ticket…</StatusRow>
+    ) : stage.kind === "verified" ? (
+      <StatusRow icon={<CircleCheckIcon className="text-good" />}>Release ticket signed · valid {mmss(stage.secondsLeft)}</StatusRow>
+    ) : null;
+
+  return (
+    <>
+      <HolderRow card={card} holder={holder} redeemedAt={redeemedAt} now={now} />
+      <p className="text-[14px] leading-relaxed text-text-2">{INSTRUCTIONS[stage.kind] ?? ASK}</p>
+      {main}
+      {status}
+      <Checklist dots={dots} />
+      {confirm}
+    </>
+  );
+}
+
+function HolderRow({ card, holder, redeemedAt, now }: { card: ReleaseCard; holder: string; redeemedAt?: number | null; now: number }) {
+  return (
+    <div className="flex items-center gap-4 rounded-xl bg-bg px-4 py-3.5">
+      {card.image ? (
+        <CardArt src={card.image} alt="" className="h-[46px] w-[33px] shrink-0 rounded-[2px] shadow-none" />
+      ) : (
+        <span aria-hidden className="h-[46px] w-[33px] shrink-0 rounded-[2px] bg-surface-2" />
+      )}
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[14px] text-text">
+          To <AddressName address={holder} avatar={false} copyable={false} className="[&>span]:text-[14px]" />
+        </span>
+        {redeemedAt != null && <span className="text-[12px] text-text-2">Redeemed {agoLong(redeemedAt, now)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Checklist({ dots }: { dots: CheckStatus[] }) {
+  return (
+    <ol className="flex flex-col gap-2.5">
+      {CHECKLIST.map((label, i) => (
+        <li key={label} data-status={dots[i]} className={cn("flex items-center gap-3 text-[13px]", dots[i] === "pending" ? "text-muted-foreground" : "text-text")}>
+          <Dot status={dots[i]!} />
+          {label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** A Confirm handover button for previews: the locked or the enabled look, sending nothing. */
+export function StaticConfirm({ enabled }: { enabled: boolean }) {
+  return enabled ? (
+    <Button variant="redeem" size="md" className="w-full"><PackageOpenIcon aria-hidden />Confirm handover</Button>
+  ) : (
+    <Button variant="disabled" size="md" className="w-full" aria-disabled><LockIcon aria-hidden />Confirm handover</Button>
   );
 }

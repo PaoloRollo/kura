@@ -49,17 +49,34 @@ export function holderCounts(
   return out;
 }
 
-/** Whole cards that came out of a buyout: their latest sharding (by createdAt) has a redeemer. */
-export function awaitingHandover(
-  cards: { id: bigint; state: CardState }[],
-  shardings: { cardId: bigint; createdAt: number; redeemer: string | null }[],
-): Set<bigint> {
-  const latest = new Map<bigint, { createdAt: number; redeemer: string | null }>();
+type ShardingLike = { cardId: bigint; createdAt: number; redeemer: string | null; updatedAt?: number };
+
+function latestShardings<S extends ShardingLike>(shardings: S[]): Map<bigint, S> {
+  const latest = new Map<bigint, S>();
   for (const s of shardings) {
     const prev = latest.get(s.cardId);
     if (!prev || s.createdAt > prev.createdAt) latest.set(s.cardId, s);
   }
-  return new Set(cards.filter((c) => c.state === "whole" && latest.get(c.id)?.redeemer).map((c) => c.id));
+  return latest;
+}
+
+/** Whole cards that came out of a buyout: their latest sharding (by createdAt) has a redeemer. */
+export function awaitingHandover(cards: { id: bigint; state: CardState }[], shardings: ShardingLike[]): Set<bigint> {
+  return new Set(redeemedAt(cards, shardings).keys());
+}
+
+/**
+ * When each Whole card awaiting a handover was redeemed: its latest sharding's `updatedAt`, since the redeem is the
+ * last event that writes a sharding. Null when the row carries no `updatedAt`.
+ */
+export function redeemedAt(cards: { id: bigint; state: CardState }[], shardings: ShardingLike[]): Map<bigint, number | null> {
+  const latest = latestShardings(shardings);
+  const out = new Map<bigint, number | null>();
+  for (const c of cards) {
+    const s = latest.get(c.id);
+    if (c.state === "whole" && s?.redeemer) out.set(c.id, s.updatedAt ?? null);
+  }
+  return out;
 }
 
 /** Case-insensitive match on the card name, the ENS name or the owner (address or handle). */

@@ -145,7 +145,7 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
     <>
       <TopBar
         className={fullScreenStep || detail ? "max-md:hidden" : undefined}
-        homeHref={role === "collector" ? "/app" : undefined}
+        homeHref={role === "collector" ? "/app" : "/vendor"}
         nav={nav}
         pathname={pathname}
         exactHrefs={["/app"]}

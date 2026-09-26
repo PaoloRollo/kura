@@ -6,9 +6,9 @@ import { IDKitRequestWidget, passport, proofOfHuman, type RpContext } from "@wor
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/env";
-import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
+import { WorldIdError, useWorldIdTicket, type IssuedTicket } from "@/hooks/use-world-id-ticket";
 
-export type IssuedTicket = { ticket: { kind: number; subject: `0x${string}`; nullifier: string; expiresAt: string }; signature: `0x${string}`; credential: string };
+export type { IssuedTicket };
 
 const ERRORS: Record<string, string> = {
   SIGNAL_MISMATCH: "That proof was made for a different wallet.",
@@ -51,7 +51,8 @@ export function WorldIdGate(props: {
   className?: string;
 }) {
   const env = publicEnv();
-  const { identityToken } = useKuraUser();
+  const world = useWorldIdTicket({ action: props.action, subject: props.subject });
+  const ready = world.ready;
   const [open, setOpen] = useState(false);
   // The rp context is single-use (nonce) and short-lived, so a fresh one is fetched on every open and dropped on close.
   // It is tagged with the action it was signed for, so a change of `props.action` never reuses a stale context.
@@ -65,17 +66,14 @@ export function WorldIdGate(props: {
   const closePending = useRef(false);
 
   async function start() {
-    if (!identityToken) return;
+    if (!ready) return;
     // A fresh attempt: an earlier refusal's "already reported" flag must not swallow this one's errors.
     reported.current = false;
     setStarting(true);
     setRp(null);
     try {
       const action = props.action;
-      const r = await apiFetch("/api/worldid/rp-context", { method: "POST", body: JSON.stringify({ action }), identityToken });
-      if (!r.ok) throw new Error(`rp-context ${r.status}`);
-      const j = await r.json();
-      setRp({ action, ctx: { rp_id: j.rp_id, nonce: j.nonce, created_at: j.created_at, expires_at: j.expires_at, signature: j.signature } });
+      setRp({ action, ctx: await world.rpContext() });
       setOpen(true);
     } catch {
       if (props.onError) props.onError("START_FAILED");
@@ -85,14 +83,14 @@ export function WorldIdGate(props: {
     }
   }
 
-  // Kick off once when asked to (after the identity token is known); a ref keeps StrictMode from opening it twice.
+  // Kick off once when asked to (once signed in); a ref keeps StrictMode from opening it twice.
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (!props.autoStart || autoStarted.current || !identityToken) return;
+    if (!props.autoStart || autoStarted.current || !ready) return;
     autoStarted.current = true;
     void start();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per mount
-  }, [props.autoStart, identityToken]);
+  }, [props.autoStart, ready]);
 
   function onOpenChange(next: boolean) {
     setOpen(next);
@@ -109,7 +107,7 @@ export function WorldIdGate(props: {
 
   return (
     <>
-      <Button variant={props.variant} className={props.className} onClick={start} disabled={!identityToken || starting}>
+      <Button variant={props.variant} className={props.className} onClick={start} disabled={!ready || starting}>
         {props.icon}
         {props.label ?? (props.action === "release" ? "Verify with Passport" : "Verify with World ID")}
       </Button>
@@ -126,20 +124,18 @@ export function WorldIdGate(props: {
           handleVerify={async (result) => {
             verifying.current = true;
             try {
-              const res = await apiFetch("/api/worldid/verify", {
-                method: "POST",
-                body: JSON.stringify({ action: props.action, subject: props.subject, idkitResponse: result }),
-                identityToken,
-              });
-              if (!res.ok) {
-                const { error } = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } };
-                if (error?.code && props.onError) {
+              let issued: IssuedTicket;
+              try {
+                issued = await world.verify(result);
+              } catch (e) {
+                const code = e instanceof WorldIdError ? e.code : "";
+                if (code && code !== "VERIFY_FAILED" && props.onError) {
                   reported.current = true;
-                  props.onError(error.code, error.details);
+                  props.onError(code, e instanceof WorldIdError ? e.details : undefined);
                 }
-                throw new Error(ERRORS[error?.code ?? ""] ?? error?.message ?? "Verification failed");
+                throw new Error(ERRORS[code] ?? (e instanceof Error ? e.message : "Verification failed"));
               }
-              props.onTicket((await res.json()) as IssuedTicket);
+              props.onTicket(issued);
             } finally {
               verifying.current = false;
               if (closePending.current) {
