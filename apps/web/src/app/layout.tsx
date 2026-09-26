@@ -8,9 +8,17 @@ const fraunces = Fraunces({ variable: "--font-fraunces", subsets: ["latin"], dis
 const interTight = Inter_Tight({ variable: "--font-inter-tight", subsets: ["latin"], display: "swap" });
 const jetbrainsMono = JetBrains_Mono({ variable: "--font-jetbrains-mono", subsets: ["latin"], display: "swap" });
 
+const description = "Your cards stay in the vault. Their value moves. Shard real Magic cards, sell them to verified humans, buy out at 80%.";
+
+// Icons and share images come from the files next to this layout (icon.png, apple-icon.png, opengraph-image.png,
+// twitter-image.png); metadataBase makes their URLs absolute for link previews.
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.kuravault.xyz"),
   title: "Kura · a storehouse for the cards you love",
-  description: "Your cards stay in the vault. Their value moves. Shard real Magic cards, sell them to verified humans, buy out at 80%.",
+  description,
+  applicationName: "Kura",
+  openGraph: { type: "website", siteName: "Kura", title: "Kura · a storehouse for the cards you love", description, url: "/" },
+  twitter: { card: "summary_large_image", title: "Kura · a storehouse for the cards you love", description },
 };
 
 export const viewport: Viewport = { themeColor: "#111112", colorScheme: "dark" };
