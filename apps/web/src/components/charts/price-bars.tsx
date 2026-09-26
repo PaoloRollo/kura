@@ -99,7 +99,7 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
               allowDataOverflow
               ticks={ticks}
               interval={0}
-              width={52}
+              width={64}
               axisLine={false}
               tickLine={false}
               tick={{ fill: "var(--kura-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}
