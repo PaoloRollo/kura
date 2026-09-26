@@ -55,6 +55,14 @@ describe("holdings", () => {
     expect(shortLeft(60n)).toBe("12m");
   });
 
+  it("values a holding at its pool price while the pool trades, at the reference price once frozen", () => {
+    const pool = (frozen: boolean) => [{ cardId: 1n, shardToken: shardings[0]!.shardToken, priceUsdcPerShard: usd(1900), frozen }];
+    const [seller] = holdings({ me: ME, balances, shardings, cards: [], bids, activities, active, block: BLOCK, ident, pools: pool(false) });
+    expect(seller).toMatchObject({ cardId: 1n, price: usd(1900), value: usd(24_700), gain: usd(4420) });
+    const [frozen] = holdings({ me: ME, balances, shardings, cards: [], bids, activities, active, block: BLOCK, ident, pools: pool(true) });
+    expect(frozen).toMatchObject({ cardId: 1n, price: usd(1712) });
+  });
+
   it("sends bought-out shardings to the payout banner", () => {
     expect(payouts(ME, balances, shardings).map((s) => s.cardId)).toEqual([4n]);
   });

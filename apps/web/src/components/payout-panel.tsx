@@ -42,11 +42,13 @@ function describePayoutError(_e: unknown, r: Revert) {
  * `card`: a panel on the card page; `banner`: the kin portfolio banner (QEEV7/YH4Ft). Success shows UwCiy through
  * `showVaultSuccess`, or `onClaimed` when given.
  */
-export function PayoutPanel({ sharding, me, cardName, layout = "card", onClaimed, className }: {
+export function PayoutPanel({ sharding, me, cardName, layout = "card", fromPool = false, onClaimed, className }: {
   sharding: PayoutSharding;
   me: Address | null;
   cardName: string;
   layout?: "card" | "banner";
+  /** `me` is the pool's LP owner: the shards came back from the Uniswap pool at buyout (same claimPayout). */
+  fromPool?: boolean;
   onClaimed?: (info: ClaimedInfo) => void;
   className?: string;
 }) {
@@ -117,7 +119,10 @@ export function PayoutPanel({ sharding, me, cardName, layout = "card", onClaimed
         <div className="flex flex-col gap-1">
           <h2 className="font-display text-[24px] leading-tight font-semibold text-text">This card was bought out</h2>
           <p className="text-[14px] text-text-2">
-            {by} bought out {cardName} at {money(sharding.buyoutPerShard, 0)} per shard. Your {units} {noun} {noun === "shard" ? "is" : "are"} worth <span className="font-mono text-text">{money(amount)}</span>: claim it any time.
+            {by} bought out {cardName} at {money(sharding.buyoutPerShard, 0)} per shard.{" "}
+            {fromPool
+              ? <>The pool closed and its liquidity came back to you: the USDC is already in your wallet, and your {units} {noun} {noun === "shard" ? "is" : "are"} worth <span className="font-mono text-text">{money(amount)}</span>. Claim it any time.</>
+              : <>Your {units} {noun} {noun === "shard" ? "is" : "are"} worth <span className="font-mono text-text">{money(amount)}</span>: claim it any time.</>}
           </p>
         </div>
       </div>

@@ -11,11 +11,13 @@ type ShardingRef = { graduated: boolean | null; clearingPriceQ96: bigint | null;
 /**
  * Implied card value: the reference price per shard × total shards. Settled (`graduated !== null`): the clearing price,
  * n/a when the auction did not graduate. Auctioning: the latest checkpoint's clearing price (the caller labels it
- * "live"). Null without a reference.
+ * "live"). Once the card's Uniswap pool trades (`poolUsdcPerShard`, see lib/market `poolValuePrice`), its price. Null
+ * without a reference.
  */
-export function impliedValueUsdc(sharding: ShardingRef | null, liveClearingQ96?: bigint | null): bigint | null {
+export function impliedValueUsdc(sharding: ShardingRef | null, liveClearingQ96?: bigint | null, poolUsdcPerShard?: bigint | null): bigint | null {
   if (!sharding) return null;
-  const ref = sharding.graduated !== null ? clearingPerShard(sharding) : liveClearingQ96 != null ? q96ToUsdcPerShard(liveClearingQ96) : null;
+  const ref = poolUsdcPerShard != null && poolUsdcPerShard > 0n ? poolUsdcPerShard
+    : sharding.graduated !== null ? clearingPerShard(sharding) : liveClearingQ96 != null ? q96ToUsdcPerShard(liveClearingQ96) : null;
   if (ref == null || ref === 0n) return null;
   return ref * BigInt(sharding.totalShards);
 }

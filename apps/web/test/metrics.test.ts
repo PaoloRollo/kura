@@ -16,6 +16,13 @@ describe("metrics", () => {
     expect(impliedValueUsdc(null, TEN)).toBeNull();
   });
 
+  it("implied value follows the pool price once a live pool trades the shards", () => {
+    expect(impliedValueUsdc({ graduated: true, clearingPriceQ96: TEN, totalShards: 16 }, null, 12_000_000n)).toBe(192_000_000n);
+    // No pool, a zero price or a frozen pool (the caller passes null): the clearing again.
+    expect(impliedValueUsdc({ graduated: true, clearingPriceQ96: TEN, totalShards: 16 }, null, null)).toBe(160_000_000n);
+    expect(impliedValueUsdc({ graduated: true, clearingPriceQ96: TEN, totalShards: 16 }, null, 0n)).toBe(160_000_000n);
+  });
+
   it("premium takes USDC from lib/pricing and handles missing prices", () => {
     expect(premium(160_000_000n, 128_000_000n)).toBeCloseTo(0.25);
     expect(premium(160_000_000n, null)).toBeNull();

@@ -163,7 +163,13 @@ export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPa
           {!released && <MarketPanel c={c} me={me as `0x${string}` | null} />}
           {/* Payouts of bought-out shardings stay claimable, released cards included (each renders only with a balance). */}
           {c.allShardings.filter((s) => s.redeemer && s.buyoutPerShard != null).map((s) => (
-            <PayoutPanel key={s.shardToken} me={me as `0x${string}` | null} cardName={identity.name} sharding={{ cardId: s.cardId, shardToken: s.shardToken, buyoutPerShard: s.buyoutPerShard!, redeemer: s.redeemer }} />
+            <PayoutPanel
+              key={s.shardToken}
+              me={me as `0x${string}` | null}
+              cardName={identity.name}
+              sharding={{ cardId: s.cardId, shardToken: s.shardToken, buyoutPerShard: s.buyoutPerShard!, redeemer: s.redeemer }}
+              fromPool={!!me && !!c.pool && c.pool.shardToken.toLowerCase() === s.shardToken.toLowerCase() && c.pool.lpOwner.toLowerCase() === me.toLowerCase()}
+            />
           ))}
           {!released && (
             <div className="grid gap-10 xl:grid-cols-2">

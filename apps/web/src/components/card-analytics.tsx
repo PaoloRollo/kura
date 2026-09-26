@@ -20,7 +20,7 @@ import { addresses } from "@/lib/chain";
 import { PREMIUM_NEUTRAL, SERIES, premiumLabel } from "@/lib/chart-colors";
 import { clearingPerShard, custodians, holdersView, pct, shareOf, toClaimColor } from "@/lib/card-view";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
-import { swapSeries } from "@/lib/market";
+import { poolValuePrice, swapSeries } from "@/lib/market";
 import { distanceToRedemption, feesByKind, fillRate, impliedValueUsdc, participation, premium, tokensSold } from "@/lib/metrics";
 import { marketPerShard, priceSourceLabel, quoteUsdc } from "@/lib/pricing";
 import { clearingLevel, demandCurve, holderSeries } from "@/lib/series";
@@ -172,7 +172,8 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
   if (view.unclaimed > 0n) slices.push({ id: "unclaimed", name: unclaimedLabel, label: <span className="text-muted-foreground">{unclaimedLabel}</span>, value: shareOf(view.unclaimed, view.supply), color: UNCLAIMED_COLOR });
 
   // --- KPIs.
-  const implied = boughtOut ? null : impliedValueUsdc(s, liveQ96);
+  const poolPrice = data.pool ? poolValuePrice([data.pool], s.shardToken) : null;
+  const implied = boughtOut ? null : impliedValueUsdc(s, liveQ96, poolPrice);
   const prem = premium(implied, quote);
   const why = s.redeemer != null && s.buyoutPerShard != null ? `bought out at ${money(s.buyoutPerShard, 0)}/shard` : card.state === "released" ? "released" : card.state === "whole" ? "bought out" : failed ? "reserve not met" : null;
   const top = view.top?.balance ?? 0n;
@@ -186,7 +187,7 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     {
       label: "Implied value",
       value: implied != null ? money(implied, 0) : "n/a",
-      sub: why ?? (implied == null ? "no clearing yet" : live ? `live clearing × ${s.totalShards}` : `clearing × ${s.totalShards}`),
+      sub: why ?? (implied == null ? "no clearing yet" : poolPrice != null ? `pool price × ${s.totalShards}` : live ? `live clearing × ${s.totalShards}` : `clearing × ${s.totalShards}`),
     },
     {
       label: "Premium",

@@ -1,6 +1,7 @@
 // Explore (TQ4jp, Z6BlV0, aUlMV, NWOiJ): auction items joined from the indexer rows, the Live / Ending soon / Upcoming /
 // Ended tabs, filters kept in the URL query, search and sort. Pure, so node tests cover it.
 import { q96ToUsdcPerShard } from "@kura/shared";
+import { poolValuePrice, type PoolPrice } from "@/lib/market";
 import { metaCardName } from "@/lib/meta";
 import { vsMarket } from "@/lib/pricing";
 
@@ -86,7 +87,9 @@ export type AuctionItem = {
   graduated: boolean | null;
   /** The whole card's market price (USDC), from lib/pricing's quote; null without one. */
   market: bigint | null;
-  /** Clearing vs market per shard as a fraction (+0.096 is 9.6% above); null without both. */
+  /** The card's Uniswap pool price per whole shard while it trades; null without a pool or once frozen. */
+  poolPrice: bigint | null;
+  /** The pool price (else the clearing) vs market per shard as a fraction (+0.096 is 9.6% above); null without both. */
   premium: number | null;
   /** Unix seconds the sharding was last updated (settlement time for settled ones). */
   updatedAt: number;
@@ -125,6 +128,8 @@ export function buildAuctionItems(p: {
   /** Whole-card market price (USDC) by card id. */
   markets: ReadonlyMap<string, bigint | null>;
   block: bigint;
+  /** The indexer's pools, for settled cards whose shards trade. */
+  pools?: readonly PoolPrice[];
 }): AuctionItem[] {
   const cards = new Map(p.cards.map((c) => [c.id.toString(), c]));
   const byToken = new Map(p.shardings.map((s) => [lc(s.shardToken), s]));
@@ -135,11 +140,12 @@ export function buildAuctionItems(p: {
     const meta = p.metas.get(card.id.toString());
     const clearing = clearingOf(s);
     const market = p.markets.get(card.id.toString()) ?? null;
+    const poolPrice = poolValuePrice(p.pools, s.shardToken);
     return {
       cardId: card.id, auction: s.auction, shardToken: s.shardToken, name: nameOf(meta, card), image: meta?.image || null,
       set: a?.set ? a.set.toUpperCase() : null, setName: a?.setName ?? null, rarity: a?.rarity ?? null, colors: a?.colors ?? [],
       condition: card.condition, language: card.language, ensName: card.ensName, clearing, totalShards: s.totalShards, forSale: s.forSale,
-      startBlock, endBlock, status, graduated: s.graduated, market, premium: vsMarket(clearing, market, s.totalShards), updatedAt: s.updatedAt,
+      startBlock, endBlock, status, graduated: s.graduated, market, poolPrice, premium: vsMarket(poolPrice ?? clearing, market, s.totalShards), updatedAt: s.updatedAt,
     };
   };
   const out: AuctionItem[] = [];
@@ -296,8 +302,9 @@ export function matchesFilters(it: AuctionItem, f: ExploreFilters, block: bigint
     if (!b || !f.ends.includes(b)) return false;
   }
   if (f.pmin != null || f.pmax != null) {
-    if (it.clearing == null) return false;
-    const d = dollars(it.clearing);
+    const shown = it.poolPrice ?? it.clearing;
+    if (shown == null) return false;
+    const d = dollars(shown);
     if (f.pmin != null && d < f.pmin) return false;
     if (f.pmax != null && d > f.pmax) return false;
   }
@@ -308,7 +315,7 @@ const cmpBig = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function sortItems(items: readonly AuctionItem[], sort: ExploreSort, tab: ExploreTab): AuctionItem[] {
   const out = [...items];
-  const price = (it: AuctionItem) => it.clearing ?? -1n;
+  const price = (it: AuctionItem) => it.poolPrice ?? it.clearing ?? -1n;
   switch (sort) {
     case "ending":
       // Ended: the most recently ended first (awaiting settle before settled).
@@ -338,7 +345,7 @@ export function filterOptions(items: readonly AuctionItem[]) {
     for (const v of values) if (v) m.set(v, (m.get(v) ?? 0) + 1);
     return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([v]) => v);
   };
-  const prices = items.flatMap((i) => (i.clearing != null ? [dollars(i.clearing)] : []));
+  const prices = items.flatMap((i) => { const p = i.poolPrice ?? i.clearing; return p != null ? [dollars(p)] : []; });
   return {
     sets: count(items.map((i) => i.set)),
     languages: count(items.map((i) => lc(i.language))),

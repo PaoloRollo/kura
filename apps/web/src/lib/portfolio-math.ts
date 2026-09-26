@@ -20,11 +20,13 @@ export function costBasis(bids: readonly BidLike[]): bigint | null {
 export const unrealized = (refPerShard: bigint, costPerShard: bigint, balance: bigint) => ((refPerShard - costPerShard) * balance) / SHARD;
 
 /**
- * What a shard is worth now: the buyout price once bought out; n/a (null) when the auction did not graduate; else the
- * clearing price (the final one once settled, the live one while the auction runs).
+ * What a shard is worth now: the buyout price once bought out; the pool price while the card's Uniswap pool trades
+ * (`poolUsdcPerShard`); n/a (null) when the auction did not graduate; else the clearing price (the final one once
+ * settled, the live one while the auction runs).
  */
-export function referencePrice(s: ShardingLike): bigint | null {
+export function referencePrice(s: ShardingLike, poolUsdcPerShard: bigint | null = null): bigint | null {
   if (s.redeemer && s.buyoutPerShard != null) return s.buyoutPerShard;
+  if (poolUsdcPerShard != null && poolUsdcPerShard > 0n) return poolUsdcPerShard;
   if (s.graduated === false) return null;
   return s.clearingUsdcPerShard ?? null;
 }

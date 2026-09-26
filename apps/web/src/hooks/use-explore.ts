@@ -5,6 +5,7 @@ import { desc } from "@ponder/client";
 import { usePonderQuery, usePonderStatus } from "@ponder/react";
 import { useQueries } from "@tanstack/react-query";
 import type { CardAttributesMap } from "@/lib/card-attributes";
+import { usePools } from "@/hooks/use-pools";
 import { buildAuctionItems, inTab, type AuctionItem, type ExploreTab } from "@/lib/explore";
 import { quoteUsdc, type PriceQuote } from "@/lib/pricing";
 import { schema, t, type Row } from "@/lib/ponder";
@@ -98,6 +99,7 @@ export function useExploreData(tab: ExploreTab): ExploreData {
   const shardings = usePonderQuery({ queryFn: shardingsQuery });
   const active = usePonderQuery({ queryFn: activeQuery });
   const block = useIndexerBlock();
+  const pools = usePools();
 
   const cardRows = useMemo(() => cards.data ?? [], [cards.data]);
   const newRows = useMemo(() => cardRows.slice(0, NEW_IN_VAULT), [cardRows]);
@@ -117,6 +119,7 @@ export function useExploreData(tab: ExploreTab): ExploreData {
     attributes,
     markets,
     block,
+    pools,
   });
   const shown = block == null ? [] : build(new Map()).filter((it) => inTab(it, tab, block)).map((it) => it.cardId);
   const markets = useMarketPrices(shown);

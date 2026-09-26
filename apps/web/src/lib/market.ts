@@ -107,6 +107,18 @@ export function pctDelta(a: bigint | null, b: bigint | null): number | null {
   return Number(((a - b) * 1_000_000n) / b) / 10_000;
 }
 
+/** What valuations need from a pool row. */
+export type PoolPrice = Pick<PoolRow, "cardId" | "priceUsdcPerShard" | "frozen"> & { shardToken: string };
+
+/**
+ * The pool price holdings of `shardToken` are valued at: the indexer's latest pool price while the pool trades. Null
+ * without a pool, once it is frozen (bought out: the buyout price takes over) or at a zero price.
+ */
+export function poolValuePrice(pools: readonly PoolPrice[] | undefined, shardToken: string): bigint | null {
+  const p = pools?.find((x) => lc(x.shardToken) === lc(shardToken));
+  return p && !p.frozen && p.priceUsdcPerShard > 0n ? p.priceUsdcPerShard : null;
+}
+
 /** Whether the pool takes swaps: it exists and the card hasn't been bought out. */
 export const isTradable = (pool: Pick<PoolRow, "frozen"> | null): boolean => !!pool && !pool.frozen;
 
@@ -147,6 +159,12 @@ export async function quoteBuyExactShards(p: { key: PoolKey; shards: bigint; acc
     address: chain.addresses.v4Quoter, abi: v4QuoterAbi, functionName: "quoteExactOutputSingle", args: [quoteParams(p.key, isZeroForOne("buy", shardIsCurrency0), p.shards)], account: p.account,
   });
   return (result as readonly [bigint, bigint])[0];
+}
+
+/** The USDC to spend for an exact-out quote through the exact-in form: the quote plus 1% headroom, rounded up to a cent. */
+export function shortfallBudget(quoteUsdc: bigint): bigint {
+  const withHeadroom = (quoteUsdc * 10_100n + 9_999n) / 10_000n;
+  return ((withHeadroom + 9_999n) / 10_000n) * 10_000n;
 }
 
 export type SwapPlan = {

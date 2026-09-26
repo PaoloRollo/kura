@@ -13,6 +13,8 @@ import { RedeemPanel } from "@/components/redeem-panel";
 import { PayoutPanel } from "@/components/payout-panel";
 import { SendShardsSheet, parseShardAmount } from "@/components/send-shards";
 import { VaultIoContext, type VaultIo, type VaultRead } from "@/components/vault-io";
+import { MarketIoContext, MarketPanel } from "@/components/market-panel";
+import { shortfallBudget, type PoolRow } from "@/lib/market";
 import { HandlesFixture } from "@/hooks/use-handles";
 import { showVaultSuccess, useVaultSuccess } from "@/components/vault-success";
 import { resetAppraisalThrottleForTests, retryDelayMs, canAttemptAppraisal } from "@/lib/appraisal-refresh";
@@ -132,6 +134,35 @@ describe("RedeemPanel", () => {
     expect(screen.getByText(/You hold 7.5 of 16/)).toBeTruthy();
   });
 
+  it("quotes the shortfall on the pool and fills the market form with it", async () => {
+    const c = cardFixture("sharded", 1_790_000_000);
+    const pool = { cardId: 1n, poolId: `0x${"11".repeat(32)}`, shardToken: TOKEN, shardIsCurrency0: true, sqrtPriceX96: 0n, priceUsdcPerShard: usd(1800), seededAt: 1n,
+      seedShards: 8n * S, seedUsdc: 1n, lastSwapAt: null, swapCount: 0, volumeUsdc: 0n, frozen: false, lpOwner: PAOLO, feesShards: 0n, feesUsdc: 0n } as PoolRow;
+    const withPool = { ...c, pool, swaps: [] };
+    // Exact-out: 5.3 shards cost $9,540.00 on the pool.
+    const simulate = vi.fn(async (req: { functionName: string }) => ({ result: [req.functionName === "quoteExactOutputSingle" ? usd(9540) : 53n * S / 10n, 1n] }));
+    const read = chainRead({ balanceOf: (r: VaultRead) => (r.address.toLowerCase() === TOKEN.toLowerCase() ? 75n * S / 10n : usd(20_000)), allowance: 2n ** 200n });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HandlesFixture.Provider value={HANDLES}>
+          <VaultIoContext.Provider value={{ read, appraise: vi.fn() }}>
+            <MarketIoContext.Provider value={{ read: read as never, simulate: simulate as never, walletKind: "embedded" }}>
+              <RedeemPanel c={withPool} me={PAOLO} />
+              <MarketPanel c={withPool} me={PAOLO} />
+            </MarketIoContext.Provider>
+          </VaultIoContext.Provider>
+        </HandlesFixture.Provider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("≈ $9,540.00")).toBeTruthy());
+    expect(screen.getByText(/Buy the rest from the pool/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Buy from pool/ }));
+    // The quote plus 1% headroom, rounded up to a cent.
+    await waitFor(() => expect((screen.getByLabelText("You pay") as HTMLInputElement).value).toBe("9,635.40"));
+    expect(shortfallBudget(usd(9540))).toBe(usd(9635.4));
+    expect(shortfallBudget(1n)).toBe(10_000n);
+  });
+
   it("reassembles for a full holder without an appraisal", async () => {
     const c = cardFixture("sharded", 1_790_000_000);
     const appraise = vi.fn();
@@ -151,6 +182,14 @@ describe("PayoutPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Claim $1,840.00" }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     expect(send.mock.calls[0][0]).toMatchObject({ to: addresses.cardVault, functionName: "claimPayout", args: [TOKEN] });
+  });
+});
+
+describe("PayoutPanel for the pool's LP owner", () => {
+  it("says the shards came back from the pool and claims them the same way", async () => {
+    wrap(<PayoutPanel me={PAOLO} fromPool cardName="Black Lotus" sharding={{ cardId: 1n, shardToken: TOKEN, buyoutPerShard: usd(1840), redeemer: KENJI }} />, { read: chainRead({ balanceOf: 5n * S }) });
+    expect(await screen.findByText(/The pool closed and its liquidity came back to you/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Claim $9,200.00" })).toBeTruthy();
   });
 });
 
