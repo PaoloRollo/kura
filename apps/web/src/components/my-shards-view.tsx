@@ -7,7 +7,7 @@ import {
   BadgeCheckIcon, CheckCheckIcon, CoinsIcon, DownloadIcon, ExternalLinkIcon, GavelIcon, KeyRoundIcon, LayersIcon, PackageOpenIcon, SendIcon, Undo2Icon, type LucideIcon,
 } from "lucide-react";
 import type { Address } from "viem";
-import { abi, q96ToUsdcPerShard } from "@kura/shared";
+import { abi } from "@kura/shared";
 import { identityOf } from "@/components/card-page-view";
 import { Credit } from "@/components/card-header";
 import { Button, CardArt, EnsName, RedemptionMeter } from "@/components/kura";
@@ -16,18 +16,16 @@ import { SendShardsSheet } from "@/components/send-shards";
 import { useVaultIo } from "@/components/vault-io";
 import type { CardData } from "@/hooks/use-card";
 import { shardsShort } from "@/lib/buyout";
-import { ago, canRedeem, shareOf } from "@/lib/card-view";
+import { ago } from "@/lib/card-view";
 import { explorerAddress } from "@/lib/chain";
-import { clearingOf, languageName } from "@/lib/explore";
+import { languageName } from "@/lib/explore";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
 import { metaTrait } from "@/lib/meta";
-import { historyRows, isSeller, type HistoryRow } from "@/lib/portfolio";
-import { costBasis, referencePrice, unrealized } from "@/lib/portfolio-math";
+import { historyRows, positionOf, type HistoryRow } from "@/lib/portfolio";
 import { gridColumns } from "@/lib/shard-math";
 import { cn } from "@/lib/utils";
 
 const SHARD = 10n ** 18n;
-const lc = (a: string) => a.toLowerCase();
 
 /** "$22,256.00" */
 const full = (x: bigint | null) => (x == null ? "n/a" : money(x));
@@ -134,13 +132,15 @@ export type MyShardsViewProps = {
   c: CardData;
   me: `0x${string}`;
   now: number;
+  /** The indexer's latest block, for the live / awaiting settle rule. */
+  block: bigint | null;
   /** My bidder binding (World ID), for the history. */
   binding: { boundAt: number; blockNumber: bigint } | null;
   feeBps: number | null;
 };
 
 /** My shards (sWbGq for the seller / a holder who can redeem, e2yS2e for a buyer): my position in one card. */
-export function MyShardsView({ c, me, now, binding, feeBps }: MyShardsViewProps) {
+export function MyShardsView({ c, me, now, block, binding, feeBps }: MyShardsViewProps) {
   const [sending, setSending] = useState(false);
   const card = c.card!;
   const s = c.sharding;
@@ -149,9 +149,8 @@ export function MyShardsView({ c, me, now, binding, feeBps }: MyShardsViewProps)
   const live = useLiveBalance(s?.shardToken ?? null, me, { balance: c.myBalance, supply: c.supply });
   const nav = <MobileNav title="My shards" fallback="/app/portfolio" className="-mt-2" />;
 
-  if (!s || live.balance === 0n) {
-    return (
-      <div className="mx-auto flex w-full max-w-[560px] flex-col gap-5">
+  const notHolding = (
+    <div className="mx-auto flex w-full max-w-[560px] flex-col gap-5">
         {nav}
         <div className="flex flex-col items-start gap-3 rounded-2xl border border-border bg-surface p-5">
           <h1 className="text-[16px] font-semibold text-text">You don&apos;t hold shards of {identity.name}</h1>
@@ -159,23 +158,21 @@ export function MyShardsView({ c, me, now, binding, feeBps }: MyShardsViewProps)
           <Button asChild variant="secondary" size="compact"><Link href={`/app/cards/${id}`}>Open the card page</Link></Button>
         </div>
       </div>
-    );
-  }
+  );
+  if (!s || live.balance === 0n) return notHolding;
 
-  const balance = live.balance;
-  const supply = live.supply > 0n ? live.supply : BigInt(s.totalShards) * SHARD;
-  const seller = isSeller(me, s, c.activities);
-  const mine = c.bids.filter((b) => lc(b.owner) === lc(me) && lc(b.auction) === lc(s.auction));
-  const avg = costBasis(mine);
-  const cost = avg ?? (seller ? q96ToUsdcPerShard(s.floorPriceQ96) : null);
-  const running = card.state === "auctioning";
-  const price = referencePrice({ ...s, clearingUsdcPerShard: running ? clearingOf(s) : s.clearingUsdcPerShard });
-  const value = price != null ? (price * balance) / SHARD : null;
-  const gain = price != null && cost != null ? unrealized(price, cost, balance) : null;
-  const eligible = canRedeem(balance, supply);
-  const share = shareOf(balance, supply);
+  // One rule with the portfolio's rows (holdings): cost, reference price, value, gain and live / awaiting settle.
+  const pos = positionOf({ me, balance: live.balance, sharding: s, bids: c.bids, activities: c.activities, block: block ?? 0n, ident: identity });
+  if (!pos) return notHolding;
+  const { balance, cost, price, value, gain, share } = pos;
+  // The sharding's supply, as the portfolio row; the send sheet gets the live totalSupply.
+  const supply = BigInt(s.totalShards) * SHARD;
+  const seller = pos.seller;
+  const avg = pos.costKind === "avg";
+  const eligible = pos.redeemable;
   const paid = cost != null ? (cost * balance) / SHARD : 0n;
   const vsCost = gain != null && paid > 0n ? Number((gain * 10_000n) / paid) / 100 : null;
+  const auctionState = pos.status === "live" ? "live" : pos.status === "awaiting" ? "awaiting settle" : "settled";
 
   const setName = c.attributes?.setName ?? (c.meta ? metaTrait(c.meta, "Set") : undefined);
   const number = c.meta?.description.match(/#(\d+),/)?.[1];
@@ -208,14 +205,14 @@ export function MyShardsView({ c, me, now, binding, feeBps }: MyShardsViewProps)
           {gain != null && (
             <div className="flex shrink-0 flex-col items-end gap-0.5">
               <span className={cn("font-mono text-[15px]", gain >= 0n ? "text-good-fg" : "text-shu")}>{signed(gain)}</span>
-              <span className="text-[12px] text-text-2">{avg != null ? `${vsCost != null ? `${vsCost >= 0 ? "+" : ""}${vsCost.toFixed(1)}% ` : ""}vs cost` : gain >= 0n ? "above your floor" : "below your floor"}</span>
+              <span className="text-[12px] text-text-2">{avg ? `${vsCost != null ? `${vsCost >= 0 ? "+" : ""}${vsCost.toFixed(1)}% ` : ""}vs cost` : gain >= 0n ? "above your floor" : "below your floor"}</span>
             </div>
           )}
         </div>
         <div className="grid grid-cols-4 gap-3">
           <Stat label="Shards" value={`${shardsFixed(balance, balance % SHARD === 0n ? 0 : 1)} / ${s.totalShards}`} />
           <Stat label="Share" value={`${(share * 100).toFixed(1)}%`} />
-          <Stat label={avg != null ? "Avg cost" : seller ? "Your floor" : "Avg cost"} value={short(cost)} />
+          <Stat label={!avg && seller ? "Your floor" : "Avg cost"} value={short(cost)} />
           <Stat label="Price now" value={short(price)} />
         </div>
         <RedemptionMeter
@@ -245,13 +242,13 @@ export function MyShardsView({ c, me, now, binding, feeBps }: MyShardsViewProps)
         <div>
           <AboutRow label="Shard token"><a href={explorerAddress(s.shardToken)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">{shortAddress(s.shardToken)} · ERC-20<ExternalLinkIcon aria-hidden className="size-3" /></a></AboutRow>
           <AboutRow label="Supply">{s.totalShards}.0 · 18 decimals</AboutRow>
-          <AboutRow label="Auction"><a href={explorerAddress(s.auction)} target="_blank" rel="noreferrer" className="hover:underline">{shortAddress(s.auction)} · {s.settled ? "settled" : running ? "live" : "awaiting settle"}</a></AboutRow>
+          <AboutRow label="Auction"><a href={explorerAddress(s.auction)} target="_blank" rel="noreferrer" className="hover:underline">{shortAddress(s.auction)} · {auctionState}</a></AboutRow>
           <AboutRow label="Custody">Kura vault, Tokyo</AboutRow>
           <AboutRow label="Vault fee">{feeBps != null ? `${feeBps / 100}% on sales and buyouts` : "…"}</AboutRow>
         </div>
       </section>
 
-      <SendShardsSheet open={sending} onOpenChange={setSending} cardName={identity.name} shardToken={s.shardToken} balance={balance} supply={supply} />
+      <SendShardsSheet open={sending} onOpenChange={setSending} cardName={identity.name} shardToken={s.shardToken} balance={balance} supply={live.supply > 0n ? live.supply : supply} />
     </div>
   );
 }

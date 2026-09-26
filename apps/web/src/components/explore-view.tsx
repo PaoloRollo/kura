@@ -22,7 +22,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import type { ExploreData, NewCard } from "@/hooks/use-explore";
-import { agoLong } from "@/lib/card-view";
+import { useIsDesktop } from "@/components/tx-stepper";
 import {
   COLORS,
   CONDITIONS,
@@ -37,6 +37,7 @@ import {
   exploreResults,
   filterOptions,
   languageName,
+  shortAgo,
   tabCount,
   toggle,
   type AuctionItem,
@@ -150,7 +151,7 @@ function TabSwitch({ tab, counts, onTab, className }: { tab: ExploreTab; counts:
             role="tab"
             aria-selected={on}
             onClick={() => onTab(t.value)}
-            className={cn("h-[42px] rounded-sm px-4 text-[14px] whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", on ? "bg-surface-2 font-semibold text-text" : "text-muted-foreground hover:text-text-2")}
+            className={cn("h-[38px] rounded-sm px-4 text-[14px] whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", on ? "bg-surface-2 font-semibold text-text" : "text-muted-foreground hover:text-text-2")}
           >
             {t.label}{on && t.value === "live" ? ` · ${counts.live}` : ""}
           </button>
@@ -165,7 +166,7 @@ function SortMenu({ f, set }: { f: ExploreFilters; set: (p: Partial<ExploreFilte
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="inline-flex h-[52px] shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-[14px] text-text outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50">
+        <button type="button" className="inline-flex h-12 shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-[14px] text-text outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50">
           <ArrowUpDownIcon aria-hidden className="size-4 text-text-2" />{current.label}<ChevronDownIcon aria-hidden className="size-4 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
@@ -397,7 +398,7 @@ function NewInVault({ cards, now }: { cards: readonly NewCard[]; now: number }) 
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate text-[14px] font-semibold text-text">{c.name}</span>
                 <AddressName address={c.owner} avatar={false} copyable={false} tone="kin" maxWidthClassName="max-w-[11rem]" className="[&>span]:text-[12px]" />
-                <span className="text-[12px] text-muted-foreground">{agoLong(c.mintedAt, now)}</span>
+                <span className="text-[12px] text-muted-foreground">{shortAgo(c.mintedAt, now)}</span>
               </div>
             </Link>
           </li>
@@ -412,7 +413,14 @@ function NewInVault({ cards, now }: { cards: readonly NewCard[]; now: number }) 
 
 /** Explore (TQ4jp desktop, Z6BlV0 mobile, aUlMV filters, NWOiJ no results). Filters live in the URL (the page's job). */
 export function ExploreView({ items, newCards, block, isLoading, filters: f, onFilters, now, defaultSheetOpen = false }: ExploreViewProps) {
-  const [sheet, setSheet] = useState(defaultSheetOpen);
+  const [sheet, setSheet] = useState(false);
+  const desktop = useIsDesktop();
+  // Previews ask for the sheet open; opened after mount so the portal renders on the client.
+  useEffect(() => {
+    if (!defaultSheetOpen) return;
+    const id = requestAnimationFrame(() => setSheet(true));
+    return () => cancelAnimationFrame(id);
+  }, [defaultSheetOpen]);
   const search = useRef<HTMLInputElement>(null);
   const set = (p: Partial<ExploreFilters>) => onFilters({ ...f, ...p });
   const head = block ?? 0n;
@@ -476,22 +484,22 @@ export function ExploreView({ items, newCards, block, isLoading, filters: f, onF
   }
 
   return (
-    <section className="flex flex-col gap-6 md:gap-8">
+    <section className="flex flex-col gap-5 md:gap-6">
       <MobilePageTitle title="Explore" className="-mt-2" />
       <header className="flex flex-col gap-1 max-md:hidden">
         <h1 className="font-display text-[32px] font-semibold text-text">Live auctions</h1>
         <p className="text-[14px] text-text-2">Uniswap continuous clearing auctions. Set a budget and a max price, everyone pays the same.</p>
       </header>
 
-      <div className="flex flex-col gap-4 max-md:-mt-2">
+      <div className="flex flex-col gap-3 max-md:-mt-1 md:gap-4">
         <div className="flex items-center gap-3">
           <SearchInput
             ref={search}
             value={f.q}
             onChange={(e) => set({ q: e.target.value })}
             kbd="/"
-            boxClassName="h-[52px] flex-1 rounded-xl py-0 max-md:rounded-2xl [&_kbd]:max-md:hidden"
-            placeholder="Search cards, sets or ENS names"
+            boxClassName="h-12 flex-1 rounded-xl py-0 max-md:h-[52px] max-md:rounded-2xl [&_kbd]:max-md:hidden"
+            placeholder={desktop ? "Search cards, sets or ENS names" : "Search cards or sets"}
             aria-label="Search auctions"
           />
           <button
@@ -538,7 +546,7 @@ export function ExploreView({ items, newCards, block, isLoading, filters: f, onF
 
       {body}
 
-      <div className="mt-4"><NewInVault cards={newCards} now={now} /></div>
+      <div className="mt-6"><NewInVault cards={newCards} now={now} /></div>
 
       <FiltersSheet open={sheet} onOpenChange={setSheet} f={f} items={items} block={head} o={o} onApply={onFilters} />
     </section>

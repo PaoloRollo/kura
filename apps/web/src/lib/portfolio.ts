@@ -2,7 +2,7 @@
 // cards, bids grouped live / ended, allocation and my history on a card. Pure, so node tests cover it.
 import { q96ToUsdcPerShard } from "@kura/shared";
 import { estimateShards, bidView, type BidView } from "@/lib/bid-math";
-import { canRedeem } from "@/lib/card-view";
+import { blocksToDuration, canRedeem } from "@/lib/card-view";
 import { clearingOf } from "@/lib/explore";
 import { costBasis, referencePrice, unrealized } from "@/lib/portfolio-math";
 
@@ -24,7 +24,7 @@ type Bid = {
 };
 type Active = { auction: Hex; endBlock: bigint };
 type Activity = { kind: string; cardId: bigint | null; actor: Hex; meta: unknown };
-type Ident = { name: string; image: string | null };
+type Ident = { name: string; image: string | null; /** Set code ("LEA"), when known. */ set?: string | null };
 
 /** "12m", "3h", "2d" left at 12 s per block. */
 export function shortLeft(blocks: bigint): string {
@@ -106,13 +106,39 @@ export function holdings(p: {
   return out.sort((a, b) => ((b.value ?? -1n) > (a.value ?? -1n) ? 1 : (b.value ?? -1n) < (a.value ?? -1n) ? -1 : 0));
 }
 
+export type Position = Holding & { status: "live" | "awaiting" | "settled" };
+
+/**
+ * My position in one card's current sharding (My shards), with the same math and live rule as `holdings()`: the
+ * sharding's active auction is the unsettled one (activeAuctions rows go on settle), live before its end block and
+ * awaiting settle after. Null without a balance, or once the sharding was bought out.
+ */
+export function positionOf(p: {
+  me: string;
+  balance: bigint;
+  sharding: Sharding;
+  bids: readonly Bid[];
+  activities: readonly Activity[];
+  block: bigint;
+  ident: Ident;
+}): Position | null {
+  const s = p.sharding;
+  const active = s.settled ? [] : [{ auction: s.auction, endBlock: s.endBlock }];
+  const [h] = holdings({
+    me: p.me, balances: [{ shardToken: s.shardToken, holder: p.me as Hex, balance: p.balance }], shardings: [s], cards: [], bids: p.bids,
+    activities: p.activities, active, block: p.block, ident: () => p.ident,
+  });
+  if (!h) return null;
+  return { ...h, status: s.settled ? "settled" : h.liveLeft != null ? "live" : "awaiting" };
+}
+
 /** Shardings bought out by someone, where I still hold shards (by the indexer): the payout banners. */
 export function payouts<S extends Sharding>(me: string, balances: readonly Balance[], shardings: readonly S[]): S[] {
   const mine = new Set(balances.filter((b) => lc(b.holder) === lc(me) && b.balance > 0n).map((b) => lc(b.shardToken)));
   return shardings.filter((s) => s.redeemer && s.buyoutPerShard != null && lc(s.redeemer) !== lc(me) && mine.has(lc(s.shardToken)));
 }
 
-export type WholeCard = { cardId: bigint; name: string; image: string | null; condition: string; value: bigint | null };
+export type WholeCard = { cardId: bigint; name: string; image: string | null; set?: string | null; condition: string; value: bigint | null };
 
 /** Cards I hold whole (ownerOf is me: an escrowed card's ownerOf is the vault), and the ones I took home. */
 export function wholeCards(me: string, cards: readonly Card[], ident: (id: bigint) => Ident, market: (id: bigint) => bigint | null) {
@@ -122,8 +148,8 @@ export function wholeCards(me: string, cards: readonly Card[], ident: (id: bigin
 }
 
 export type BidLine = { text: string; tone: "good" | "shu" | "muted" | "kin" };
-export type BidItem = {
-  bid: Bid;
+export type BidItem<B extends Bid = Bid> = {
+  bid: B;
   cardId: bigint;
   name: string;
   image: string | null;
@@ -137,12 +163,12 @@ export type BidItem = {
 };
 
 /** My bids, live ones first (newest first within each group). */
-export function bidItems(p: { me: string; bids: readonly Bid[]; shardings: readonly Sharding[]; active: readonly Active[]; block: bigint; ident: (id: bigint) => Ident }): { live: BidItem[]; ended: BidItem[] } {
+export function bidItems<B extends Bid>(p: { me: string; bids: readonly B[]; shardings: readonly Sharding[]; active: readonly Active[]; block: bigint; ident: (id: bigint) => Ident }): { live: BidItem<B>[]; ended: BidItem<B>[] } {
   const byAuction = new Map(p.shardings.map((s) => [lc(s.auction), s]));
   const items = p.bids
     .filter((b) => lc(b.owner) === lc(p.me))
     .sort((a, b) => b.submittedAt - a.submittedAt)
-    .map((b): BidItem => {
+    .map((b): BidItem<B> => {
       const s = byAuction.get(lc(b.auction)) ?? null;
       const live = !!s && isLive(s, p.active, p.block);
       const base = { bid: b, cardId: b.cardId, ...p.ident(b.cardId), maxUsdcPerShard: q96ToUsdcPerShard(b.maxPriceQ96), live, sharding: s };
@@ -239,7 +265,8 @@ export function historyRows(p: { me: string; cardId: bigint; sharding: Sharding 
         const total = Number(m.totalShards ?? 0);
         const forSale = Number(m.forSale ?? 0);
         rows.push({ ...base, kind: "shard", title: "Sharded", detail: `kept ${total - forSale} of ${total}`, amount: null });
-        rows.push({ ...base, key: `${a.id}-open`, log: a.logIndex + 0.5, kind: "shard", title: "Auction opened", detail: `${forSale} of ${total} shards`, amount: null });
+        const length = s && token && lc(token) === lc(s.shardToken) ? ` · ${blocksToDuration(s.endBlock - s.startBlock)}` : "";
+        rows.push({ ...base, key: `${a.id}-open`, log: a.logIndex + 0.5, kind: "shard", title: "Auction opened", detail: `${forSale} of ${total} shards${length}`, amount: null });
         break;
       }
       case "settle": {

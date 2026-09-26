@@ -4,6 +4,7 @@ import { use } from "react";
 import { CardLoading, CardNotFound } from "@/components/card-page-view";
 import { MyShardsView } from "@/components/my-shards-view";
 import { useCard } from "@/hooks/use-card";
+import { useIndexerBlock } from "@/hooks/use-explore";
 import { useKuraUser } from "@/hooks/use-kura-user";
 import { useNow } from "@/hooks/use-now";
 import { useWorldIdVerified } from "@/hooks/use-portfolio";
@@ -18,9 +19,10 @@ export default function MyShardsPage({ params }: { params: Promise<{ id: string 
   const { binding } = useWorldIdVerified(address);
   const feeBps = useVaultFeeBps();
   const now = useNow(30_000);
+  const block = useIndexerBlock();
 
   if (!valid) return <CardNotFound id={id} />;
-  if (c.isLoading || !address) return <CardLoading />;
+  if (c.isLoading || !address || block == null) return <CardLoading />;
   if (!c.card) return <CardNotFound id={id} />;
-  return <MyShardsView c={c} me={address} now={now} binding={binding} feeBps={feeBps} />;
+  return <MyShardsView c={c} me={address} now={now} block={block} binding={binding} feeBps={feeBps} />;
 }

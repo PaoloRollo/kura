@@ -29,7 +29,7 @@ const day = (ts: number) => new Date(ts * 1000).toLocaleDateString("en-US", { mo
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border py-3.5 last:border-0">
+    <div className="flex items-center justify-between gap-4 border-b border-border py-2.5 last:border-0">
       <span className="text-[13px] text-text-2">{label}</span>
       <span className="min-w-0 truncate text-right font-mono text-[13px] text-text">{children}</span>
     </div>
@@ -39,12 +39,12 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 /** Collector · Vault (Pu0g5): the parent name, the counter's pitch, its stats and the cards that left it. */
 export function VaultView({ parentName, feeBps, cardsHeld, feesEarned, released, isLoading }: VaultViewProps) {
   return (
-    <section className="flex flex-col gap-10 md:gap-12">
+    <section className="flex flex-col gap-8 md:gap-10">
       <MobilePageTitle title="Vault" className="-mt-2 -mb-4" />
-      <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-16 lg:pt-8">
+      <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-16 lg:pt-4">
         <div className="flex flex-col gap-4">
           <span className="font-mono text-[14px] text-kin">{parentName}</span>
-          <h1 className="font-display text-[36px] leading-[1.1] font-semibold text-text md:text-[48px]">One vault, one counter, in Tokyo.</h1>
+          <h1 className="font-display text-[36px] leading-[1.1] font-semibold text-text md:text-[44px]">One vault, one counter, in Tokyo.</h1>
           <p className="max-w-[640px] text-[15px] text-text-2">
             Every card here was scanned in person, graded by the vendor and sealed in a numbered sleeve. It stays here until one person owns enough of it to take it home.
           </p>
@@ -72,10 +72,10 @@ export function VaultView({ parentName, feeBps, cardsHeld, feesEarned, released,
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {released.map((r) => (
               <li key={r.id.toString()}>
-                <Link href={`/app/cards/${r.id}`} className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 transition-colors hover:border-text-2/40">
+                <Link href={`/app/cards/${r.id}`} className="flex items-center gap-4 rounded-2xl border border-border bg-surface px-4 py-3.5 transition-colors hover:border-text-2/40">
                   {r.image ? <CardArt src={r.image} alt={r.name} className="w-10 shrink-0 rounded-[3px] shadow-none" /> : <div className="aspect-[63/88] w-10 shrink-0 rounded-[3px] bg-surface-2" />}
                   <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate text-[15px] font-semibold text-text">{r.name}</span>
+                    <span className="truncate text-[14px] font-semibold text-text">{r.name}</span>
                     <span className="inline-flex min-w-0 items-center gap-1 font-mono text-[12px] text-text-2">
                       to <AddressName address={r.to} avatar={false} copyable={false} maxWidthClassName="max-w-[10rem]" className="[&>span]:text-[12px] [&>span]:text-text-2" />
                     </span>

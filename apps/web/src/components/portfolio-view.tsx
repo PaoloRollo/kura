@@ -6,7 +6,7 @@ import Link from "next/link";
 import { asc, eq } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
 import {
-  AtSignIcon, BadgeCheckIcon, BoxIcon, CircleDollarSignIcon, CompassIcon, GavelIcon, LayersIcon, PackageCheckIcon, PackageIcon, TrendingDownIcon, TrendingUpIcon,
+  AtSignIcon, BadgeCheckIcon, BoxIcon, ChevronRightIcon, LandmarkIcon, CircleDollarSignIcon, CompassIcon, GavelIcon, LayersIcon, PackageCheckIcon, PackageIcon, TrendingDownIcon, TrendingUpIcon,
 } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { Button, CardArt, Pill } from "@/components/kura";
@@ -15,8 +15,8 @@ import { AvatarLink, MobilePageTitle } from "@/components/page-title";
 import { PayoutPanel } from "@/components/payout-panel";
 import { IndexerLoading } from "@/components/sync-state";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import type { BidRow, CheckpointRow } from "@/hooks/use-card";
-import type { PortfolioData, ReleasedItem } from "@/hooks/use-portfolio";
+import type { CheckpointRow } from "@/hooks/use-card";
+import type { BidRow, PortfolioData, ReleasedItem } from "@/hooks/use-portfolio";
 import { money, shardsFixed, shortAddress, usdc } from "@/lib/format";
 import { schema, t } from "@/lib/ponder";
 import { shortLeft, type BidItem, type Holding, type WholeCard } from "@/lib/portfolio";
@@ -28,11 +28,8 @@ export const PORTFOLIO_TABS: readonly PortfolioTab[] = ["shards", "whole", "bids
 
 /** "$1,712" for whole dollars and big values, else "$17.50". */
 const price = (x: bigint | null) => (x == null ? "n/a" : x >= 1_000_000_000n || x % 1_000_000n === 0n ? money(x, 0) : money(x));
-/** A gain: whole dollars from $100 up ("+$1,976", "-$72"), cents below ("+$18.40"). */
-const signed = (x: bigint) => {
-  const abs = x < 0n ? -x : x;
-  return `${x < 0n ? "-" : "+"}${abs >= 100_000_000n ? money(abs, 0) : money(abs)}`;
-};
+/** A gain in whole dollars, as QEEV7 shows them ("+$1,976", "-$74"). */
+const signed = (x: bigint) => `${x < 0n ? "-" : "+"}${money(x < 0n ? -x : x, 0)}`;
 const day = (ts: number) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 function Thumb({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
@@ -40,7 +37,7 @@ function Thumb({ src, alt, className }: { src: string | null; alt: string; class
 }
 
 function Chip({ icon: Icon, children, href, tone }: { icon: typeof AtSignIcon; children: React.ReactNode; href?: string; tone?: "good" | "kin" }) {
-  const cls = "inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-border bg-surface px-3.5 text-[13px] text-text";
+  const cls = "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-[12px] text-text md:h-10 md:gap-2 md:px-3.5 md:text-[13px]";
   const body = (
     <>
       <Icon aria-hidden className={cn("size-4", tone === "good" ? "text-good-fg" : tone === "kin" ? "text-kin" : "text-text-2")} />
@@ -54,13 +51,13 @@ function Chip({ icon: Icon, children, href, tone }: { icon: typeof AtSignIcon; c
 function WalletChips({ d }: { d: PortfolioData }) {
   return (
     <div className="-mx-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:justify-end md:px-0">
-      <Chip icon={CircleDollarSignIcon}><span className="font-mono">{d.usdc != null ? usdc(d.usdc) : "…"} USDC</span></Chip>
+      <Chip icon={CircleDollarSignIcon}><span className="font-mono">{d.usdc != null ? usdc(d.usdc) : "…"}<span className="max-md:hidden"> USDC</span></span></Chip>
       {d.verified
         ? <Chip icon={BadgeCheckIcon} tone="good"><span className="md:hidden">World ID</span><span className="max-md:hidden">World ID verified</span></Chip>
         : <Chip icon={BadgeCheckIcon}>Not verified</Chip>}
       {d.handle
-        ? <Chip icon={AtSignIcon} tone="kin"><AddressName address={d.me} avatar={false} copyable={false} maxWidthClassName="max-w-[12rem]" /></Chip>
-        : <Chip icon={AtSignIcon} tone="kin" href="/app/onboarding"><span className="font-mono">{shortAddress(d.me)}</span><span className="text-text-2">· claim a handle</span></Chip>}
+        ? <Chip icon={AtSignIcon} tone="kin"><AddressName address={d.me} avatar={false} copyable={false} maxWidthClassName="max-w-[9rem] md:max-w-[12rem]" className="[&>span]:max-md:text-[12px]" /></Chip>
+        : <Chip icon={AtSignIcon} tone="kin" href="/app/onboarding"><span className="font-mono">{shortAddress(d.me)}</span><span className="text-text-2 max-md:hidden">· claim a handle</span></Chip>}
     </div>
   );
 }
@@ -205,7 +202,7 @@ function WholeList({ whole, released }: { whole: readonly WholeCard[]; released:
               <Thumb src={w.image} alt={w.name} className="w-12" />
               <span className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="truncate text-[16px] font-semibold text-text">{w.name}</span>
-                <span className="text-[12px] text-text-2">{w.condition}</span>
+                <span className="text-[12px] text-text-2">{[w.set, w.condition].filter(Boolean).join(" · ")}</span>
               </span>
               <span className="font-mono text-[15px] text-text">{w.value != null ? price(w.value) : "no price"}</span>
             </Link>
@@ -233,7 +230,7 @@ function WholeList({ whole, released }: { whole: readonly WholeCard[]; released:
 const LINE_TONE: Record<BidItem["line"]["tone"], string> = { good: "text-good-fg", shu: "text-shu", muted: "text-text-2", kin: "text-kin" };
 
 /** Claim (K7qgeI): the ended bid's exit and claim, through Task 6's My bids with the auction's checkpoints. */
-function ClaimSheet({ item, onOpenChange }: { item: BidItem | null; onOpenChange: (o: boolean) => void }) {
+function ClaimSheet({ item, onOpenChange }: { item: BidItem<BidRow> | null; onOpenChange: (o: boolean) => void }) {
   const auction = (item?.bid.auction ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
   const cps = usePonderQuery({
     queryFn: useCallback(
@@ -249,7 +246,7 @@ function ClaimSheet({ item, onOpenChange }: { item: BidItem | null; onOpenChange
         <SheetDescription className="text-[13px] text-text-2">Exit the bid to lock in what filled and take back what wasn&apos;t spent, then claim the shards.</SheetDescription>
         {item && s && (
           <MyBids
-            bids={[item.bid as unknown as BidRow]}
+            bids={[item.bid]}
             auction={auction}
             ended
             settled={s.settled}
@@ -263,12 +260,12 @@ function ClaimSheet({ item, onOpenChange }: { item: BidItem | null; onOpenChange
   );
 }
 
-function BidRowItem({ b, onClaim }: { b: BidItem; onClaim: () => void }) {
+function BidRowItem({ b, onClaim }: { b: BidItem<BidRow>; onClaim: () => void }) {
   return (
-    <li className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 md:bg-bg/40">
-      <Link href={`/app/cards/${b.cardId}`} className="flex min-w-0 flex-1 items-center gap-4">
-        <Thumb src={b.image} alt={b.name} className="w-10" />
-        <span className="flex min-w-0 flex-col gap-1">
+    <li className="flex items-center gap-3.5 rounded-2xl border border-border bg-surface px-4 py-3 md:bg-bg/40">
+      <Link href={`/app/cards/${b.cardId}`} className="flex min-w-0 flex-1 items-center gap-3.5">
+        <Thumb src={b.image} alt={b.name} className="w-9" />
+        <span className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate text-[15px] font-semibold text-text">{b.name}</span>
           <span className="font-mono text-[12px] text-text-2">{price(b.bid.amountUsdc)} up to {money(b.maxUsdcPerShard, b.maxUsdcPerShard < 100_000_000n ? 2 : 0)}</span>
           <span className={cn("text-[12px]", LINE_TONE[b.line.tone])}>{b.line.text}</span>
@@ -281,8 +278,8 @@ function BidRowItem({ b, onClaim }: { b: BidItem; onClaim: () => void }) {
 }
 
 function BidsList({ bids }: { bids: PortfolioData["bids"] }) {
-  const [claim, setClaim] = useState<BidItem | null>(null);
-  const group = (label: string, items: readonly BidItem[]) =>
+  const [claim, setClaim] = useState<BidItem<BidRow> | null>(null);
+  const group = (label: string, items: readonly BidItem<BidRow>[]) =>
     items.length > 0 && (
       <div className="flex flex-col gap-2.5">
         <span className="text-[11px] font-semibold tracking-[1px] text-muted-foreground uppercase">{label}</span>
@@ -293,7 +290,8 @@ function BidsList({ bids }: { bids: PortfolioData["bids"] }) {
     <div className="flex flex-col gap-5 md:p-5">
       {group("Live", bids.live)}
       {group("Ended", bids.ended)}
-      <ClaimSheet item={claim} onOpenChange={(o) => !o && setClaim(null)} />
+      {/* Mounted only while open: it subscribes to that auction's checkpoints. */}
+      {claim && <ClaimSheet item={claim} onOpenChange={(o) => !o && setClaim(null)} />}
     </div>
   );
 }
@@ -390,7 +388,7 @@ export function PortfolioView({ d, tab, onTab }: PortfolioViewProps) {
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="flex flex-col gap-2">
           <span className="text-[13px] text-text-2">Portfolio value</span>
-          <span className="font-mono text-[44px] leading-none text-text md:text-[64px]">{d.isLoading ? "…" : money(d.totals.value)}</span>
+          <span className="font-mono text-[44px] leading-none text-text md:text-[52px]">{d.isLoading ? "…" : money(d.totals.value)}</span>
           {!d.isLoading && d.totals.cards > 0 && (
             <span className={cn("inline-flex items-center gap-1.5 text-[13px]", up ? "text-good-fg" : "text-shu")}>
               <TrendIcon aria-hidden className="size-4" />
@@ -426,6 +424,11 @@ export function PortfolioView({ d, tab, onTab }: PortfolioViewProps) {
           <div className="max-md:hidden"><AllocationCard parts={d.allocation} /></div>
         </div>
       )}
+      {/* The 390 tab bar has no Vault (Z6BlV0): the vault page is linked from here. */}
+      <Link href="/app/vault" className="flex items-center justify-between rounded-2xl border border-border bg-surface px-4 py-3.5 text-[14px] text-text md:hidden">
+        <span className="flex items-center gap-3"><LandmarkIcon aria-hidden className="size-4 text-kin" />The vault · fees, handovers, releases</span>
+        <ChevronRightIcon aria-hidden className="size-4 text-text-2" />
+      </Link>
     </section>
   );
 }

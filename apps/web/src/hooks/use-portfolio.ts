@@ -5,12 +5,11 @@ import { desc, eq } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
 import { useQuery } from "@tanstack/react-query";
 import { erc20Abi, type Address } from "viem";
-import { useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
+import { identities, useAttributes, useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
 import { useHandlesState } from "@/hooks/use-handles";
 import { useTicket } from "@/hooks/use-ticket";
-import { useCardMetas, useShardings, useVaultCards } from "@/hooks/use-vendor-data";
+import { useShardings, useVaultCards } from "@/hooks/use-vendor-data";
 import { addresses, publicClient } from "@/lib/chain";
-import { nameOf } from "@/lib/explore";
 import { allocation, bidItems, holdings, payouts, totals, wholeCards, type BidItem, type Holding, type Totals, type WholeCard } from "@/lib/portfolio";
 import { schema, t, type Row } from "@/lib/ponder";
 
@@ -18,7 +17,7 @@ type Db = Parameters<Parameters<typeof usePonderQuery>[0]["queryFn"]>[0];
 type Hex = `0x${string}`;
 export type ShardingRow = Row<typeof schema.shardings>;
 type BalanceRow = Row<typeof schema.shardBalances>;
-type BidRow = Row<typeof schema.bids>;
+export type BidRow = Row<typeof schema.bids>;
 type ActiveRow = Row<typeof schema.activeAuctions>;
 type ActivityRow = Row<typeof schema.activities>;
 type BindingRow = Row<typeof schema.bidderBindings>;
@@ -36,7 +35,7 @@ export type PortfolioData = {
   payouts: PayoutItem[];
   whole: WholeCard[];
   released: ReleasedItem[];
-  bids: { live: BidItem[]; ended: BidItem[] };
+  bids: { live: BidItem<BidRow>[]; ended: BidItem<BidRow>[] };
   totals: Totals;
   allocation: ReturnType<typeof allocation>;
   /** USDC balance (6 decimals); null while it loads. */
@@ -85,7 +84,7 @@ export function usePortfolio(me: Hex): PortfolioData {
   });
   const activities = usePonderQuery({
     queryFn: useCallback(
-      (db: Db) => db.select().from(t(schema.activities)).where(eq(t(schema.activities.actor), wallet)).orderBy(desc(t(schema.activities.blockNumber))).limit(500) as Promise<ActivityRow[]>,
+      (db: Db) => db.select().from(t(schema.activities)).where(eq(t(schema.activities.actor), wallet)).orderBy(desc(t(schema.activities.blockNumber)), desc(t(schema.activities.logIndex))).limit(500) as Promise<ActivityRow[]>,
       [wallet],
     ),
   });
@@ -108,15 +107,17 @@ export function usePortfolio(me: Hex): PortfolioData {
     ...bidRows.map((b) => b.cardId),
     ...cardRows.filter((c) => c.ownerOf.toLowerCase() === wallet).map((c) => c.id),
   ].map(String))].map(BigInt);
-  const metas = useCardMetas(ids);
+  const idSet = new Set(ids.map(String));
+  const touched = cardRows.filter((c) => idSet.has(c.id.toString()));
+  const attributes = useAttributes(touched.map((c) => c.scryfallId));
+  const idents = identities(touched, attributes);
   const wholeIds = cardRows.filter((c) => c.ownerOf.toLowerCase() === wallet && c.state === "whole").map((c) => c.id);
   const markets = useMarketPrices(wholeIds);
 
   const byId = new Map(cardRows.map((c) => [c.id.toString(), c]));
   const ident = (id: bigint) => {
-    const m = metas.get(id);
-    const c = byId.get(id.toString());
-    return { name: c ? nameOf(m, c) : m ? nameOf(m, { label: `#${id}` }) : `Card #${id}`, image: m?.image || null };
+    const m = idents.get(id.toString());
+    return { name: m?.name ?? `Card #${id}`, image: m?.image || null, set: attributes[byId.get(id.toString())?.scryfallId ?? ""]?.set?.toUpperCase() ?? null };
   };
   const head = block ?? 0n;
   const h = holdings({ me, balances: balanceRows, shardings: shardingRows, cards: cardRows, bids: bidRows, activities: activityRows, active: activeRows, block: head, ident });
@@ -135,6 +136,6 @@ export function usePortfolio(me: Hex): PortfolioData {
     verified,
     handle: handles[wallet] ?? null,
     block,
-    isLoading: cards.isLoading || shardings.isLoading || balances.isLoading || bids.isLoading || block == null,
+    isLoading: cards.isLoading || shardings.isLoading || balances.isLoading || bids.isLoading || active.isLoading || activities.isLoading || block == null,
   };
 }

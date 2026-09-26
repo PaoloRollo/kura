@@ -7,6 +7,8 @@ import {
   elapsed,
   exploreResults,
   filtersToQuery,
+  fold,
+  shortAgo,
   inTab,
   matchesSearch,
   parseFilters,
@@ -76,6 +78,19 @@ describe("explore items", () => {
     expect(matchesSearch(lotus!, "card-1.kura")).toBe(true);
     expect(matchesSearch(lotus!, "black lotus japanese")).toBe(false);
     expect(matchesSearch(recall!, "recall japanese")).toBe(true);
+  });
+
+  it("ignores accents and case on both sides", () => {
+    const [lotus] = fixture();
+    const vault = { ...lotus!, name: "Lim-Dûl's Vault" };
+    expect(matchesSearch(vault, "lim-dul")).toBe(true);
+    expect(matchesSearch(vault, "LIM-DÛL")).toBe(true);
+    expect(matchesSearch({ ...lotus!, name: "Jötun Grunt" }, "jotun")).toBe(true);
+    expect(fold("Éowyn")).toBe("eowyn");
+  });
+
+  it("writes short ages", () => {
+    expect([10, 120, 5 * 3600, 26 * 3600, 3 * 86_400].map((s) => shortAgo(1_000_000 - s, 1_000_000))).toEqual(["just now", "2m ago", "5h ago", "yesterday", "3d ago"]);
   });
 
   it("filters by set, condition, language, vs market and price, and sorts", () => {

@@ -25,7 +25,7 @@ export type ProfileViewProps = {
 
 function Row({ icon: Icon, label, children, tone }: { icon: typeof AtSignIcon; label: string; children: React.ReactNode; tone?: "good" | "kin" }) {
   return (
-    <div className="flex items-center gap-3.5 border-b border-border py-4">
+    <div className="flex items-center gap-3.5 border-b border-border py-3.5">
       <Icon aria-hidden className={cn("size-5 shrink-0", tone === "good" ? "text-good-fg" : tone === "kin" ? "text-kin" : "text-text-2")} />
       <span className="flex-1 text-[15px] text-text">{label}</span>
       <span className="min-w-0 truncate text-right text-[13px]">{children}</span>
@@ -47,7 +47,7 @@ export function ProfileView({ me, handle, usdc: balance, verified, wallet, embed
     }
   }
   return (
-    <div className="mx-auto flex w-full max-w-[480px] flex-col gap-6 pt-4">
+    <div className="mx-auto flex w-full max-w-[480px] flex-col gap-5 pt-2">
       <div className="flex flex-col items-center gap-3">
         <span aria-hidden className="size-[84px] rounded-full bg-[linear-gradient(-135deg,var(--kura-s7)_15%,var(--kura-shu)_85%)]" />
         <AddressName address={me} avatar={false} copyable={false} maxWidthClassName="max-w-[18rem]" className="[&>span]:text-[18px]" />
@@ -78,7 +78,7 @@ export function ProfileView({ me, handle, usdc: balance, verified, wallet, embed
         <button type="button" onClick={copy} className="text-left" aria-label="Copy address">
           <Row icon={copied ? CheckIcon : CopyIcon} label="Address"><span className="font-mono text-text-2">{copied ? "copied" : shortAddress(me)}</span></Row>
         </button>
-        <button type="button" onClick={onLogout} className="flex items-center gap-3.5 py-4 text-left text-[15px] text-shu">
+        <button type="button" onClick={onLogout} className="flex items-center gap-3.5 py-3.5 text-left text-[15px] text-shu">
           <LogOutIcon aria-hidden className="size-5" />Log out
         </button>
       </div>

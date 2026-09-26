@@ -11,7 +11,15 @@ import { filtersToQuery, parseFilters, type ExploreFilters } from "@/lib/explore
 function Explore() {
   const params = useSearchParams();
   const [filters, setFilters] = useState<ExploreFilters>(() => parseFilters(params));
-  const data = useExploreData();
+  // A navigation that changes the query (the Explore tab while filtered, back/forward) resets the filters to it. Our own
+  // replaceState writes exactly filtersToQuery(filters), so it never triggers this.
+  const query = params.toString();
+  const [seen, setSeen] = useState(query);
+  if (query !== seen) {
+    setSeen(query);
+    if (query !== filtersToQuery(filters)) setFilters(parseFilters(params));
+  }
+  const data = useExploreData(filters.tab);
   const now = useNow(30_000);
 
   // The query mirrors the filters without a navigation (a shared link reopens the same view).

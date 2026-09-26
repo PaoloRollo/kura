@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { usdcPerShardToQ96 } from "@kura/shared";
-import { allocation, bidItems, historyRows, holdings, payouts, shortLeft, totals, wholeCards } from "@/lib/portfolio";
+import { allocation, bidItems, historyRows, holdings, payouts, positionOf, shortLeft, totals, wholeCards } from "@/lib/portfolio";
 
 const S = 10n ** 18n;
 const usd = (d: number) => BigInt(Math.round(d * 100)) * 10_000n;
@@ -139,9 +139,25 @@ describe("history", () => {
     });
     expect(seller.map((r) => [r.title, r.detail])).toEqual([
       ["Auction settled", "3 shards sold at $1,712 · fee $128.40"],
-      ["Auction opened", "3 of 16 shards"],
+      ["Auction opened", "3 of 16 shards · 3 hours"],
       ["Sharded", "kept 13 of 16"],
     ]);
     expect(seller[0]!.amount).toBe(usd(5007.6));
+  });
+});
+
+describe("my position", () => {
+  const me = { me: ME, balance: 13n * S, bids: [], ident: { name: "Black Lotus", image: null } };
+  const shard = (s: ReturnType<typeof sharding>) => [{ kind: "shard", cardId: 1n, actor: ME, meta: { shardToken: s.shardToken } }];
+  it("follows the holdings rule: live before the end block, awaiting settle after, then settled", () => {
+    const running = sharding(1, { settled: false, graduated: null, endBlock: 1_100n, clearingUsdcPerShard: usd(1700) });
+    const live = positionOf({ ...me, sharding: running, activities: shard(running), block: BLOCK });
+    expect(live).toMatchObject({ status: "live", liveLeft: 100n, price: usd(1700), cost: usd(1560), costKind: "floor", value: usd(22_100) });
+    const ended = positionOf({ ...me, sharding: { ...running, endBlock: 900n }, activities: shard(running), block: BLOCK });
+    expect(ended).toMatchObject({ status: "awaiting", liveLeft: null });
+    const settled = sharding(1);
+    expect(positionOf({ ...me, sharding: settled, activities: shard(settled), block: BLOCK })).toMatchObject({ status: "settled", gain: usd(1976), redeemable: true });
+    expect(positionOf({ ...me, sharding: sharding(1, { redeemer: OTHER, buyoutPerShard: usd(1840) }), activities: [], block: BLOCK })).toBeNull();
+    expect(positionOf({ ...me, balance: 0n, sharding: settled, activities: [], block: BLOCK })).toBeNull();
   });
 });

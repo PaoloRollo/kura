@@ -76,7 +76,7 @@ function portfolioFixture(state: PortfolioPreviewState, now: number): PortfolioD
   const active = shardings.filter((s) => !s.settled).map(activeRow);
   const ident = (id: bigint) => {
     const key = CARDS.find((c) => BigInt(c.id) === id)!.key as CatalogKey;
-    return { name: CATALOG[key].name, image: CATALOG[key].image };
+    return { name: CATALOG[key].name, image: CATALOG[key].image, set: CATALOG[key].set.toUpperCase() };
   };
   const market = (id: bigint) => { const m = CARDS.find((c) => BigInt(c.id) === id)?.market; return m != null ? usd(m) : null; };
   const h = holdings({ me: ME, balances, shardings, cards, bids, activities, active, block: HEAD, ident });
@@ -113,7 +113,7 @@ const fakeSend = async () => {
 };
 
 export function PortfolioPreview({ state, now }: { state: PortfolioPreviewState; now: number }) {
-  const detail = state === "detail-seller" || state === "detail-buyer";
+  const detail = state.startsWith("detail-");
   const me = state === "detail-buyer" ? KENJI : PAOLO;
   const [tab, setTab] = useState<PortfolioTab>(state === "whole" || state === "empty-tab" ? "whole" : state === "bids" ? "bids" : "shards");
   const io = useMemo<Partial<VaultIo>>(() => ({ read: fakeRead(me), send: fakeSend, walletKind: "embedded" }), [me]);
@@ -125,9 +125,10 @@ export function PortfolioPreview({ state, now }: { state: PortfolioPreviewState;
 
   let body;
   if (detail) {
-    const c = cardFixture("sharded", now);
+    // detail-awaiting: the fixture's auction past its end block, not settled yet.
+    const c = cardFixture(state === "detail-awaiting" ? "auctioning" : "sharded", now);
     const mine = c.holders.find((x) => x.holder === me)?.balance ?? 0n;
-    body = <MyShardsView c={{ ...c, myBalance: mine }} me={me} now={now} binding={me === KENJI ? { boundAt: now - 2 * D, blockNumber: HEAD - 14_400n } : null} feeBps={250} />;
+    body = <MyShardsView c={{ ...c, myBalance: mine }} me={me} now={now} block={state === "detail-awaiting" ? c.sharding!.endBlock + 5n : HEAD} binding={me === KENJI ? { boundAt: now - 2 * D, blockNumber: HEAD - 14_400n } : null} feeBps={250} />;
   } else if (success?.kind === "claimed") {
     body = <PayoutClaimedView info={success} cardName="Time Walk" onClose={() => showVaultSuccess(null)} />;
   } else {

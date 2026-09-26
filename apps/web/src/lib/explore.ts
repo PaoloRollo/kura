@@ -261,11 +261,14 @@ export function activeFilterCount(f: ExploreFilters): number {
 
 export const clearFilters = (f: ExploreFilters): ExploreFilters => ({ ...DEFAULT_FILTERS, tab: f.tab, sort: f.sort, view: f.view });
 
-/** Every query word matches the name, set, ENS name, condition or language (code or name). */
+/** Lower case without diacritics, for matching ("Lim-Dûl" → "lim-dul"). */
+export const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** Every query word matches the name, set, ENS name, condition or language (code or name); accents are ignored. */
 export function matchesSearch(it: AuctionItem, q: string): boolean {
-  const words = lc(q).split(/\s+/).filter(Boolean);
+  const words = fold(q).split(/\s+/).filter(Boolean);
   if (words.length === 0) return true;
-  const hay = lc([it.name, it.set ?? "", it.setName ?? "", it.ensName, it.condition, it.language, languageName(it.language)].join(" "));
+  const hay = fold([it.name, it.set ?? "", it.setName ?? "", it.ensName, it.condition, it.language, languageName(it.language)].join(" "));
   return words.every((w) => hay.includes(w));
 }
 
@@ -347,3 +350,13 @@ export function filterOptions(items: readonly AuctionItem[]) {
 export const chipValue = (values: readonly string[], label: (v: string) => string = (v) => v) => (values.length ? values.map(label).join(", ") : "Any");
 
 export const toggle = <T,>(values: readonly T[], v: T): T[] => (values.includes(v) ? values.filter((x) => x !== v) : [...values, v]);
+
+/** "New in the vault" ages, as TQ4jp shows them: "just now", "2m ago", "5h ago", "yesterday", "3d ago". */
+export function shortAgo(timestamp: number, now: number): string {
+  const s = Math.max(0, now - timestamp);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 2 * 86_400) return "yesterday";
+  return `${Math.floor(s / 86_400)}d ago`;
+}
