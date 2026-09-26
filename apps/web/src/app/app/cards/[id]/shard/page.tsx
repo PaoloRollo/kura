@@ -14,7 +14,7 @@ import { useNow } from "@/hooks/use-now";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
 import { addresses, publicClient } from "@/lib/chain";
 import { dateTime } from "@/lib/card-view";
-import { estimatedEnd, shardOutcome, shardRevertMessage, type ShardParams } from "@/lib/shard-math";
+import { estimatedEnd, saleHalf, shardOutcome, shardRevertMessage, type ShardParams } from "@/lib/shard-math";
 import { shardedFromLogs } from "@/lib/vendor";
 import { useSendTx, type Revert, type Step } from "@/lib/tx";
 
@@ -44,7 +44,7 @@ export default function ShardPage({ params }: { params: Promise<{ id: string }> 
     return [
       {
         id: "shard",
-        label: `Shard into ${p.totalShards} and auction ${p.forSale}`,
+        label: `Shard into ${p.totalShards} and auction ${saleHalf(p.totalShards)}`,
         // A retry after the transaction landed must not send it again: the card is then escrowed with us as its sharder.
         skip: async () => {
           if (!address) return false;
@@ -99,7 +99,7 @@ export default function ShardPage({ params }: { params: Promise<{ id: string }> 
             }).then((created) => onDone({ ...base, created }));
             notify({
               title: "Auction opened",
-              body: `${p.forSale} of ${p.totalShards} shards for sale · ends ${dateTime(estimatedEnd(at, p.durationBlocks))}`,
+              body: `${saleHalf(p.totalShards)} of ${p.totalShards} shards for sale · ends ${dateTime(estimatedEnd(at, p.durationBlocks))}`,
               tone: "good",
               icon: <CheckIcon />,
             });
