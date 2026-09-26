@@ -21,7 +21,7 @@ vi.mock("@/components/world-id-gate", async () => ({
   WorldIdGate: (p: Record<string, unknown>) => {
     h.gate = p;
     return (
-      <button type="button" onClick={() => (p.onReleaseReady as (r: unknown) => void)({ ok: true, cardId: "1", expiresAt: String(Math.floor(Date.now() / 1000) + 899), credential: "passport" })}>
+      <button type="button" onClick={() => (p.onReleaseReady as (r: unknown) => void)({ ok: true, ticketId: "t1", cardId: "1", expiresAt: String(Math.floor(Date.now() / 1000) + 899), credential: "passport" })}>
         {p.label as string}
       </button>
     );
@@ -29,12 +29,14 @@ vi.mock("@/components/world-id-gate", async () => ({
 }));
 Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
+import { releaseRefusal } from "@/components/collect-at-counter";
 import { OwnerPanel } from "@/components/card-state-panel";
 import { ReleasePanel } from "@/components/release-panel";
 import { InventoryView, type InventoryItem } from "@/components/vendor/inventory";
 import { worldIdErrorMessage, worldIdRefusalTitle } from "@/components/world-id-gate";
 import type { CardData } from "@/hooks/use-card";
 import { addresses, publicClient } from "@/lib/chain";
+import { matchCode } from "@/lib/release";
 
 const HOLDER = "0xDeADaD159DF0923dAF871f8B4740eD7f7F417ee9" as const;
 const NOW = Math.floor(Date.now() / 1000);
@@ -81,9 +83,13 @@ describe("vendor ReleasePanel", () => {
     // The station polls the vendor-only route for this card.
     await waitFor(() => expect(h.apiFetch).toHaveBeenCalledWith("/api/release/pending?cardId=1", expect.objectContaining({ identityToken: "tok" })));
 
-    h.pending = PENDING;
+    h.pending = { ...PENDING, ticket: { ...PENDING.ticket, subject: "0x4f2c6e1a0b3d5f7a9c1e3b5d7f9a1c3e5b7da81e" } };
     expect(await screen.findByText("Passport verified", {}, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText(/Release ticket signed · valid 1[45]:\d\d/)).toBeTruthy();
+    // The name comes from the ticket's subject, not the indexer's holder.
+    expect(screen.getByText("0x4f2c…a81e")).toBeTruthy();
+    expect(screen.getByText(matchCode("t1"))).toBeTruthy();
+    expect(screen.getByText("Check the holder's screen shows the same code")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Confirm handover/ }));
     expect(await screen.findByText("Handover confirmed", {}, { timeout: 5000 })).toBeTruthy();
@@ -91,7 +97,7 @@ describe("vendor ReleasePanel", () => {
       to: addresses.cardVault,
       abi: expect.anything(),
       functionName: "confirmRelease",
-      args: [1n, { kind: 2, subject: HOLDER, nullifier: 42n, expiresAt: BigInt(NOW + 900) }, "0xabcd"],
+      args: [1n, { kind: 2, subject: "0x4f2c6e1a0b3d5f7a9c1e3b5d7f9a1c3e5b7da81e", nullifier: 42n, expiresAt: BigInt(NOW + 900) }, "0xabcd"],
     });
     expect(consumed()).toEqual(["t1"]);
     expect(onReleased).toHaveBeenCalled();
@@ -171,6 +177,8 @@ describe("owner's Collect at the counter", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Verify with Passport" }));
     expect(await screen.findByText("Show this to the vendor")).toBeTruthy();
     expect(screen.getByText(/ready for 14:5\d/)).toBeTruthy();
+    // The same code the vendor's station shows for ticket t1.
+    expect(screen.getByText(matchCode("t1"))).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
     await waitFor(() => expect(h.apiFetch).toHaveBeenCalledWith("/api/release/ticket?cardId=1", expect.objectContaining({ method: "DELETE" })));
@@ -178,9 +186,26 @@ describe("owner's Collect at the counter", () => {
   });
 
   it("restores a waiting ticket on reload", async () => {
-    h.apiFetch.mockImplementation(async () => res(200, { ready: { cardId: "1", expiresAt: String(NOW + 600) } }));
+    h.apiFetch.mockImplementation(async () => res(200, { ready: { id: "t1", cardId: "1", expiresAt: String(NOW + 600) } }));
     wrap(<OwnerPanel c={c} name="Black Lotus" />);
     expect(await screen.findByText("Show this to the vendor")).toBeTruthy();
+  });
+
+  it("notices when the vendor used the ticket and offers to verify again", async () => {
+    let ready: unknown = { id: "t1", cardId: "1", expiresAt: String(NOW + 600) };
+    h.apiFetch.mockImplementation(async () => res(200, { ready }));
+    wrap(<OwnerPanel c={c} name="Black Lotus" />);
+    expect(await screen.findByText("Show this to the vendor")).toBeTruthy();
+    ready = null; // consumed at the counter
+    expect(await screen.findByText("Your check ended", {}, { timeout: 8000 })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Verify again/ })).toBeTruthy();
+  }, 15_000);
+
+  it("names the wallet a Passport is already linked to", () => {
+    expect(releaseRefusal("ALREADY_BOUND", { boundTo: "0x1111111111111111111111111111111111111111" })).toBe(
+      "Your Passport is linked to 0x1111…1111. Collect from that wallet, or move the card to it first.",
+    );
+    expect(releaseRefusal("NOT_OWNER")).toBe("Only the card's owner can collect it, from their own Kura app.");
   });
 });
 

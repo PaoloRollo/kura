@@ -60,8 +60,8 @@ export const POST = withAuth(async (req, user) => {
 
   if (cardId != null) {
     // The holder only learns it is ready; the vendor station collects the ticket by card id.
-    await storeReleaseTicket({ cardId, subject, nullifier: result.nullifier, expiresAt: ticket.expiresAt, signature });
-    return NextResponse.json({ ok: true, cardId: cardId.toString(), expiresAt: ticket.expiresAt.toString(), credential: result.credential });
+    const ticketId = await storeReleaseTicket({ cardId, subject, nullifier: result.nullifier, expiresAt: ticket.expiresAt, signature });
+    return NextResponse.json({ ok: true, ticketId, cardId: cardId.toString(), expiresAt: ticket.expiresAt.toString(), credential: result.credential });
   }
   return NextResponse.json({ ticket: serializeTicket(ticket), signature, credential: result.credential });
 });

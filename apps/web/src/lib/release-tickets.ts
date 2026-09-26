@@ -6,6 +6,7 @@ import { abi } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { releaseTickets } from "@/lib/db/schema";
 import { requireDeployed } from "@/lib/deployments";
+import { serverEnv } from "@/env";
 import { HttpError } from "@/lib/http";
 import { nowSec } from "@/lib/signer";
 
@@ -19,7 +20,7 @@ const erc721 = parseAbi(["function ownerOf(uint256) view returns (address)"]);
 
 /** The card's vault state and NFT holder, read on-chain now (the indexer can lag a transfer). */
 const liveReader: VaultReader = async (cardId) => {
-  const client = createPublicClient({ chain: sepolia, transport: http(process.env.ALCHEMY_HTTP_URL ?? process.env.NEXT_PUBLIC_ALCHEMY_HTTP_URL) });
+  const client = createPublicClient({ chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) });
   const vault = requireDeployed().cardVault;
   const card = (await client.readContract({ address: vault, abi: abi.cardVault, functionName: "cards", args: [cardId] })) as { state: number };
   const state = Number(card.state);

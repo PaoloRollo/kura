@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheckIcon, CheckIcon, CircleCheckIcon, ExternalLinkIcon, LoaderIcon, LockIcon, PackageCheckIcon, PackageOpenIcon, SmartphoneIcon, TimerOffIcon, XIcon } from "lucide-react";
 import { abi } from "@kura/shared";
 import { AddressName } from "@/components/address-name";
+import { MatchCode } from "@/components/collect-at-counter";
 import { Button, CardArt, notify } from "@/components/kura";
 import { TxStepper, useIsDesktop } from "@/components/tx-stepper";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -21,6 +22,7 @@ import {
   RELEASED_STATE,
   checklist,
   describeReleaseError,
+  matchCode,
   mmss,
   releaseArgs,
   releaseRetryable,
@@ -224,17 +226,21 @@ function Notice({ tone, icon, title, body, action }: { tone: "shu" | "neutral"; 
   );
 }
 
-function Verified({ holder }: { holder: string }) {
+function Verified({ subject, code }: { subject: string; code: string }) {
   return (
     <div className="flex aspect-[352/260] max-h-[300px] w-full flex-col items-center justify-center gap-4 rounded-2xl border border-good/40 bg-good-soft p-6 text-center">
-      <span className="flex size-24 items-center justify-center rounded-full border-2 border-good text-good [&_svg]:size-10">
+      <span className="flex size-14 items-center justify-center rounded-full border-2 border-good text-good [&_svg]:size-7">
         <BadgeCheckIcon aria-hidden strokeWidth={1.75} />
       </span>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         <p className="text-[18px] font-semibold text-text">Passport verified</p>
         <p className="inline-flex flex-wrap items-center justify-center gap-1.5 font-mono text-[13px] text-text-2">
-          Ticket issued for <AddressName address={holder} avatar={false} copyable={false} className="[&>span]:text-[13px] [&>span]:text-text-2" />
+          Ticket issued for <AddressName address={subject} avatar={false} copyable={false} className="[&>span]:text-[13px] [&>span]:text-text-2" />
         </p>
+      </div>
+      <div className="flex flex-col items-center gap-1">
+        <MatchCode code={code} className="text-[30px]" />
+        <span className="text-[12px] text-text-2">Check the holder&apos;s screen shows the same code</span>
       </div>
     </div>
   );
@@ -312,7 +318,7 @@ export function ReleaseBody({
   }
 
   const main =
-    stage.kind === "verified" ? <Verified holder={holder} />
+    stage.kind === "verified" ? <Verified subject={stage.pending.ticket.subject} code={matchCode(stage.pending.id)} />
     : stage.kind === "expired" ? (
       <Notice tone="neutral" icon={<TimerOffIcon />} title="The release ticket expired" body="Tickets last 15 minutes. Ask the holder to verify again in their app; this updates by itself." />
     ) : (

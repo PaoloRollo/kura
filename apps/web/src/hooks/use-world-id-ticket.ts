@@ -7,7 +7,7 @@ import { apiFetch, useKuraUser } from "@/hooks/use-kura-user";
 export type WorldAction = "bid" | "release";
 export type IssuedTicket = { ticket: { kind: number; subject: `0x${string}`; nullifier: string; expiresAt: string }; signature: `0x${string}`; credential: string };
 /** A release proof went through: the ticket is stored for the vendor station until `expiresAt` (unix seconds). */
-export type ReleaseReady = { ok: true; cardId: string; expiresAt: string; credential: string };
+export type ReleaseReady = { ok: true; ticketId: string; cardId: string; expiresAt: string; credential: string };
 
 /** A refused verification: the server's code (ALREADY_BOUND, SIGNAL_MISMATCH...) and its `details`, or START_FAILED. */
 export class WorldIdError extends Error {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ identityToken: null }), apiFetch: vi.fn() }));
 
 import { WorldIdError, fetchRpContext, verifyProof, type IssuedTicket } from "@/hooks/use-world-id-ticket";
-import { checklist, collectStage, describeReleaseError, mmss, releaseArgs, releaseRetryable, releaseStage, ticketSpent, type PendingRelease } from "@/lib/release";
+import { checklist, collectStage, matchCode, describeReleaseError, mmss, releaseArgs, releaseRetryable, releaseStage, ticketSpent, type PendingRelease } from "@/lib/release";
 import { awaitingHandover, redeemedAt } from "@/lib/vendor";
 
 const HOLDER = "0xDeADaD159DF0923dAF871f8B4740eD7f7F417ee9" as const;
@@ -40,10 +40,18 @@ describe("release stage (vendor)", () => {
 });
 
 describe("collect stage (owner)", () => {
-  it("is idle, ready with a countdown, or expired", () => {
+  it("is idle, ready with a countdown and code, expired, or ended", () => {
     expect(collectStage(null, 1_000)).toEqual({ kind: "idle" });
-    expect(collectStage({ expiresAt: "1899" }, 1_000)).toEqual({ kind: "ready", secondsLeft: 899 });
-    expect(collectStage({ expiresAt: "1000" }, 1_000)).toEqual({ kind: "expired" });
+    expect(collectStage({ id: "t1", expiresAt: "1899" }, 1_000)).toEqual({ kind: "ready", secondsLeft: 899, code: matchCode("t1") });
+    expect(collectStage({ id: "t1", expiresAt: "1000" }, 1_000)).toEqual({ kind: "expired" });
+    expect(collectStage(null, 1_000, true)).toEqual({ kind: "ended" });
+  });
+
+  it("derives a stable 4-character match code from the ticket id", () => {
+    const code = matchCode("3f1c2b9e-0d4a-4c1e-9b7a-2e6f8d0c1a55");
+    expect(code).toMatch(/^[2-9A-HJKMNP-Z]{4}$/);
+    expect(matchCode("3f1c2b9e-0d4a-4c1e-9b7a-2e6f8d0c1a55")).toBe(code);
+    expect(matchCode("another-ticket")).not.toBe(code);
   });
 });
 

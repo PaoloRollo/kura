@@ -1,3 +1,4 @@
+import { keccak256, stringToHex } from "viem";
 import type { IssuedTicket } from "@/hooks/use-world-id-ticket";
 import type { Revert } from "@/lib/tx-core";
 
@@ -49,12 +50,29 @@ export function checklist(stage: ReleaseStage): [CheckStatus, CheckStatus, Check
   }
 }
 
-/** The owner's side ("Collect at the counter"): nothing waiting, a ticket ready to show, or one that ran out. */
-export type CollectStage = { kind: "idle" } | { kind: "ready"; secondsLeft: number } | { kind: "expired" };
-export function collectStage(ready: { expiresAt: string } | null, now: number): CollectStage {
-  if (!ready) return { kind: "idle" };
+// No 0/O, 1/I/L: the code is read aloud or compared by eye at the counter.
+const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/**
+ * The 4-character counter match code for a stored release ticket, from a hash of its id. The holder's screen and the
+ * vendor's station derive it from the same id, so the vendor can check they are looking at the same ticket.
+ */
+export function matchCode(ticketId: string): string {
+  const h = keccak256(stringToHex(ticketId));
+  let out = "";
+  for (let i = 0; i < 4; i++) out += CODE_ALPHABET[parseInt(h.slice(2 + i * 2, 4 + i * 2), 16) % CODE_ALPHABET.length];
+  return out;
+}
+
+/**
+ * The owner's side ("Collect at the counter"): nothing waiting, a ticket ready to show, one that ran out, or one that
+ * stopped waiting on its own (used by the vendor, refused, or dropped because the card changed).
+ */
+export type CollectStage = { kind: "idle" } | { kind: "ready"; secondsLeft: number; code: string } | { kind: "expired" } | { kind: "ended" };
+export function collectStage(ready: { id: string; expiresAt: string } | null, now: number, ended = false): CollectStage {
+  if (!ready) return ended ? { kind: "ended" } : { kind: "idle" };
   const left = Number(ready.expiresAt) - now;
-  return left > 0 ? { kind: "ready", secondsLeft: left } : { kind: "expired" };
+  return left > 0 ? { kind: "ready", secondsLeft: left, code: matchCode(ready.id) } : { kind: "expired" };
 }
 
 /** "14:52". Negative input reads 00:00. */

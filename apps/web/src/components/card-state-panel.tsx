@@ -49,7 +49,7 @@ export function OwnerPanel({ c, name }: { c: CardData; name?: string }) {
       <CollectReady
         stage={collect.stage}
         cardName={name ?? `Card #${id}`}
-        onCancel={() => void collect.cancel()}
+        onCancel={() => (collect.stage.kind === "ready" ? void collect.cancel() : collect.dismiss())}
         retry={<CollectButton cardId={card.id} me={me} onReady={collect.onReady} label="Verify again" />}
       />
     );

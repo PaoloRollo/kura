@@ -30,7 +30,8 @@ function LiveCard({ id, tab, now }: { id: bigint; tab: CardTab; now: number }) {
 function useCollectFixture(state: PreviewState | "live", now: number) {
   const qc = useQueryClient();
   const [seeded] = useState(() => {
-    const ready = state === "collect-ready" ? { expiresAt: String(now + 899) } : state === "collect-expired" ? { expiresAt: String(now - 5) } : null;
+    // The same ticket id as the vendor preview's, so both show the same match code.
+    const ready = state === "collect-ready" ? { id: "preview", expiresAt: String(now + 899) } : state === "collect-expired" ? { id: "preview", expiresAt: String(now - 5) } : null;
     qc.setQueryData(["release-ready", "1"], ready);
     return true;
   });

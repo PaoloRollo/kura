@@ -82,6 +82,8 @@ describe("release ticket from the holder's own session", () => {
     await verify({ action: "release", cardId: "1", idkitResponse: proof(bob) });
     const mine = await (await mineRoute(new Request("http://localhost/api/release/ticket?cardId=1"))).json();
     expect(mine.ready.cardId).toBe("1");
+    const [row] = await getDb().select().from(releaseTickets);
+    expect(mine.ready.id).toBe(row.id);
     as(eve);
     expect((await (await mineRoute(new Request("http://localhost/api/release/ticket?cardId=1"))).json()).ready).toBeNull();
     expect((await (await cancelRoute(new Request("http://localhost/api/release/ticket?cardId=1", { method: "DELETE" }))).json()).cancelled).toBe(false);
@@ -89,6 +91,31 @@ describe("release ticket from the holder's own session", () => {
     expect((await (await cancelRoute(new Request("http://localhost/api/release/ticket?cardId=1", { method: "DELETE" }))).json()).cancelled).toBe(true);
     as(vendor);
     expect((await (await pending()).json()).pending).toBeNull();
+  });
+});
+
+describe("GET /api/release/ticket (holder)", () => {
+  const mine = async () => (await (await mineRoute(new Request("http://localhost/api/release/ticket?cardId=1"))).json()).ready;
+  it("shows nothing once the card left the Whole state or changed hands", async () => {
+    as(bob);
+    await verify({ action: "release", cardId: "1", idkitResponse: proof(bob) });
+    expect(await mine()).not.toBeNull();
+    card = { state: 4, owner: bob };
+    expect(await mine()).toBeNull();
+    card = { state: 1, owner: eve };
+    expect(await mine()).toBeNull();
+    card = { state: 1, owner: bob };
+    expect(await mine()).not.toBeNull();
+  });
+
+  it("returns the ticket id the vendor sees, so both derive the same match code", async () => {
+    as(bob);
+    const verified = await (await verify({ action: "release", cardId: "1", idkitResponse: proof(bob) })).json();
+    const holderId = (await mine()).id;
+    as(vendor);
+    const vendorId = (await (await pending()).json()).pending.id;
+    expect(holderId).toBe(vendorId);
+    expect(verified.ticketId).toBe(vendorId);
   });
 });
 
