@@ -5,7 +5,8 @@ import type * as React from "react";
 import Link from "next/link";
 import { ActivityFeed, ActivityList } from "@/components/activity-feed";
 import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
-import { AuctionPanel } from "@/components/auction-panel";
+import { AuctionPanel, hasBidActions } from "@/components/auction-panel";
+import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
 import { MobileNav } from "@/components/mobile-nav";
@@ -17,6 +18,7 @@ import { addresses } from "@/lib/chain";
 import { buildFeed } from "@/lib/activity-feed";
 import { CARD_TABS, agoLong, dateTime, holdersView, lastBuyout, type CardTab } from "@/lib/card-view";
 import { metaCardName, metaTrait } from "@/lib/meta";
+import { q96ToUsdcPerShard } from "@kura/shared";
 import { cn } from "@/lib/utils";
 
 /** The tab strip, linkable through `?tab=`, with a shu underline on the active tab. */
@@ -95,6 +97,15 @@ export type CardPageViewProps = {
 export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewProps) {
   const card = c.card!;
   const identity = identityOf(c);
+  const settledInfo = useOwnerSettled(card.id);
+  if (settledInfo) {
+    return (
+      <div className="flex flex-col gap-4">
+        <MobileNav title={identity.name} className="-mt-2" />
+        <OwnerSettled info={settledInfo} cardName={identity.name} {...settledCounts(c, settledInfo)} onClose={() => showOwnerSettled(null)} />
+      </div>
+    );
+  }
   const holders = holdersView({ balances: c.holders, sharding: c.sharding, shardings: c.allShardings, transfers: c.transfers, vault: addresses.cardVault });
   const released = card.state === "released";
   const isOwner = card.state === "whole" && !!me && card.ownerOf.toLowerCase() === me.toLowerCase();
@@ -144,7 +155,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   const panel =
     card.state === "whole" ? (isOwner ? <OwnerPanel c={c} /> : <OwnedByPanel c={c} />)
     : card.state === "auctioning" && c.sharding ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
-    : card.state === "sharded" && c.sharding ? <ShardedSummary c={c} />
+    : card.state === "sharded" && c.sharding ? (hasBidActions(c, me, null) ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} /> : <ShardedSummary c={c} />)
     : released ? <ReleasedSummary c={c} />
     : null;
 
@@ -178,6 +189,15 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
       </div>
     </div>
   );
+}
+
+/** Shards sold (raised / clearing) and distinct buyers of the settled auction, for the Oh2m9 sentence. */
+function settledCounts(c: CardData, info: SettledInfo): { sold: number | null; buyers: number } {
+  const clearing = q96ToUsdcPerShard(info.clearingQ96);
+  const sold = info.graduated && clearing > 0n ? Math.round(Number(info.raisedUsdc) / Number(clearing)) : null;
+  const auction = c.sharding?.auction.toLowerCase();
+  const filled = c.bids.filter((b) => b.auction.toLowerCase() === auction && (b.tokensFilled != null ? b.tokensFilled > 0n : b.maxPriceQ96 >= info.clearingQ96));
+  return { sold, buyers: new Set(filled.map((b) => b.owner.toLowerCase())).size };
 }
 
 function Empty({ title, body }: { title: string; body: string }) {

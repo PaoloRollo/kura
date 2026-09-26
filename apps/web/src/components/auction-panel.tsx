@@ -1,18 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { GavelIcon } from "lucide-react";
-import type { Address } from "viem";
-import { q96ToUsdcPerShard } from "@kura/shared";
-import { Button } from "@/components/kura";
-import { useAuctionChain, type AuctionChain } from "@/components/auction-io";
+import { useRef, useState } from "react";
+import { CheckCheckIcon, CheckIcon, ExternalLinkIcon, GavelIcon } from "lucide-react";
+import type { Address, Hex, TransactionReceipt } from "viem";
+import { abi, q96ToUsdcPerShard } from "@kura/shared";
+import { Button, Pill, notify } from "@/components/kura";
+import { useAuctionChain, useAuctionIo, type AuctionChain } from "@/components/auction-io";
 import { BidForm } from "@/components/bid-form";
 import { Panel, Stat } from "@/components/card-state-panel";
-import { useIsDesktop } from "@/components/tx-stepper";
+import { MyBids } from "@/components/my-bids";
+import { settledFromReceipt, showOwnerSettled } from "@/components/settle-success";
+import { TxStepper, useIsDesktop } from "@/components/tx-stepper";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import type { CardData, CheckpointRow, ShardingRow } from "@/hooks/use-card";
-import { demandRatio } from "@/lib/bid-math";
-import { countdown, money } from "@/lib/format";
+import { bidView, demandRatio } from "@/lib/bid-math";
+import { addresses, explorerTx } from "@/lib/chain";
+import { countdown, money, shortHash } from "@/lib/format";
+import type { Step } from "@/lib/tx-core";
 import { marketPerShard, quoteUsdc, vsMarket } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +25,7 @@ export function liveClearingQ96(s: ShardingRow, checkpoints: readonly Checkpoint
   return chain.clearingQ96 ?? checkpoints.at(-1)?.clearingPriceQ96 ?? s.clearingPriceQ96 ?? s.floorPriceQ96;
 }
 
+const SHARD = 10n ** 18n;
 const pctText = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
 
 /** The stats strip (HisVE): clearing, raised, time left and the premium over the market reference. */
@@ -133,19 +138,122 @@ function LiveAuction({ c, me, block, chain }: { c: CardData; me: Address | null;
   );
 }
 
+const AUCTIONING = 2; // CardVault.State.Auctioning
+
 /**
- * The card's auction (HisVE while it runs). Ended is decided by the polled block (`block >= endBlock`): an
+ * After the end block (PA50F, oz3mH): the outcome, the permissionless Settle, and my bids with their exit and claim.
+ * Before settle the outcome comes from `isGraduated()` / `clearingPrice()` / `currencyRaised()`, which only reach their
+ * final values at the first checkpoint after the end block (settle writes it), so exits wait for settle.
+ */
+function PostAuction({ c, me, chain }: { c: CardData; me: Address | null; chain: AuctionChain }) {
+  const s = c.sharding!;
+  const io = useAuctionIo();
+  const receipt = useRef<TransactionReceipt | null>(null);
+  const [settledHash, setSettledHash] = useState<Hex | null>(null);
+  const graduated = s.settled ? s.graduated : chain.graduated;
+  const clearingQ96 = (s.settled ? s.clearingPriceQ96 : null) ?? liveClearingQ96(s, c.checkpoints, chain);
+  const lastTick = c.ticks.filter((t) => t.auction === s.auction).at(-1);
+  const raised = s.settled && s.graduated ? (s.raisedUsdc ?? 0n) : (chain.raised ?? lastTick?.currencyRaised ?? 0n);
+  const sold = chain.cleared != null ? Number((chain.cleared + SHARD / 2n) / SHARD) : null;
+  const mine = c.bids.filter((b) => b.auction === s.auction && !!me && b.owner.toLowerCase() === me.toLowerCase());
+  const isOwner = !!me && c.card!.beneficialOwner.toLowerCase() === me.toLowerCase();
+
+  const settleSteps: Step[] = [
+    {
+      id: "settle",
+      label: graduated === false ? "Settle: return the shards, open refunds" : "Settle: pay the owner and the vault, return unsold shards",
+      skip: async () => (await io.read<{ state: number }>({ address: addresses.cardVault, abi: abi.cardVault, functionName: "cards", args: [s.cardId] })).state !== AUCTIONING,
+      run: async () => {
+        const sent = await io.send({ to: addresses.cardVault, abi: abi.cardVault, functionName: "settle", args: [s.cardId] });
+        receipt.current = sent.receipt;
+        return sent;
+      },
+    },
+  ];
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <Panel className="flex flex-col gap-2 p-6 md:p-7">
+        {graduated === false ? (
+          <>
+            <Pill tone="live" dot={false}>Reserve not met</Pill>
+            <p className="font-mono text-[20px] text-text md:text-[26px]">Raised {money(raised, 0)} of {money(s.reserveUsdc, 0)}</p>
+            <p className="text-[13px] text-text-2">The auction didn&apos;t graduate. Nothing was sold.</p>
+          </>
+        ) : graduated ? (
+          <>
+            <Pill tone="released" dot={false}>Auction graduated</Pill>
+            <p className="font-mono text-[20px] text-text md:text-[26px]">Cleared at {money(q96ToUsdcPerShard(clearingQ96), 0)} / shard</p>
+            <p className="text-[13px] text-text-2">{sold != null ? `${sold} of ${s.forSale} shards sold · ` : ""}{money(raised, 0)} raised</p>
+          </>
+        ) : (
+          <>
+            <Pill dot={false}>Auction ended</Pill>
+            <p className="font-mono text-[20px] text-text md:text-[26px]">Clearing {money(q96ToUsdcPerShard(clearingQ96), 0)} / shard</p>
+            <p className="text-[13px] text-text-2">Reading the outcome…</p>
+          </>
+        )}
+      </Panel>
+
+      {!s.settled && (
+        <Panel className="flex flex-col gap-4 p-5 md:p-6">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-[15px] font-semibold text-text">{graduated === false ? "Settle and refund" : "Settle the auction"}</h3>
+            <p className="text-[13px] text-text-2">
+              {graduated === false
+                ? `Returns all ${s.forSale} shards to the owner. Every bidder can then take back their full budget. No fee is charged.`
+                : "Pays the owner, pays the vault fee, returns any unsold shards. Anyone can do it."}
+            </p>
+          </div>
+          <TxStepper
+            cta={graduated === false ? "Settle and refund" : "Settle"}
+            ctaIcon={<CheckCheckIcon aria-hidden />}
+            ctaClassName="h-12 rounded-xl bg-text text-bg hover:bg-text/90"
+            title="Settling the auction"
+            failedTitle="The auction didn't settle"
+            steps={settleSteps}
+            walletKind={io.walletKind}
+            successToast={false}
+            onDone={(results) => {
+              const hash = results.find((r) => r.id === "settle")?.hash ?? null;
+              const info = receipt.current ? settledFromReceipt(s.cardId, receipt.current) : null;
+              notify({ title: "Auction settled", body: info && !info.graduated ? "Reserve not met: bidders can take back their budgets." : "The owner and the vault were paid.", tone: "good", icon: <CheckIcon /> });
+              setSettledHash(hash);
+              if (info && isOwner) showOwnerSettled(info);
+            }}
+          />
+        </Panel>
+      )}
+      {settledHash && (
+        <a href={explorerTx(settledHash)} target="_blank" rel="noreferrer" aria-live="polite" className="inline-flex w-fit items-center gap-1.5 rounded-full bg-good-soft px-3 py-1.5 font-mono text-[12px] text-good-fg hover:underline">
+          settled · {shortHash(settledHash)}<ExternalLinkIcon aria-hidden className="size-3" />
+        </a>
+      )}
+
+      <section className="flex flex-col gap-3">
+        <h2 className="font-display text-[24px] font-semibold text-text">Your bids</h2>
+        <MyBids bids={mine} auction={s.auction as Address} ended settled={s.settled} graduated={graduated} clearingQ96={clearingQ96} checkpoints={c.checkpoints} />
+      </section>
+    </div>
+  );
+}
+
+/** Whether `me` still has something to do on the card's current auction (exit, claim or take back). */
+export function hasBidActions(c: CardData, me: string | null, graduated: boolean | null): boolean {
+  const s = c.sharding;
+  if (!s || !me || !s.settled) return false;
+  const clearingQ96 = s.clearingPriceQ96 ?? s.floorPriceQ96;
+  return c.bids.some((b) => b.auction === s.auction && b.owner.toLowerCase() === me.toLowerCase() && bidView(b, { ended: true, graduated: graduated ?? s.graduated, clearingQ96 }).action !== "none");
+}
+
+/**
+ * The card's auction: HisVE while it runs, PA50F / oz3mH after the end block. Ended is decided by the polled block (`block >= endBlock`): an
  * activeAuctions row outlives endBlock until someone settles.
  */
 export function AuctionPanel({ c, me, block }: { c: CardData; me: Address | null; block: bigint | null }) {
   const s = c.sharding!;
-  const ended = block != null && block >= s.endBlock;
-  const chain = useAuctionChain(s.auction as Address, me, ended || s.settled);
-  if (!ended && !s.settled) return <LiveAuction c={c} me={me} block={block} chain={chain} />;
-  return (
-    <Panel className="p-6 md:p-7">
-      <h2 className="font-display text-[22px] font-semibold text-text">The auction has ended</h2>
-      <p className="mt-1 text-[13px] text-text-2">Settling, exits and claims open here once the auction is over.</p>
-    </Panel>
-  );
+  const ended = s.settled || (block != null && block >= s.endBlock);
+  const chain = useAuctionChain(s.auction as Address, me, ended);
+  if (!ended) return <LiveAuction c={c} me={me} block={block} chain={chain} />;
+  return <PostAuction c={c} me={me} chain={chain} />;
 }

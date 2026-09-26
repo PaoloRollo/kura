@@ -149,6 +149,8 @@ export function bidRevertMessage(name: string | null | undefined): { title: stri
       return { title: "That price isn't on a price step", body: "Use a multiple of the auction's price step." };
     case "TokensNotReceived":
       return { title: "The auction isn't funded yet", body: "Its shards haven't arrived. Try again in a moment." };
+    case "TransferFromFailed":
+      return { title: "The auction couldn't pull your USDC", body: "Check your USDC balance, then retry: the approvals are checked again." };
     case "InsufficientAllowance":
     case "AllowanceExpired":
       return { title: "The auction can't pull your budget", body: "The USDC allowance ran out. Retry to approve it again." };

@@ -55,6 +55,8 @@ const PERMIT2_ERRORS = parseAbi([
   "error InvalidContractSignature()",
   "error InvalidSignatureLength()",
   "error UnsafeCast()",
+  // Solady SafeTransferLib, as the auction pulls the bid currency through Permit2.
+  "error TransferFromFailed()",
 ]);
 
 const ERROR_ABI = [
