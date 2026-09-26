@@ -266,6 +266,33 @@ export function faucetMessage(deployer: Address, need: bigint, have: bigint): st
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// ENS names across redeploys (pure)
+
+/**
+ * A collector handle. The ENS registry outlives a redeploy while CardNames doesn't: a seed wallet may still own its
+ * handle from an earlier deployment, which the new CardNames can neither see (collectorLabels) nor re-register.
+ */
+export function handleStatus(h: { recorded: string; available: boolean; ensOwner: Address; wallet: Address }): "recorded" | "register" | "owned" | "taken" {
+  if (h.recorded) return "recorded";
+  if (h.available) return "register";
+  return h.ensOwner.toLowerCase() === h.wallet.toLowerCase() ? "owned" : "taken";
+}
+
+/** CardNames' card label, as the vault issues it at mint. */
+export const cardLabel = (slug: string, setCode: string, id: bigint) => `${slug}-${setCode}-${id}`;
+
+/** The labels the cards not yet minted will get, minted in order from the vault's next id. */
+export function plannedLabels<K extends string>(cards: Record<K, { slug: string; setCode: string }>, nextId: bigint, minted: Set<string>): Partial<Record<K, string>> {
+  const out: Partial<Record<K, string>> = {};
+  let id = nextId;
+  for (const k of Object.keys(cards) as K[]) {
+    if (minted.has(k)) continue;
+    out[k] = cardLabel(cards[k].slug, cards[k].setCode, id++);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Tickets (pure)
 
 /** A synthetic World ID nullifier for a seed wallet: nothing real is bound. */
@@ -805,10 +832,17 @@ async function registerHandles(ctx: Ctx) {
     await step(ctx, `handle-${r}`, w, { address: ctx.d.cardNames, abi: abi.cardNames, functionName: "registerCollector", args: [label] }, {
       note: `${label}.kura.eth`,
       skip: async () => {
-        const mine = await read<string>(ctx, ctx.d.cardNames, abi.cardNames, "collectorLabels", [w.address]);
-        if (mine) return mine;
-        if (!(await read<boolean>(ctx, ctx.d.cardNames, abi.cardNames, "isAvailable", [label]))) throw new Error(`${label}.kura.eth is taken by another wallet; change HANDLES in scripts/rehearse.ts`);
-        return undefined;
+        const recorded = await read<string>(ctx, ctx.d.cardNames, abi.cardNames, "collectorLabels", [w.address]);
+        const available = recorded ? false : await read<boolean>(ctx, ctx.d.cardNames, abi.cardNames, "isAvailable", [label]);
+        const ensOwner = recorded || available ? ZERO : await read<Address>(ctx, ctx.d.ensRegistry, abi.ensRegistry, "findOwner", [label]);
+        switch (handleStatus({ recorded, available, ensOwner, wallet: w.address })) {
+          case "recorded": return recorded;
+          case "register": return undefined;
+          case "owned":
+            console.log(`    ${label}.kura.eth is still ${r}'s from an earlier deployment (this CardNames has no record of it)`);
+            return `${label} (earlier deployment)`;
+          case "taken": throw new Error(`${label}.kura.eth is taken by another wallet; change HANDLES in scripts/rehearse.ts`);
+        }
       },
     });
   }
@@ -823,6 +857,19 @@ async function approvePermit2(ctx: Ctx, plan: ScenarioPlan) {
       skip: async () => ((await read<bigint>(ctx, ctx.d.usdc, abi.erc20, "allowance", [w.address, ctx.d.permit2])) >= 10n ** 30n ? "approved" : undefined),
     });
   }
+}
+
+/** Card names embed the id and a new vault restarts ids, so a label may already exist in ENS: refuse before minting. */
+async function checkCardLabels(ctx: Ctx, cards: Record<CardKey, CardInfo>) {
+  const minted = new Set((Object.keys(CARDS) as CardKey[]).filter((k) => isStarted(ctx.state.steps[`mint-${k}`])));
+  if (minted.size) return; // a resumed run's ids are already fixed
+  const nextId = await read<bigint>(ctx, ctx.d.cardVault, abi.cardVault, "nextId");
+  const labels = plannedLabels(cards, nextId, minted);
+  for (const [k, label] of Object.entries(labels) as [CardKey, string][]) {
+    const taken = !(await read<boolean>(ctx, ctx.d.cardNames, abi.cardNames, "isAvailable", [label]));
+    if (taken) throw new Error(`card ${k} would be #${label.split("-").at(-1)} and ${label}.kura.eth already exists in ENS (an earlier deployment), so its mint would revert; mint a throwaway card first to move the ids on`);
+  }
+  assert(true, `the card names ${Object.values(labels).join(", ")} are free in ENS`);
 }
 
 async function mintCards(ctx: Ctx, cards: Record<CardKey, CardInfo>): Promise<Record<CardKey, bigint>> {
@@ -1431,6 +1478,8 @@ async function main() {
   const payoutAddr = await read<Address>(ctx, d.cardVault, abi.cardVault, "payout");
   const payoutBefore = await usdcOf(ctx, payoutAddr);
 
+  console.log("\nPre-flight");
+  await checkCardLabels(ctx, cards);
   await fundWallets(ctx, b);
   await registerHandles(ctx);
   await approvePermit2(ctx, plan);

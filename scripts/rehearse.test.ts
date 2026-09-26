@@ -6,6 +6,9 @@ import {
   AUCTION_SHAPES,
   BUYER,
   FOR_SALE,
+  cardLabel,
+  handleStatus,
+  plannedLabels,
   TRADES_B,
   buyoutEstimate,
   minOut,
@@ -436,6 +439,25 @@ describe("state file", () => {
     s.vault = vault;
     expect(stateVaultError(s, vault.toLowerCase() as Address)).toBeNull();
     expect(stateVaultError(s, "0x0000000000000000000000000000000000000001")).toMatch(/other vault/);
+  });
+});
+
+describe("ENS names across redeploys", () => {
+  const me = "0x87cf087eaBE98eA401F3098637bf18C6F3ead7dA" as Address;
+  const other = "0x0000000000000000000000000000000000000001" as Address;
+  const zero = "0x0000000000000000000000000000000000000000" as Address;
+  it("a handle recorded by this CardNames is done; a free one is registered", () => {
+    expect(handleStatus({ recorded: "seedaiko", available: false, ensOwner: me, wallet: me })).toBe("recorded");
+    expect(handleStatus({ recorded: "", available: true, ensOwner: zero, wallet: me })).toBe("register");
+  });
+  it("a handle this wallet still owns from an earlier deployment counts as done; anyone else's is a conflict", () => {
+    expect(handleStatus({ recorded: "", available: false, ensOwner: me.toLowerCase() as Address, wallet: me })).toBe("owned");
+    expect(handleStatus({ recorded: "", available: false, ensOwner: other, wallet: me })).toBe("taken");
+  });
+  it("card names are <slug>-<set>-<id>, and the unminted cards take the next ids in order", () => {
+    expect(cardLabel("lightning-bolt", "4ed", 3n)).toBe("lightning-bolt-4ed-3");
+    const cards = { A: { slug: "lightning-bolt", setCode: "4ed" }, B: { slug: "counterspell", setCode: "a25" }, C: { slug: "x", setCode: "y" } };
+    expect(plannedLabels(cards, 5n, new Set(["B"]))).toEqual({ A: "lightning-bolt-4ed-5", C: "x-y-6" });
   });
 });
 
