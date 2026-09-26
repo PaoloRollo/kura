@@ -99,6 +99,7 @@ contract SetupEnsCommit is EnsEnv {
             IMintableToken(token).mint(deployer, price);
         }
         IERC20(token).approve(address(registrar), price);
+        console2.log("registrar fee (fee token units)", price);
 
         bytes32 secret = keccak256(abi.encode("kura-commit", label, block.timestamp, deployer));
         bytes32 commitment = registrar.makeCommitment(label, deployer, secret, registry, resolver, DURATION, bytes32(0));
@@ -137,6 +138,10 @@ contract SetupEnsRegister is EnsEnv {
         bytes32 secret = vm.parseJsonBytes32(pending, ".secret");
         uint64 duration = uint64(vm.parseJsonUint(pending, ".duration"));
 
+        _requireCommitmentWindow(
+            IETHRegistrar(ethRegistrar()).makeCommitment(label, deployer, secret, registry, resolver, duration, bytes32(0))
+        );
+
         vm.startBroadcast(pk);
         IETHRegistrar(ethRegistrar()).register(label, deployer, secret, registry, resolver, duration, token, bytes32(0));
         IENSRegistryV2(registry).setParent(ethRegistry(), label);
@@ -172,5 +177,17 @@ contract SetupEnsRegister is EnsEnv {
         string memory out = vm.serializeAddress(json, "appraiserAddr", signer);
         vm.writeJson(out, string.concat(deploymentsDir(), "/sepolia.ens.json"));
         console2.log("registered", label);
+    }
+
+    /// Fail early, with a readable reason, outside the registrar's commitment window.
+    function _requireCommitmentWindow(bytes32 commitment) internal view {
+        IETHRegistrar registrar = IETHRegistrar(ethRegistrar());
+        uint64 committedAt = registrar.commitmentAt(commitment);
+        require(committedAt != 0, "no commitment on chain: run SetupEnsCommit first");
+        require(block.timestamp >= committedAt + registrar.MIN_COMMITMENT_AGE(), "commitment too new: wait and rerun");
+        require(
+            block.timestamp < committedAt + registrar.MAX_COMMITMENT_AGE(),
+            "commitment expired: rerun SetupEnsCommit with a new VAULT_ENS_LABEL"
+        );
     }
 }
