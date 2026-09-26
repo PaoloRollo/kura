@@ -78,7 +78,7 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const pricesFetching = useIsFetching({ queryKey: ["card-prices"] }) > 0;
   const pricesPending = pricesFetching && mapped.some((c) => !markets.has(c.id.toString()));
 
-  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || pricesPending || block == null;
+  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || checkpoints.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || pricesPending || block == null;
   const view = isLoading || block == null ? null : analyticsView({
     cards: cardRows,
     shardings: shardings.data ?? [],

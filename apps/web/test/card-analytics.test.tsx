@@ -113,6 +113,14 @@ describe("CardAnalytics", () => {
     expect(tile(view("auctioning", { checkpoints: [] }), "Premium")).toMatchObject({ value: "n/a", sub: "no clearing yet" });
   });
 
+  it("keeps a premium that prints as 0% neutral, not green or red", () => {
+    const implied = Number(String(tile(view("auctioning"), "Implied value").value).replace(/[$,]/g, ""));
+    const base = cardFixture("auctioning", NOW).price!;
+    // 0.3% under the implied value: below the 0.5% neutral threshold.
+    const v = view("auctioning", { price: { ...base, adjustedUsd: (implied / 1.003).toFixed(2) } });
+    expect(tile(v, "Premium")).toMatchObject({ value: "0%", tone: "default" });
+  });
+
   it("shows skeletons, not empty states, while bids, checkpoints and fees load", () => {
     renderAnalytics({ ...cardFixture("sharded", NOW), bids: [], checkpoints: [], fees: [], bidsLoading: true, checkpointsLoading: true, feesLoading: true });
     expect(screen.queryByText("No bids yet")).toBeNull();

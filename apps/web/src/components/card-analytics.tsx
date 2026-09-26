@@ -17,7 +17,7 @@ import type { CardData, ShardingRow } from "@/hooks/use-card";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
 import type { MarketPoint } from "@/app/api/cards/[id]/market/route";
 import { addresses } from "@/lib/chain";
-import { SERIES, premiumLabel } from "@/lib/chart-colors";
+import { PREMIUM_NEUTRAL, SERIES, premiumLabel } from "@/lib/chart-colors";
 import { clearingPerShard, custodians, holdersView, pct, shareOf } from "@/lib/card-view";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
 import { distanceToRedemption, feesByKind, fillRate, impliedValueUsdc, participation, premium, tokensSold } from "@/lib/metrics";
@@ -171,7 +171,8 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     {
       label: "Premium",
       value: premiumLabel(prem),
-      tone: prem == null ? "default" : prem > 0 ? "pos" : prem < 0 ? "neg" : "default",
+      // Neutral below the same threshold premiumLabel prints "0%" at, so a "0%" never reads green or red.
+      tone: prem == null || Math.abs(prem) < PREMIUM_NEUTRAL ? "default" : prem > 0 ? "pos" : "neg",
       sub: why ?? (implied == null ? "no clearing yet" : quote == null ? "no market price" : <span title={source}>{live ? "live, " : ""}vs Scryfall {money(quote, 0)}</span>),
     },
     {
