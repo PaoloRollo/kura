@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { publicEnv } from "@/env";
 import { WorldIdError, useWorldIdTicket, type IssuedTicket, type ReleaseReady } from "@/hooks/use-world-id-ticket";
+import { releaseFocusForIdkit, watchIdkitLayer } from "@/lib/idkit-layer";
 
 export type { IssuedTicket };
 
@@ -94,6 +95,9 @@ export function WorldIdGate(props: {
   const verifying = useRef(false);
   const closePending = useRef(false);
 
+  // The widget can open inside the mobile bid sheet: keep the sheet from swallowing its taps and focus.
+  useEffect(() => watchIdkitLayer(), []);
+
   async function start() {
     if (!ready) return;
     // A fresh attempt: an earlier refusal's "already reported" flag must not swallow this one's errors.
@@ -103,6 +107,7 @@ export function WorldIdGate(props: {
     try {
       const action = props.action;
       setRp({ action, ctx: await world.rpContext() });
+      releaseFocusForIdkit();
       setOpen(true);
     } catch {
       if (props.onError) props.onError("START_FAILED");
