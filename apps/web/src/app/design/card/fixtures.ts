@@ -23,7 +23,7 @@ const NODE: Hex = "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1f
 const S = 10n ** 18n;
 const usd = (dollars: number) => BigInt(Math.round(dollars * 100)) * 10_000n;
 
-export const PREVIEW_STATES = ["whole-owner", "collect-ready", "collect-expired", "whole", "whole-after-buyout", "auctioning", "sharded", "reserve-not-met", "released", "released-no-buyout", "empty", "loading", "notfound"] as const;
+export const PREVIEW_STATES = ["whole-owner", "collect-ready", "collect-expired", "whole", "whole-after-buyout", "auctioning", "sharded", "settled-unclaimed", "reserve-not-met", "released", "released-no-buyout", "empty", "loading", "notfound"] as const;
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /** Blocks at 12 s: the fixture's "now" is block HEAD at `now` seconds. */
@@ -39,6 +39,8 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   const auctioning = state === "auctioning";
   // Settled without graduating: every shard went back to the owner, every bid was refunded.
   const failed = state === "reserve-not-met";
+  // Settled and graduated, but kenji has not claimed his 2 shards yet: they are still in the auction.
+  const toClaim = state === "settled-unclaimed";
   // Released straight from Whole: never sharded, so there is no buyout to show.
   const plain = state === "released-no-buyout";
   const released = state === "released" || plain;
@@ -134,16 +136,18 @@ export function cardFixture(state: PreviewState, now: number): CardData {
       bid(X7A3, 1712, 1712, 4 * 60, "open", null);
       bid(KENJI, 2550, 1700, 2 * 60, "open", null);
     } else {
-      bid(KENJI, 3424, 1760, 2 * 3600, "claimed", 2n * S);
+      bid(KENJI, 3424, 1760, 2 * 3600, toClaim ? "open" : "claimed", toClaim ? null : 2n * S);
       bid(X7A3, 1712, 1800, 41 * 60, "claimed", 1n * S);
       activities.push(act("settle", KENJI, 22 * 60, usd(5136), { graduated: true, shardToken: TOKEN, clearingUsdcPerShard: usd(1712).toString() }));
-      activities.push(act("exit", KENJI, 22 * 60, 0n, { auction: AUCTION, bidId: "1", tokensFilled: (2n * S).toString() }));
-      activities.push(act("claim", KENJI, 22 * 60, 2n * S, { auction: AUCTION, bidId: "1" }));
-      tr(AUCTION, KENJI, 2n * S, 22 * 60);
+      if (!toClaim) {
+        activities.push(act("exit", KENJI, 22 * 60, 0n, { auction: AUCTION, bidId: "1", tokensFilled: (2n * S).toString() }));
+        activities.push(act("claim", KENJI, 22 * 60, 2n * S, { auction: AUCTION, bidId: "1" }));
+        tr(AUCTION, KENJI, 2n * S, 22 * 60);
+      }
       activities.push(act("exit", X7A3, 21 * 60, 0n, { auction: AUCTION, bidId: "2", tokensFilled: (1n * S).toString() }));
       activities.push(act("claim", X7A3, 21 * 60, 1n * S, { auction: AUCTION, bidId: "2" }));
       tr(AUCTION, X7A3, 1n * S, 21 * 60);
-      tr(KENJI, AIKO, S / 2n, redeemed ? 18 * 60 : 8 * 60);
+      if (!toClaim) tr(KENJI, AIKO, S / 2n, redeemed ? 18 * 60 : 8 * 60);
     }
   }
   if (redeemed) {
@@ -159,6 +163,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   const holders: BalanceRow[] = whole || released ? []
     : auctioning ? [bal(PAOLO, 13n * S), bal(AUCTION, 3n * S)]
     : failed ? [bal(PAOLO, 16n * S)]
+    : toClaim ? [bal(PAOLO, 13n * S), bal(X7A3, 1n * S), bal(AUCTION, 2n * S)]
     : [bal(PAOLO, 13n * S), bal(KENJI, 3n * S / 2n), bal(X7A3, 1n * S), bal(AIKO, S / 2n), bal(AUCTION, 0n)].filter((h) => h.balance > 0n);
   const supply = holders.reduce((a, h) => a + h.balance, 0n);
 

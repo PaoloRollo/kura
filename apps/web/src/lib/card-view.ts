@@ -14,6 +14,8 @@ type Sharding = { auction: Address; shardToken: Address; graduated: boolean | nu
 /** Holder chart colours in holder order (balance desc), as the designs use them; s2 and s5 come after. */
 export const HOLDER_COLORS = ["var(--kura-s1)", "var(--kura-s3)", "var(--kura-s4)", "var(--kura-s7)", "var(--kura-s2)", "var(--kura-s5)"] as const;
 export const holderColor = (i: number) => HOLDER_COLORS[i % HOLDER_COLORS.length]!;
+/** A to-claim row's colour: its place's holder colour, faded, so it reads as not held yet. */
+export const toClaimColor = (i: number) => `color-mix(in srgb, ${holderColor(i)} 45%, transparent)`;
 
 /** Addresses that hold shards on the card's behalf, not as owners: every auction of the card, and the vault. */
 export function custodians(shardings: readonly Pick<Sharding, "auction">[], vault: string): Set<string> {
@@ -80,10 +82,26 @@ export type HolderRow = {
   since: Since;
 };
 
+/** A winning bidder whose shards still sit in the auction contract (exitBid / claimTokens not called yet). */
+export type ToClaimRow = {
+  holder: Address;
+  /** Shards won and not claimed: the indexer's tokensFilled once the bid exited, else an estimate at the clearing. */
+  balance: bigint;
+  share: number;
+  value: bigint | null;
+};
+
+/** The bid fields the to-claim split reads (the indexer's `bids` row). */
+export type ClaimBid = { auction: Address; owner: Address; maxPriceQ96: bigint; amountUsdc: bigint; status: string; tokensFilled: bigint | null };
+
 export type HoldersView = {
   rows: HolderRow[];
+  /** Winning bidders with shards still in the auction, largest first (only after a graduated auction). */
+  toClaim: ToClaimRow[];
+  /** Distinct wallets across `rows` and `toClaim`. */
+  holderCount: number;
   supply: bigint;
-  /** Shards still held by the card's auction(s): bought but not claimed yet. */
+  /** Shards still held by the card's auction(s) and not attributed to a winning bidder (live: every shard for sale). */
   unclaimed: bigint;
   /** lib/metrics `hhi` over the non-custodian holders (the Analytics tab's Concentration). */
   hhi: number;
@@ -108,6 +126,8 @@ export function holdersView(p: {
   shardings: readonly Sharding[];
   transfers: readonly Transfer[];
   vault: string;
+  /** The card's bids: after a graduated auction, the shards still in it are split by winning bidder. */
+  bids?: readonly ClaimBid[];
 }): HoldersView {
   const live = p.balances.filter((b) => b.balance > 0n);
   const supply = live.reduce((a, b) => a + b.balance, 0n);
@@ -125,8 +145,50 @@ export function holdersView(p: {
     canRedeem: canRedeem(b.balance, supply),
     since: holderSince(b.holder, token, p.transfers, auctions),
   }));
-  const unclaimed = live.filter((b) => auctions.has(lc(b.holder))).reduce((a, b) => a + b.balance, 0n);
-  return { rows, supply, unclaimed, hhi: hhi(shares(live, excluded)), top: rows[0] ?? null, clearingPerShard: price };
+  const inAuction = live.filter((b) => auctions.has(lc(b.holder))).reduce((a, b) => a + b.balance, 0n);
+  const current = p.sharding ? live.find((b) => lc(b.holder) === lc(p.sharding!.auction))?.balance ?? 0n : 0n;
+  const won = p.sharding?.graduated === true && p.sharding.clearingPriceQ96 != null && p.bids
+    ? toClaimOf(p.bids.filter((b) => lc(b.auction) === lc(p.sharding!.auction)), p.sharding.clearingPriceQ96, current)
+    : [];
+  const toClaim: ToClaimRow[] = won.map((w) => ({ ...w, share: shareOf(w.balance, supply), value: price == null ? null : (w.balance * price) / SHARD }));
+  const claimed = won.reduce((a, w) => a + w.balance, 0n);
+  const holderCount = new Set([...rows.map((r) => lc(r.holder)), ...toClaim.map((r) => lc(r.holder))]).size;
+  return { rows, toClaim, holderCount, supply, unclaimed: inAuction - claimed, hhi: hhi(shares(live, excluded)), top: rows[0] ?? null, clearingPerShard: price };
+}
+
+/**
+ * The shards each winning bidder still has in a graduated auction (`held`: the auction's balance), largest first.
+ * A bid that exited has the indexer's `tokensFilled`; an open one is estimated at the final clearing: a max above it
+ * fills its whole budget at the clearing price, a max at it shares what is left pro rata by budget, a max below it wins
+ * nothing. Claimed bids hold nothing here. Scaled down if the estimate exceeds `held`; the rest stays unattributed.
+ */
+export function toClaimOf(bids: readonly ClaimBid[], clearingQ96: bigint, held: bigint): { holder: Address; balance: bigint }[] {
+  const price = q96ToUsdcPerShard(clearingQ96);
+  if (held <= 0n || price <= 0n) return [];
+  const pending = bids.filter((b) => b.status !== "claimed");
+  const fills = new Map<string, { holder: Address; x: bigint }>();
+  const add = (b: ClaimBid, x: bigint) => {
+    if (x <= 0n) return;
+    const f = fills.get(lc(b.owner));
+    fills.set(lc(b.owner), { holder: f?.holder ?? b.owner, x: (f?.x ?? 0n) + x });
+  };
+  let fixed = 0n;
+  for (const b of pending) {
+    const x = b.tokensFilled != null ? b.tokensFilled : b.maxPriceQ96 > clearingQ96 ? (b.amountUsdc * SHARD) / price : 0n;
+    add(b, x);
+    fixed += x;
+  }
+  const atClearing = pending.filter((b) => b.tokensFilled == null && b.maxPriceQ96 === clearingQ96);
+  const want = atClearing.reduce((a, b) => a + (b.amountUsdc * SHARD) / price, 0n);
+  const left = held > fixed ? held - fixed : 0n;
+  const budget = atClearing.reduce((a, b) => a + b.amountUsdc, 0n);
+  for (const b of atClearing) add(b, want <= left ? (b.amountUsdc * SHARD) / price : budget > 0n ? (left * b.amountUsdc) / budget : 0n);
+  const total = [...fills.values()].reduce((a, f) => a + f.x, 0n);
+  const scale = (x: bigint) => (total > held ? (x * held) / total : x);
+  return [...fills.values()]
+    .map((f) => ({ holder: f.holder, balance: scale(f.x) }))
+    .filter((r) => r.balance > 0n)
+    .sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0));
 }
 
 /** A share 0..1 with 1e-6 precision (bigint-safe for 18-decimal balances). */

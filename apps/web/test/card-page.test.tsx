@@ -113,6 +113,20 @@ describe("CardPageView", () => {
     expect(screen.getByText("black-lotus-lea-1.kura.eth · auctioning · 16 shards")).toBeTruthy();
   });
 
+  it("lists a winning bidder who hasn't claimed as 'to claim', counted but set apart", () => {
+    renderCard("settled-unclaimed", { tab: "holders" });
+    // paolo and x7a3 hold; kenji's 2 shards are still in the auction.
+    expect(screen.getByText("3 wallets")).toBeTruthy();
+    const row = document.querySelector("tr[data-to-claim]") as HTMLElement;
+    expect(within(row).getByText("To claim")).toBeTruthy();
+    expect(within(row).getByText("kenji.kura.eth")).toBeTruthy();
+    expect(within(row).getByText("2.0")).toBeTruthy();
+    expect(within(row).getByText("$3,424.00")).toBeTruthy();
+    expect(document.querySelectorAll("tr[data-to-claim]")).toHaveLength(1);
+    // Nothing is left unattributed.
+    expect(screen.getByText("0.0 shards")).toBeTruthy();
+  });
+
   it("shows a whole card's holders as one owner", () => {
     renderCard("whole", { tab: "holders" });
     expect(screen.getByText("Not sharded, one owner")).toBeTruthy();

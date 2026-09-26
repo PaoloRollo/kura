@@ -87,7 +87,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPa
       </div>
     );
   }
-  const holders = holdersView({ balances: c.holders, sharding: c.sharding, shardings: c.allShardings, transfers: c.transfers, vault: addresses.cardVault });
+  const holders = holdersView({ balances: c.holders, sharding: c.sharding, shardings: c.allShardings, transfers: c.transfers, vault: addresses.cardVault, bids: c.bids });
   const released = card.state === "released";
   const isOwner = card.state === "whole" && !!me && card.ownerOf.toLowerCase() === me.toLowerCase();
   const shards = c.sharding && card.state !== "whole" ? c.sharding.totalShards : null;

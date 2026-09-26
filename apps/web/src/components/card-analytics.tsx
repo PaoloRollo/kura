@@ -18,7 +18,7 @@ import { useVaultFeeBps } from "@/hooks/use-vault-fee";
 import type { MarketPoint } from "@/app/api/cards/[id]/market/route";
 import { addresses } from "@/lib/chain";
 import { PREMIUM_NEUTRAL, SERIES, premiumLabel } from "@/lib/chart-colors";
-import { clearingPerShard, custodians, holdersView, pct, shareOf } from "@/lib/card-view";
+import { clearingPerShard, custodians, holdersView, pct, shareOf, toClaimColor } from "@/lib/card-view";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
 import { distanceToRedemption, feesByKind, fillRate, impliedValueUsdc, participation, premium, tokensSold } from "@/lib/metrics";
 import { marketPerShard, priceSourceLabel, quoteUsdc } from "@/lib/pricing";
@@ -145,9 +145,14 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     holderSeries(data.transfers.filter((tr) => lc(tr.shardToken) === lc(s.shardToken)), excluded).map((p) => ({ t: p.timestamp, holders: p.holders })),
     HOLDER_BARS,
   );
-  const view = holdersView({ balances: data.holders, sharding: s, shardings: data.allShardings, transfers: data.transfers, vault });
+  const view = holdersView({ balances: data.holders, sharding: s, shardings: data.allShardings, transfers: data.transfers, vault, bids: data.bids });
   const slices: OwnershipSlice[] = view.rows.map((r) => ({ id: r.holder, name: shortAddress(r.holder), label: <AddressName address={r.holder} copyable={false} avatar={false} />, value: r.share }));
-  // Live, the auction still holds every shard for sale; after the settle, the ones bought but not claimed.
+  // Winning bidders whose shards are still in the auction: their own slices, in a faded holder colour.
+  view.toClaim.forEach((r, i) => slices.push({
+    id: `claim-${r.holder}`, name: `${shortAddress(r.holder)} · to claim`, value: r.share, color: toClaimColor(view.rows.length + i),
+    label: <span className="inline-flex items-center gap-1.5"><AddressName address={r.holder} copyable={false} avatar={false} /><span className="text-muted-foreground">· to claim</span></span>,
+  }));
+  // Live, the auction still holds every shard for sale; after the settle, the ones bought but not attributed to a bid.
   const unclaimedLabel = live ? "In auction" : "Unclaimed in auction";
   if (view.unclaimed > 0n) slices.push({ id: "unclaimed", name: unclaimedLabel, label: <span className="text-muted-foreground">{unclaimedLabel}</span>, value: shareOf(view.unclaimed, view.supply), color: UNCLAIMED_COLOR });
 

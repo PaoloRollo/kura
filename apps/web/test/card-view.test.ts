@@ -13,6 +13,7 @@ import {
   parseTab,
   recordRole,
   setRarity,
+  toClaimOf,
 } from "@/lib/card-view";
 
 const S = 10n ** 18n;
@@ -77,6 +78,53 @@ describe("holdersView", () => {
   it("is empty for a whole card", () => {
     const w = holdersView({ balances: [], sharding: null, shardings: [], transfers: [], vault: VAULT });
     expect(w).toMatchObject({ rows: [], supply: 0n, unclaimed: 0n, hhi: 0, top: null });
+  });
+});
+
+describe("to claim", () => {
+  const Q = (usd: number) => usdcPerShardToQ96(BigInt(usd) * 1_000_000n);
+  const clearing = Q(1712);
+  const X7A3 = "0x00000000000000000000000000000000000000dd" as const;
+  const bid = (owner: `0x${string}`, amountUsd: number, maxUsd: number, status = "open", tokensFilled: bigint | null = null) =>
+    ({ auction: AUCTION, owner, maxPriceQ96: Q(maxUsd), amountUsdc: BigInt(amountUsd) * 1_000_000n, status, tokensFilled });
+
+  it("fills a bid above the clearing at the clearing price, uses tokensFilled once exited, and skips claimed and losing bids", () => {
+    const won = toClaimOf([
+      bid(KENJI, 3424, 1760), // 2 shards at $1,712
+      bid(AIKO, 856, 1800, "exited", S / 2n),
+      bid(X7A3, 1712, 1800, "claimed", S),
+      bid(PAOLO, 1000, 1600), // below the clearing
+    ], clearing, 3n * S);
+    expect(won).toEqual([{ holder: KENJI, balance: 2n * S }, { holder: AIKO, balance: S / 2n }]);
+  });
+
+  it("shares what is left pro rata among bids at the clearing, and never attributes more than the auction holds", () => {
+    // 2 shards above the clearing; 1 left for two at-clearing bids wanting 1 and 3 shards: 0.25 and 0.75.
+    const won = toClaimOf([bid(KENJI, 3424, 1760), bid(AIKO, 1712, 1712), bid(PAOLO, 5136, 1712)], clearing, 3n * S);
+    expect(won).toEqual([{ holder: KENJI, balance: 2n * S }, { holder: PAOLO, balance: 3n * S / 4n }, { holder: AIKO, balance: S / 4n }]);
+    // The estimate exceeds the balance (1 shard): scaled down to fit.
+    const capped = toClaimOf([bid(KENJI, 3424, 1760)], clearing, S);
+    expect(capped).toEqual([{ holder: KENJI, balance: S }]);
+  });
+
+  it("splits the auction's balance in holdersView after a graduated auction, the rest unattributed", () => {
+    const balances = [{ holder: PAOLO, balance: 13n * S }, { holder: AUCTION, balance: 3n * S }];
+    const v = holdersView({ balances, sharding, shardings: [sharding], transfers: [], vault: VAULT, bids: [bid(KENJI, 3424, 1760)] });
+    expect(v.toClaim).toMatchObject([{ holder: KENJI, balance: 2n * S, share: 0.125, value: 2n * 1_712_000_000n }]);
+    expect(v.unclaimed).toBe(1n * S);
+    expect(v.holderCount).toBe(2);
+    // Redemption and concentration stay on held balances.
+    expect(v.rows.map((r) => r.holder)).toEqual([PAOLO]);
+    expect(v.top?.holder).toBe(PAOLO);
+  });
+
+  it("keeps every shard 'in auction' while the auction is live, and counts a bidder who also holds once", () => {
+    const balances = [{ holder: PAOLO, balance: 13n * S }, { holder: AUCTION, balance: 3n * S }];
+    const live = holdersView({ balances, sharding: { ...sharding, graduated: null }, shardings: [sharding], transfers: [], vault: VAULT, bids: [bid(KENJI, 3424, 1760)] });
+    expect(live.toClaim).toEqual([]);
+    expect(live.unclaimed).toBe(3n * S);
+    const both = holdersView({ balances, sharding, shardings: [sharding], transfers: [], vault: VAULT, bids: [bid(PAOLO, 1712, 1800)] });
+    expect(both.holderCount).toBe(1);
   });
 });
 

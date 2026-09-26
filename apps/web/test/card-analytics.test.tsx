@@ -113,6 +113,12 @@ describe("CardAnalytics", () => {
     expect(tile(view("auctioning", { checkpoints: [] }), "Premium")).toMatchObject({ value: "n/a", sub: "no clearing yet" });
   });
 
+  it("gives an unclaimed winning bidder their own 'to claim' ownership slice", () => {
+    const names = view("settled-unclaimed").ownership.slices.map((sl) => [sl.name, sl.value]);
+    expect(names).toContainEqual([expect.stringMatching(/ · to claim$/), 0.125]);
+    expect(names.map(([n]) => n)).not.toContain("Unclaimed in auction");
+  });
+
   it("keeps a premium that prints as 0% neutral, not green or red", () => {
     const implied = Number(String(tile(view("auctioning"), "Implied value").value).replace(/[$,]/g, ""));
     const base = cardFixture("auctioning", NOW).price!;
