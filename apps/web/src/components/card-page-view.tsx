@@ -9,6 +9,9 @@ import { AuctionPanel, hasBidActions } from "@/components/auction-panel";
 import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
+import { PayoutPanel } from "@/components/payout-panel";
+import { RedeemPanel } from "@/components/redeem-panel";
+import { PayoutClaimedView, RedeemedView, showVaultSuccess, useVaultSuccess } from "@/components/vault-success";
 import { MobileNav } from "@/components/mobile-nav";
 import { HoldersList, OwnershipSummary } from "@/components/holders-list";
 import { IndexerLoading } from "@/components/sync-state";
@@ -97,11 +100,22 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   const card = c.card!;
   const identity = identityOf(c);
   const settledInfo = useOwnerSettled(card.id);
+  const vaultSuccess = useVaultSuccess(card.id);
   if (settledInfo) {
     return (
       <div className="flex flex-col gap-4">
         <MobileNav title={identity.name} className="-mt-2" />
         <OwnerSettled info={settledInfo} cardName={identity.name} {...settledCounts(c, settledInfo)} onClose={() => showOwnerSettled(null)} />
+      </div>
+    );
+  }
+  if (vaultSuccess) {
+    return (
+      <div className="flex flex-col gap-4">
+        <MobileNav title={identity.name} className="-mt-2" />
+        {vaultSuccess.kind === "redeemed"
+          ? <RedeemedView info={vaultSuccess} cardName={identity.name} onClose={() => showVaultSuccess(null)} />
+          : <PayoutClaimedView info={vaultSuccess} cardName={identity.name} onClose={() => showVaultSuccess(null)} />}
       </div>
     );
   }
@@ -154,7 +168,9 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
   const panel =
     card.state === "whole" ? (isOwner ? <OwnerPanel c={c} /> : <OwnedByPanel c={c} />)
     : card.state === "auctioning" && c.sharding ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
-    : card.state === "sharded" && c.sharding ? (hasBidActions(c, me, null) ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} /> : <ShardedSummary c={c} />)
+    : card.state === "sharded" && c.sharding ? (hasBidActions(c, me, null) ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
+      : me && c.myBalance > 0n ? <RedeemPanel c={c} me={me as `0x${string}`} />
+      : <ShardedSummary c={c} />)
     : released ? <ReleasedSummary c={c} />
     : null;
 
@@ -174,6 +190,10 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
             <Credit identity={identity} className="lg:hidden" />
           </div>
           {panel}
+          {/* Payouts of bought-out shardings stay claimable, released cards included (each renders only with a balance). */}
+          {c.allShardings.filter((s) => s.redeemer && s.buyoutPerShard != null).map((s) => (
+            <PayoutPanel key={s.shardToken} me={me as `0x${string}` | null} cardName={identity.name} sharding={{ cardId: s.cardId, shardToken: s.shardToken, buyoutPerShard: s.buyoutPerShard!, redeemer: s.redeemer }} />
+          ))}
           {!released && (
             <div className="grid gap-10 xl:grid-cols-2">
               <OwnershipSummary view={holders} owner={card.state === "whole" ? card.ownerOf : null} />
