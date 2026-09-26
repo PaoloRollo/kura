@@ -148,7 +148,7 @@ export function useCard(id: bigint): CardData {
     queryFn: useCallback((db: Db) => db.select().from(t(schema.ensRecords)).where(eq(t(schema.ensRecords.node), node)) as Promise<EnsRecordRow[]>, [node]),
   });
 
-  const pool = usePonderQuery({ queryFn: useCallback((db: Db) => loadPool(db, id).then((p) => (p ? [p] : [])), [id]) });
+  const pool = usePonderQuery({ queryFn: useCallback((db: Db) => loadPool(db, id), [id]) });
   const swaps = usePonderQuery({ queryFn: useCallback((db: Db) => loadSwaps(db, id, SWAP_LIMIT), [id]) });
 
   const meta = useQuery<CardMeta>({ queryKey: ["card-meta", id.toString()], queryFn: () => fetchJson(`/api/meta/${id}`), enabled: !!row, staleTime: 5 * 60_000, retry: 1 });
