@@ -1,3 +1,4 @@
+import { ChartBarIcon } from "lucide-react";
 import type * as React from "react";
 import { holderColor } from "@/lib/card-view";
 import { ChartFrame } from "./chart-frame";
@@ -44,7 +45,7 @@ export function OwnershipBar({ slices, title = "Ownership split", subtitle = "Sh
 }) {
   const rows = ownershipRows(slices);
   return (
-    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Holder", "Share"], rows: rows.map((r) => [r.name, pct(r.share)]) }}>
+    <ChartFrame chartIcon={ChartBarIcon} title={title} subtitle={subtitle} table={{ columns: ["Holder", "Share"], rows: rows.map((r) => [r.name, pct(r.share)]) }}>
       <div className="flex h-3.5 gap-0.5" role="img" aria-label={rows.map((r) => `${r.name} ${pct(r.share)}`).join(", ")}>
         {rows.filter((r) => r.share > 0).map((r) => (
           <span key={r.id} title={`${r.name} ${pct(r.share)}`} className="h-full min-w-[3px] rounded-[3px]" style={{ flexGrow: r.share, flexBasis: 0, background: r.color }} />

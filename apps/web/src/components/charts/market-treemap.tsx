@@ -1,6 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useState } from "react";
+import { LayoutGridIcon } from "lucide-react";
 import Link from "next/link";
 import { CardArt } from "@/components/kura";
 import { premiumFill, premiumLabel, premiumTone, usd } from "@/lib/chart-colors";
@@ -131,27 +132,29 @@ export function MarketTreemap({ items, height = 360, title = "Market map", subti
   title?: string;
   subtitle?: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  // A state-held ref: the plot unmounts while the Table view shows, so the new node is measured when it comes back
+  // (a mount-only effect kept observing the detached node, whose zero width collapsed every tile).
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
-    const el = ref.current;
     if (!el) return;
-    setWidth(Math.max(1, el.getBoundingClientRect().width));
-    const ro = new ResizeObserver(([e]) => e && setWidth(Math.max(1, e.contentRect.width)));
+    // ResizeObserver reports the node's size as soon as it starts observing, so no synchronous read is needed.
+    const ro = new ResizeObserver(([e]) => e && e.contentRect.width > 0 && setWidth(e.contentRect.width));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [el]);
   const sorted = items.filter((i) => i.value > 0).sort((a, b) => b.value - a.value);
   const rects = width == null ? [] : squarify(sorted.map((i) => i.value), { x: 0, y: 0, w: width, h: height + 4 });
   return (
     <ChartFrame
       bare
+      chartIcon={LayoutGridIcon}
       title={title}
       subtitle={subtitle}
       aside={<Gradient />}
       table={{ columns: ["Card", "Value", "Premium"], rows: sorted.map((i) => [i.name, i.sizedByMarket ? `${usd(i.value)} (market)` : usd(i.value), premiumLabel(i.premium)]) }}
     >
-      <div ref={ref} className="relative -m-0.5" style={{ height: height + 4 }}>
+      <div ref={setEl} className="relative -m-0.5" style={{ height: height + 4 }}>
         {sorted.length === 0 && <p className="py-10 text-center text-[12px] text-muted-foreground">No cards in the vault yet</p>}
         {width != null && sorted.map((item, i) => {
           const r = rects[i]!;

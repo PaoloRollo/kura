@@ -1,3 +1,4 @@
+import { ChartBarIcon } from "lucide-react";
 import type * as React from "react";
 import { ALPHA, usd } from "@/lib/chart-colors";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,7 @@ export function DemandBars({ points, clearing, forSale, footer }: {
       ? `Clears at ${usd(clearing)} where demand covers the ${forSale} shard${forSale === 1 ? "" : "s"} for sale.`
       : `Clears at ${usd(clearing)}.`));
   return (
-    <ChartFrame
+    <ChartFrame chartIcon={ChartBarIcon}
       title="Demand curve"
       subtitle="Cumulative budget by max price, clearing marked"
       table={{ columns: ["Max price", "Cumulative budget"], rows: rows.map((r) => [usd(r.price), usd(r.cumulative)]) }}

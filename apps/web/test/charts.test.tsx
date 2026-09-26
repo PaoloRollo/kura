@@ -5,7 +5,7 @@ import { ChartFrame } from "@/components/charts/chart-frame";
 import { DemandBars, demandRows } from "@/components/charts/demand-bars";
 import { KpiStrip, fitFontSize } from "@/components/charts/kpi-strip";
 import { Leaderboard } from "@/components/charts/leaderboard";
-import { squarify } from "@/components/charts/market-treemap";
+import { MarketTreemap, squarify } from "@/components/charts/market-treemap";
 import { ownershipRows } from "@/components/charts/ownership-bar";
 import { priceDomain, priceScale } from "@/components/charts/price-bars";
 import { premiumFill, premiumLabel, premiumTone, usdCompact } from "@/lib/chart-colors";
@@ -18,18 +18,18 @@ describe("ChartFrame", () => {
   it("toggles the plot for a table with the given rows", () => {
     render(<ChartFrame title="Price per shard" table={table}><div data-testid="plot" /></ChartFrame>);
     expect(screen.getByTestId("plot")).toBeTruthy();
-    const chip = screen.getByRole("button", { name: "Table" });
-    expect(chip.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(chip);
-    expect(chip.getAttribute("aria-pressed")).toBe("true");
-    expect(chip.textContent).toBe("Table");
+    fireEvent.click(screen.getByRole("button", { name: "Show table" }));
+    // The same button now switches back, with the chart's icon and label.
+    expect(screen.queryByRole("button", { name: "Show table" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show chart" }).querySelector("svg")).toBeTruthy();
     expect(screen.queryByTestId("plot")).toBeNull();
     const t = screen.getByRole("table");
     const rows = within(t).getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(within(rows[2]!).getByText("$1,712")).toBeTruthy();
-    fireEvent.click(chip);
+    fireEvent.click(screen.getByRole("button", { name: "Show chart" }));
     expect(screen.getByTestId("plot")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show table" })).toBeTruthy();
   });
 
   it("shows the legend only with two or more entries", () => {
@@ -150,7 +150,7 @@ describe("Leaderboard", () => {
     const items = screen.getAllByRole("listitem");
     expect(within(items[0]!).queryByText("live")).toBeNull();
     expect(within(items[1]!).getByText("live")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Table" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show table" }));
     expect(screen.getByText("+3.1% (live)")).toBeTruthy();
     expect(screen.getByText("+9.6%")).toBeTruthy();
   });
@@ -165,3 +165,33 @@ describe("fitFontSize", () => {
     expect(fitFontSize(<span>eligible</span>)).toBeUndefined();
   });
 });
+
+describe("MarketTreemap", () => {
+  it("draws its tiles again after coming back from the table", () => {
+    const RO = globalThis.ResizeObserver;
+    // Like the browser, report the observed node's size on observe.
+    globalThis.ResizeObserver = class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe() { this.cb([{ contentRect: { width: 800 } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      const items = [
+        { id: "1", name: "Black Lotus", value: 27_392, premium: 0.096, href: "/app/cards/1" },
+        { id: "2", name: "Mox Pearl", value: 9_000, premium: -0.05, href: "/app/cards/2" },
+      ];
+      render(<MarketTreemap items={items} />);
+      expect(screen.getAllByRole("link")).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Show table" }));
+      expect(screen.queryAllByRole("link")).toHaveLength(0);
+      fireEvent.click(screen.getByRole("button", { name: "Show chart" }));
+      const tiles = screen.getAllByRole("link");
+      expect(tiles).toHaveLength(2);
+      expect(tiles[0]!.style.width).not.toBe("0%");
+    } finally {
+      globalThis.ResizeObserver = RO;
+    }
+  });
+});
+

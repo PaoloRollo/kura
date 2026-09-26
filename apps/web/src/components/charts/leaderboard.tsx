@@ -1,3 +1,4 @@
+import { ListOrderedIcon } from "lucide-react";
 import type * as React from "react";
 import Link from "next/link";
 import { CardArt } from "@/components/kura";
@@ -21,7 +22,7 @@ export function Leaderboard({ title, subtitle, rows, valueLabel = "Value" }: {
   valueLabel?: string;
 }) {
   return (
-    <ChartFrame title={title} subtitle={subtitle} table={{ columns: ["Card", valueLabel], rows: rows.map((r) => [`${r.rank}. ${r.label}`, r.live ? `${r.value} (live)` : r.value]) }}>
+    <ChartFrame chartIcon={ListOrderedIcon} title={title} subtitle={subtitle} table={{ columns: ["Card", valueLabel], rows: rows.map((r) => [`${r.rank}. ${r.label}`, r.live ? `${r.value} (live)` : r.value]) }}>
       <ol className="flex flex-col gap-3">
         {rows.map((r) => {
           const body: React.ReactNode = (

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCheckIcon, CoinsIcon, ExternalLinkIcon, KeyRoundIcon, ScanLineIcon, XIcon, type LucideIcon } from "lucide-react";
+import { CheckCheckIcon, CoinsIcon, ExternalLinkIcon, KeyRoundIcon, ScanLineIcon, XIcon, type LucideIcon, ListIcon } from "lucide-react";
 import { ChartFrame } from "@/components/charts/chart-frame";
 import { ago } from "@/lib/card-view";
 import { explorerTx } from "@/lib/chain";
@@ -75,7 +75,7 @@ export function RecentVaultEvents({ recent, names, now }: RecentPanel) {
     }),
   };
   return (
-    <ChartFrame
+    <ChartFrame chartIcon={ListIcon}
       title="Recent vault events · via MultiBaas"
       subtitle="Mints, settles, buyouts and fees from MultiBaas's saved Event Queries, newest first"
       table={events.length > 0 ? table : { columns: ["Recent vault events"], rows: [[`No vault events indexed by MultiBaas yet · ${since}`]] }}

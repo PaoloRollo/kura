@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type * as React from "react";
+import { ChartColumnIcon, Table2Icon, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type Legend = { label: string; color: string };
@@ -36,10 +37,11 @@ export function ChartTableView({ table, caption }: { table: ChartTable; caption?
 
 /**
  * Chart panel from the analytics screens: surface, r16, padding 22; 15px title and 12px subtitle; on the right the
- * legend swatches (shown for two or more series) and a "Table" chip that swaps the plot for its table. The height comes
+ * legend swatches (shown for two or more series) and an icon button that swaps the plot for its table (a table icon)
+ * and back (the chart's own icon, `chartIcon`). The height comes
  * from the content. On phones the panel goes flush, as in WABQw. `bare` drops the panel everywhere (the Market map).
  */
-export function ChartFrame({ title, subtitle, legend = [], aside, table, footer, bare = false, className, children }: {
+export function ChartFrame({ title, subtitle, legend = [], aside, table, footer, bare = false, chartIcon: ChartIcon = ChartColumnIcon, className, children }: {
   title: string;
   subtitle?: string;
   legend?: Legend[];
@@ -49,6 +51,8 @@ export function ChartFrame({ title, subtitle, legend = [], aside, table, footer,
   /** Notes under the plot: "Market $1,562.50 / shard, flat over the window". */
   footer?: React.ReactNode;
   bare?: boolean;
+  /** The icon for switching back from the table: a column chart by default, fitted to each chart's shape. */
+  chartIcon?: LucideIcon;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -82,11 +86,12 @@ export function ChartFrame({ title, subtitle, legend = [], aside, table, footer,
           {aside}
           <button
             type="button"
-            aria-pressed={showTable}
+            aria-label={showTable ? "Show chart" : "Show table"}
+            title={showTable ? "Show chart" : "Show table"}
             onClick={() => setShowTable((v) => !v)}
-            className="rounded-[6px] border border-border px-2 py-0.5 text-[12px] text-text-2 transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            className="inline-flex size-7 items-center justify-center rounded-[6px] border border-border text-text-2 transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
           >
-            Table
+            {showTable ? <ChartIcon aria-hidden className="size-3.5" /> : <Table2Icon aria-hidden className="size-3.5" />}
           </button>
         </div>
       </header>

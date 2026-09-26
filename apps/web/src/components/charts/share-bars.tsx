@@ -1,3 +1,4 @@
+import { ChartBarIcon } from "lucide-react";
 import { SHARE_COLORS } from "@/lib/chart-colors";
 import { ChartFrame } from "./chart-frame";
 
@@ -10,7 +11,7 @@ export type ShareRow = { label: string; count: number };
 export function ShareBars({ rows, title = "By language", subtitle = "Cards in vault" }: { rows: ShareRow[]; title?: string; subtitle?: string }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
-    <ChartFrame title={title} subtitle={subtitle} table={{ columns: [title.replace(/^By /, "").replace(/^./, (c) => c.toUpperCase()), "Cards"], rows: rows.map((r) => [r.label, r.count]) }}>
+    <ChartFrame chartIcon={ChartBarIcon} title={title} subtitle={subtitle} table={{ columns: [title.replace(/^By /, "").replace(/^./, (c) => c.toUpperCase()), "Cards"], rows: rows.map((r) => [r.label, r.count]) }}>
       <ul className="flex flex-col gap-4">
         {rows.map((r, i) => (
           <li key={r.label} className="flex flex-col gap-2">
