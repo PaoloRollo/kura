@@ -7,7 +7,7 @@ import {
   encodeErrorResult,
 } from "viem";
 import { abi } from "@kura/shared";
-import { TxError, decodeRevert, encodeHookData, runSteps, waitForIndexer } from "@/lib/tx-core";
+import { TxError, boundedSet, decodeRevert, encodeHookData, isOwnTx, rememberOwnTx, runSteps, sendContractTx, waitForIndexer, type SenderDeps } from "@/lib/tx-core";
 import { countdown, money, shards, shardsFixed, usdc } from "@/lib/format";
 
 describe("encodeHookData", () => {
@@ -123,5 +123,51 @@ describe("format", () => {
     expect(countdown(375n)).toBe("1:15:00");
     expect(countdown(300n + 6n * 7200n + 4n * 300n)).toBe("6d 5h");
     expect(countdown(0n)).toBe("00:00");
+  });
+});
+
+describe("own transaction registry", () => {
+  const hex = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as `0x${string}`;
+
+  it("remembers hashes case-insensitively and keeps only the last 50", () => {
+    expect(isOwnTx(null)).toBe(false);
+    rememberOwnTx(hex(0xabc).toUpperCase().replace("0X", "0x"));
+    expect(isOwnTx(hex(0xabc))).toBe(true);
+    for (let i = 1; i <= 50; i++) rememberOwnTx(hex(0x10000 + i));
+    expect(isOwnTx(hex(0xabc))).toBe(false);
+    expect(isOwnTx(hex(0x10001))).toBe(true);
+    expect(isOwnTx(hex(0x10000 + 50))).toBe(true);
+  });
+
+  it("boundedSet drops the oldest entry and refreshes a re-added one", () => {
+    const s = boundedSet(2);
+    s.add("a");
+    s.add("b");
+    s.add("a");
+    s.add("c");
+    expect([s.has("a"), s.has("b"), s.has("c"), s.size]).toEqual([true, false, true, 2]);
+  });
+
+  const input = { to: "0x2222222222222222222222222222222222222222" as const, abi: [], functionName: "approve", args: [] };
+  const base = {
+    account: "0x1111111111111111111111111111111111111111" as const,
+    simulate: vi.fn(async () => undefined),
+    waitForReceipt: vi.fn(async () => ({ status: "success", blockNumber: 1n }) as never),
+  };
+  const approve = [{ type: "function", name: "approve", stateMutability: "nonpayable", inputs: [], outputs: [] }] as const;
+
+  it("sendContractTx remembers the hash from an embedded wallet", async () => {
+    const d: SenderDeps = { ...base, wallet: { kind: "embedded", sendTransaction: async () => ({ hash: hex(0xe1) }) } };
+    await sendContractTx({ ...input, abi: approve }, d);
+    expect(isOwnTx(hex(0xe1))).toBe(true);
+  });
+
+  it("sendContractTx remembers the hash from an external wallet", async () => {
+    const d: SenderDeps = {
+      ...base,
+      wallet: { kind: "external", getChainId: async () => 11155111, switchChain: async () => {}, sendTransaction: async () => ({ hash: hex(0xe2) }) },
+    };
+    await sendContractTx({ ...input, abi: approve }, d);
+    expect(isOwnTx(hex(0xe2))).toBe(true);
   });
 });

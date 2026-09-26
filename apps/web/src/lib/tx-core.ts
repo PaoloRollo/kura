@@ -158,6 +158,34 @@ export function decodeRevert(e: unknown): Revert {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Own transactions
+
+/** A Set that keeps only its `limit` most recently added entries. */
+export function boundedSet(limit: number) {
+  const set = new Set<string>();
+  return {
+    has: (key: string) => set.has(key),
+    /** Adds `key` (moving it to the newest end) and drops the oldest entries past the limit. */
+    add: (key: string) => {
+      set.delete(key);
+      set.add(key);
+      while (set.size > limit) set.delete(set.values().next().value as string);
+    },
+    get size() {
+      return set.size;
+    },
+  };
+}
+
+// The hashes this tab broadcast, so the live event toasts skip what TxStepper already confirmed.
+const ownTxs = boundedSet(50);
+
+/** Remembers a transaction this tab sent (see `isOwnTx`). */
+export const rememberOwnTx = (hash: string) => ownTxs.add(hash.toLowerCase());
+/** Whether this tab sent the transaction `hash` (one of the last 50). */
+export const isOwnTx = (hash: string | null | undefined) => !!hash && ownTxs.has(hash.toLowerCase());
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Sending
 
 export type SendInput = { to: Address; abi: Abi | readonly unknown[]; functionName: string; args?: readonly unknown[]; value?: bigint };
@@ -330,6 +358,7 @@ export async function sendContractTx(input: SendInput, deps: SenderDeps): Promis
 
   const tx: UnsignedTx = { to: input.to, data: encodeFunctionData(call as never), value: input.value ?? 0n, chainId: SEPOLIA_ID };
   const { hash, gas } = await broadcast(wallet, tx);
+  rememberOwnTx(hash);
 
   let receipt: TransactionReceipt;
   try {
