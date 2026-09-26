@@ -172,8 +172,7 @@ export function ClaimedView({ label, hash, live }: { label: string; hash?: strin
   );
 }
 
-// The profile page (Task 9) doesn't exist yet; the portfolio stands in for it.
-const PROFILE_HREF = "/app/portfolio";
+const PROFILE_HREF = "/app/profile";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Data

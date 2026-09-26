@@ -105,7 +105,7 @@ describe("ClaimHandle", () => {
     expect(nav.push).not.toHaveBeenCalled();
     expect(nav.replace).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "Explore auctions" }).getAttribute("href")).toBe("/app");
-    expect(screen.getByRole("link", { name: "View my profile" }).getAttribute("href")).toBe("/app/portfolio");
+    expect(screen.getByRole("link", { name: "View my profile" }).getAttribute("href")).toBe("/app/profile");
   });
 
   it("sends a wallet that already has a handle back to /app", async () => {
