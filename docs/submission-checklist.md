@@ -7,7 +7,7 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] Project name: Kura
 - [ ] Short description: vault-backed Magic: The Gathering cards you can split into shards, sell in a Uniswap CCA auction gated by World ID, and buy back whole.
 - [ ] Long description (from the README pitch and "How it works")
-- [ ] How it's made: Foundry contracts on Sepolia (CardVault, ShardToken, BidGateHook, CardNames), Uniswap CCA v2.1.0, World ID IDKit 4, ENSv2, Next.js on Vercel, Ponder and Postgres on Railway, Privy wallets, Scryfall pricing
+- [ ] How it's made: Foundry contracts on Sepolia (CardVault, ShardToken, BidGateHook, CardNames), Uniswap CCA v2.1.0, World ID IDKit 4, ENSv2, Next.js on Vercel, Ponder and Postgres on Railway, Privy wallets, Scryfall pricing, Curvegrid MultiBaas (Event Queries and webhooks)
 - [ ] Public GitHub repository link: https://github.com/PaoloRollo/kura, with `main` up to date
 - [ ] Live demo link: https://kuravault.xyz
 - [ ] Demo video (2–4 minutes, following `docs/demo-script.md`)
@@ -28,7 +28,7 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] **Uniswap:** Developer Feedback Form submitted, linking `FEEDBACK.md`; README points at `CardVault.shardAndAuction`, `BidGateHook.validate`, `CardVault.settle` and the Permit2 bid flow in `bid-form.tsx`
 - [ ] **World:** README World section, with the credentials (Proof of Human for bids, Passport for release), the success and refusal paths, and the integration debrief (time to first success, friction, missing capability, one improvement). The demo shows a success and a refusal.
 - [ ] **ENS:** README ENS section (registry, resolver, EAC grants, non-transferable and revocable card names, collector handles, the `appraiser.kura.eth` agent and its `appraisal.*` records), live link, open source
-- [ ] **Curvegrid:** README Curvegrid section (summary, team and handles, setup and tests, MultiBaas not used)
+- [ ] **Curvegrid:** README Curvegrid section (summary, team and handles, setup and tests, MultiBaas: the plan limits, the Event Queries behind the dashboard's 24h figures and the recent vault events panel, the settlement webhook, and what stays on Ponder, with file pointers)
 
 ## Live URLs
 
@@ -43,7 +43,9 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] `NEXT_PUBLIC_ALCHEMY_WS_URL` is set for the live toasts (then redeploy: it is baked in at build time)
 - [ ] `NEXT_PUBLIC_WORLD_ENV` and `WORLD_ENV` are `staging`, and `WORLD_STAGING_VERIFICATION_TOKEN` holds a token from a staging window that is open through the judging (the current window closes 2026-09-27 04:23:41 UTC). Before the demo, re-check it with the World Developer Portal's `get_app_config` and reopen it (`set_world_id_staging_verification`) if it has closed or will close during judging; if that issues a new token, update `WORLD_STAGING_VERIFICATION_TOKEN` in Vercel and redeploy
 - [ ] `APPRAISER_WRITE_ENS=true`, and the signer `0x3Ee6…b731` holds at least 0.02 Sepolia ETH for the ENS writes (buyout appraisals and the daily cron's, about 250–330 writes at 1 gwei; the cron writes at most 20 a run and none under 0.003 ETH); `SIGNER_PRIVATE_KEY` and `ALCHEMY_HTTP_URL` are set
-- [ ] Migration `0005_ens_appraisal_writes` is applied to the production database (`pnpm --filter web db:migrate`)
+- [x] Migration `0005_ens_appraisal_writes` is applied to the production database (`pnpm --filter web db:migrate`)
+- [ ] `MULTIBAAS_URL`, `MULTIBAAS_API_KEY` and `MULTIBAAS_WEBHOOK_SECRET` are set (Production), then redeploy. Until the secret is set the webhook answers 503
+- [x] Migration `0006_multibaas_deliveries` is applied to the production database (`pnpm --filter web db:migrate`)
 - [ ] After the first cron run, its response or logs show `appraised` > 0, and a sharded card's On-chain profile lists `appraisal.usd` and `appraisal.at`
 - [ ] The card index: `CARD_INDEX_URL`, `CARD_INDEX_BLOB_ACCESS=private` and the connected Blob store's `BLOB_READ_WRITE_TOKEN`
 
@@ -51,6 +53,14 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 
 - [ ] The indexer service is healthy on the latest deployment
 - [ ] Migration `apps/web/drizzle/0004_market_price_etched.sql` (`market_prices.usd_etched`) is applied to the production database (`pnpm --filter web db:migrate`)
+
+## MultiBaas *(you)*
+
+- [ ] `pnpm multibaas:setup --webhook-base https://www.kuravault.xyz` shows the plan (the link starts at `startingBlock` `"-95"`, the deepest the plan allows), then `--apply` it; put the printed `MULTIBAAS_WEBHOOK_SECRET` in Vercel and in `apps/web/.env.local` (`--show-secret` prints it again)
+- [ ] A second dry run prints "MultiBaas is set up; nothing to do."
+- [ ] `pnpm multibaas:setup --verify`: `catching up: false`, the four row queries answer, amounts are integer strings or numbers (no decimals), and `at` parses as a date
+- [ ] Wait a full 24 h after the link: until then `/app/analytics` on 24h reads "Data: indexer · MultiBaas from <UTC time>", and afterwards "Data: MultiBaas". The recent vault events panel shows from the start
+- [ ] After a settle, `--verify` lists a delivery with 0 failed calls, the card's On-chain profile shows a fresh `appraisal.at`, and the recent panel lists the settle at the next poll (up to 10 minutes)
 
 ## Rehearsal *(you)*
 
@@ -68,5 +78,9 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] Scanning station mid-scan (`iRZ36`) and mint success with the ENS name (`anR2F`)
 - [ ] Bid with World ID (`aD9is`) and the refusal (`p5hrR`)
 - [ ] Handover confirmed (`ykB2t`)
+- [ ] MultiBaas console, Contracts: `kura_cardvault` linked to `kura_vault`
+- [ ] MultiBaas console, Event Queries: a saved query (`kura_settles`) with results
+- [ ] MultiBaas console, Webhooks: `kura_web` with its recent deliveries
+- [ ] `/app/analytics` on 24h with the "Data: MultiBaas" label, and the "Recent vault events · via MultiBaas" panel
 
 Put them in `docs/images/` and replace the `<!-- screenshot: … -->` markers in `README.md`.

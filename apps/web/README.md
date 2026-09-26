@@ -76,6 +76,57 @@ output too instead of stubbing it out there.
   Like the HTTP URL it is baked in at build time and ships to the browser. Without it the toasts are off
   and everything else still updates through the indexer's live queries.
 
+## MultiBaas (Curvegrid)
+
+Optional. Without these variables the dashboard reads the indexer alone ("Data: indexer"), the recent-events panel is
+hidden, and the webhook answers 503. None of them is in `ServerSchema` (`src/env.ts`), so a missing one never breaks
+another route.
+
+| Variable | Where | What |
+|---|---|---|
+| `MULTIBAAS_URL` | server | The deployment's base URL, `https://<deployment>.multibaas.com` (no `/api/v0`; https only, otherwise it counts as unset) |
+| `MULTIBAAS_API_KEY` | server | A MultiBaas API key (Bearer JWT). Never `NEXT_PUBLIC_`: it is read only in `src/lib/multibaas/server.ts` and the setup script |
+| `MULTIBAAS_WEBHOOK_SECRET` | server | The `kura_web` webhook's signing secret, printed once by `pnpm multibaas:setup --apply --webhook-base https://www.kuravault.xyz` (again with `--show-secret`) |
+
+Set all three in Vercel (Production) and redeploy. Locally the web app reads `apps/web/.env.local`, while the setup
+script reads the repo root's `.env`, so the dev server needs them in `apps/web/.env.local` too.
+
+- **Plan limits.** Our plan syncs past logs at most 100 blocks back, keeps events for 72 h, returns at most 50 rows per
+  page (`MB_PAGE` in `packages/shared/src/multibaas.ts`; a larger `limit` answers 400), allows 30,000 API calls a month
+  and has `GET /events` disabled. Everything below follows from that.
+- **Setup.** From the repo root:
+  - `pnpm multibaas:setup --webhook-base https://www.kuravault.xyz` prints the plan (GETs only; the client refuses any
+    other method without `--apply`).
+  - `--apply` uploads the CardVault ABI as `kura_cardvault` 1.0 (ABI only, `bin` `"0x"`), aliases the vault as
+    `kura_vault` and links it, puts the six Event Queries (input fields carry their `inputIndex`) and creates or
+    repoints the webhook. The deploy block is out of the plan's reach, so the link starts at `startingBlock` `"-95"`:
+    earlier vault history is only in the Ponder indexer.
+  - `--verify` prints the vault's indexing status, each query's sample rows with their value types, and the webhook's
+    recent deliveries. `--show-secret` prints the existing webhook's secret.
+  - The script is idempotent: rerunning it changes only what differs, and prints "nothing to do" when it is set up.
+- **Dashboard.** `GET /api/analytics/multibaas?range=24h` (public, no-store) answers raised, fees, mints and volume with
+  amounts as decimal strings. `?view=recent` answers the newest vault events MultiBaas holds (at most 10) and since when
+  it indexes the vault, for the "Recent vault events · via MultiBaas" panel. Both read one server-side snapshot of the
+  four row queries, memoised for 10 minutes (`FIGURES_TTL_MS`), failures included; a load costs 6 calls, or 2 when the
+  chain or indexing check fails. `range=7d` and `range=all` answer 503 `RANGE_UNSUPPORTED` without calling MultiBaas.
+  The 24h figures answer 503 `UNAVAILABLE` (logged with the reason) until MultiBaas has indexed a whole day after the
+  link, and whenever MultiBaas is down, slow (4.5 s for the load), on another chain, unlinked, still syncing, missing a
+  query, or returns unexpected values; the tiles then read the indexer. The client polls every 10 minutes, not on
+  window focus, and gives up after 6 s. The `add` aggregates `kura_raised_total` and `kura_fees_total` are set up but
+  not read, since they would sum only the retained 72 h.
+- **Webhook.** `POST /api/webhooks/multibaas` answers 503 while `MULTIBAAS_WEBHOOK_SECRET` is unset (MultiBaas
+  retries) and 413 for a body over 1 MiB. It verifies `X-MultiBaas-Signature` (HMAC-SHA256 of the raw body followed by
+  `X-MultiBaas-Timestamp`) and refuses timestamps more than 600 s off (401). Only CardVault events count. Each
+  `AuctionSettled` log is claimed once in `app.multibaas_deliveries`, with the claim's `attempts` as its token so a
+  stale handler can't overwrite a newer claim; a claim stuck in `processing` for 5 minutes is taken over. On a graduated
+  settle it publishes the card's `appraisal.usd` / `appraisal.at` through `publishAppraisalRecord`, at most five per POST
+  and none after 15 s (the rest are left to the daily cron), and only with `APPRAISER_WRITE_ENS=true` and the signer
+  above 0.003 ETH. Any CardVault event in a POST drops the dashboard's MultiBaas snapshot
+  (`invalidateMultibaasFigures`). A failure it can retry answers 503, so MultiBaas redelivers.
+- **Migrations.** `drizzle/0006_multibaas_deliveries.sql` adds `app.multibaas_deliveries`; the webhook's appraisals also need 0005's
+  `app.ens_appraisal_writes`. Both are applied on Railway; for another database run
+  `pnpm --filter web db:migrate` before creating the webhook.
+
 ## Deploying on Vercel
 
 The web app runs on Vercel; Postgres and the Ponder indexer stay on Railway. Set the Vercel

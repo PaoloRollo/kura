@@ -116,7 +116,7 @@ These roles and external contracts are used by the deployment:
 <!-- screenshot: analytics dashboard (Y1eNn) at https://kuravault.xyz/app/analytics -->
 <!-- screenshot: card analytics tab (LqnA2) at https://kuravault.xyz/app/cards/<id>?tab=analytics -->
 
-`/app/analytics` shows the whole vault, and every card page has an Analytics tab. All numbers come from the indexer, and market prices always come from `apps/web/src/lib/pricing.ts` (the Scryfall price for the card's finish, times the condition multiplier). The definitions live in [`apps/web/src/lib/metrics.ts`](apps/web/src/lib/metrics.ts):
+`/app/analytics` shows the whole vault, and every card page has an Analytics tab. Every number comes from the indexer except the 24h raised, fees, mints and volume, which come from MultiBaas Event Queries once MultiBaas has indexed a full day (see [Curvegrid](#curvegrid-real-world-asset-dashboards)). Market prices always come from `apps/web/src/lib/pricing.ts` (the Scryfall price for the card's finish, times the condition multiplier). The definitions live in [`apps/web/src/lib/metrics.ts`](apps/web/src/lib/metrics.ts):
 
 | Metric | Rule |
 |---|---|
@@ -133,6 +133,7 @@ Real-time:
 - Pages read the indexer through Ponder live queries, so bids, settles and transfers appear without a reload.
 - With `NEXT_PUBLIC_ALCHEMY_WS_URL` set, signed-in pages also watch `BidSubmitted`, `AuctionSettled` and `CardRedeemed` over a websocket and show a toast (`apps/web/src/lib/live-events.ts`). Your own transactions are not toasted again.
 - The bell in the top bar derives notifications from the indexer: outbid, payout ready, ending soon, your auction settled, shards received and redemption unlocked (`apps/web/src/lib/notifications.ts`).
+- A MultiBaas webhook publishes a card's ENS appraisal as soon as its auction settles, and refreshes the dashboard's MultiBaas figures on every vault event (`apps/web/src/app/api/webhooks/multibaas/route.ts`).
 - A daily Vercel cron snapshots market prices for the price history and publishes the ENS appraisal of each sharded or auctioning card (`apps/web/src/app/api/cron/prices/route.ts`).
 
 ## Sponsor tech
@@ -177,7 +178,15 @@ Every shard sale is a CCA v2.1.0 auction, created and settled by the vault.
 - **Summary.** Kura tokenizes physical trading cards held by a vendor, with on-chain provenance from mint to release, and shows the vault's market on dashboards built on its own indexer.
 - **Team.** Paolo Rollo ([@PaoloRollo](https://github.com/PaoloRollo)).
 - **Setup and tests:** see [Getting started](#getting-started): contracts (`forge test` on a Sepolia fork), web (`pnpm --filter web test`) and indexer (`pnpm --filter indexer test`).
-- **MultiBaas.** Not used. The dashboards read our Ponder indexer ([`apps/indexer`](apps/indexer)).
+- **MultiBaas.** Used for two things: the analytics dashboard's 24h aggregates plus a "Recent vault events · via MultiBaas" panel, and real-time actions when an auction settles. The app still runs without it.
+  - **Plan limits shape the design.** Our deployment's plan syncs past logs at most 100 blocks back (`past_logs_max_depth`), keeps events for 72 h, returns at most 50 rows per query page, allows 30,000 API calls a month, and has `GET /events` disabled. So MultiBaas holds only the vault's last 72 h, from when it was linked, and serves only what fits in that: the dashboard's 24h range and the recent-events panel. 7d, All and the vault's earlier history stay on the Ponder indexer.
+  - **Contract and sync.** [`scripts/multibaas-setup.ts`](scripts/multibaas-setup.ts) (`pnpm multibaas:setup`, [`planSetup`](scripts/multibaas-setup.ts#L122-L163)) uploads the CardVault ABI from `packages/shared` as `kura_cardvault` 1.0 (ABI only, with `bin` `"0x"`: nothing is deployed from MultiBaas). It aliases the deployed vault as `kura_vault` and links it with event sync. The deploy block (11779719) is further back than the plan allows, so the script starts the sync from the deepest block the plan accepts ([`clampStartingBlock`](scripts/multibaas-setup.ts#L265-L272)): the vault is linked with `startingBlock` `"-95"`. The script is idempotent and a dry run by default: `--apply` changes the deployment, `--verify` only reads, and `--show-secret` prints the webhook's signing secret. Every mode but `--apply` refuses to send anything but a GET.
+  - **Event Queries.** Six saved queries ([`EVENT_QUERIES`](packages/shared/src/multibaas.ts#L72-L79), every input field with its `inputIndex`): four row queries, `kura_settles` (`AuctionSettled`), `kura_redeems` (`CardRedeemed`), `kura_mints` (`CardMinted`) and `kura_fee_events` (`FeeAccrued`), and two `add` aggregates grouped by the vault, `kura_raised_total` and `kura_fees_total`. The aggregates are set up but not read: they would sum only what MultiBaas still retains. [`/api/analytics/multibaas`](apps/web/src/app/api/analytics/multibaas/route.ts#L23-L32) reads the four row queries server-side, 50 rows a page ([`load`](apps/web/src/lib/multibaas/server.ts#L71-L96)); the API key never reaches the browser. It turns them into the 24h **Raised**, **Fees to vault**, minted-in-range and **volume** figures ([`figuresFromRows`](apps/web/src/lib/multibaas/figures.ts#L91-L122)). MultiBaas has no date bucketing and no count aggregator, so windows, counts and the hourly buckets are computed from the rows. Amounts stay integer USDC base units end to end. A decimal or float value is refused, never rounded.
+  - **Budget and freshness.** One load costs 6 calls: the chain status and the vault's indexing status first, then the four queries only if those pass (2 calls when a check fails). The load is memoised on the server for 10 minutes, answers and failures alike ([`cachedSnapshot`](apps/web/src/lib/multibaas/server.ts#L186-L202)), and the figures and the panel share it. The dashboard polls every 10 minutes and not on window focus. The webhook drops the memo on every vault event ([`invalidateMultibaasFigures`](apps/web/src/lib/multibaas/server.ts#L177-L180)), so new events show up at the next poll.
+  - **The 24h figures and the fallback.** The route answers the 24h figures only once MultiBaas has indexed the whole window ([`multibaasFiguresOf`](apps/web/src/lib/multibaas/server.ts#L103-L108)): for the first 24 h after the link it answers 503 and the tiles read the indexer. It also answers 503 when MultiBaas is unset, down, slow (4.5 s for the whole load), on another chain, unlinked, still syncing past logs, missing a query, or returns values of another shape. 7d and All never call MultiBaas. The dashboard labels its source ([`SourceNote`](apps/web/src/components/analytics-dashboard.tsx#L36-L54)): "Data: MultiBaas" on 24h when the route answers, otherwise "Data: indexer", with "· MultiBaas from <UTC time>" while the first day is still being covered and "· 24h via MultiBaas" on 7d and All ([`withMultibaas`](apps/web/src/lib/analytics-view.ts#L225-L234)). Value locked, the market map, premiums, live auctions, collectors and every per-card chart stay live state from Ponder.
+  - **Recent vault events.** A dashboard panel lists the newest mints, settles, buyouts and fees MultiBaas holds, at most 10, with "Indexed by MultiBaas since <UTC time>" ([`RecentVaultEvents`](apps/web/src/components/multibaas-recent.tsx#L66-L101), [`multibaasRecentOf`](apps/web/src/lib/multibaas/server.ts#L111-L114)). It reads the same saved queries (no `GET /events`), shows from the moment the vault is linked, and is hidden when MultiBaas is unavailable.
+  - **Webhook.** The `kura_web` webhook sends `event.emitted` to [`/api/webhooks/multibaas`](apps/web/src/app/api/webhooks/multibaas/route.ts#L20-L60). The endpoint answers 503 until `MULTIBAAS_WEBHOOK_SECRET` is set, so MultiBaas keeps retrying. It refuses bodies over 1 MiB ([`readCappedBody`](apps/web/src/lib/multibaas/webhook.ts#L34-L58)), checks `X-MultiBaas-Signature`, HMAC-SHA256 of the raw body followed by `X-MultiBaas-Timestamp`, and refuses a timestamp more than 600 s off ([`verifyMultibaasSignature`](apps/web/src/lib/multibaas/webhook.ts#L19-L25)). Only CardVault events count. Each `AuctionSettled` log (tx hash and log index) is claimed once in `app.multibaas_deliveries` with a claim token, so a stale handler can't overwrite a newer claim ([`claimDelivery`](apps/web/src/lib/multibaas/deliveries.ts#L17-L29), [`finishDelivery`](apps/web/src/lib/multibaas/deliveries.ts#L36-L44)). On a graduated settle it publishes the card's ENS appraisal right away, instead of at the next daily cron ([`processDeliveries`](apps/web/src/lib/multibaas/webhook.ts#L156-L239), [`publishSettledAppraisal`](apps/web/src/lib/settled-appraisal.ts#L34-L46)). That goes through the same `publishAppraisalRecord` path as buyouts and the cron: the Postgres claim, the signer floor, the stuck check and `APPRAISER_WRITE_ENS`. At most five appraisals start per POST, none after 15 s; the rest are left to the daily cron. Removed (reorged) logs, other events and other contracts are ignored.
+  - **What stays on Ponder.** Each sharding creates its own CCA auction and ShardToken. They are not registered in MultiBaas. The dashboard's aggregates only need CardVault events, the plan links at most 10 contracts, Ponder already follows both through `factory()`, and registering them from the webhook would give a public endpoint admin writes on MultiBaas. Bid, checkpoint and holder charts read Ponder.
 
 ## Repository layout
 
@@ -186,7 +195,7 @@ contracts/          Foundry project: CardVault, ShardToken, BidGateHook, CardNam
 packages/shared/    ABIs, EIP-712 types, ENS label rules and the deployment loader, shared by web and indexer
 apps/web/           Next.js app: /vendor (scanning station, vault) and /app (collector, analytics)
 apps/indexer/       Ponder indexer on Postgres: cards, shardings, bids, checkpoints, holders, fees, ENS records
-scripts/            deploy-sepolia.sh, sync-deployments.mjs, rehearse.ts (demo rehearsal and seeding)
+scripts/            deploy-sepolia.sh, sync-deployments.mjs, rehearse.ts (demo rehearsal and seeding), multibaas-setup.ts
 docs/               demo-script.md, submission-checklist.md
 ```
 
@@ -247,6 +256,7 @@ The web app needs these credentials:
 - World ID: `WORLD_APP_ID`, `WORLD_RP_ID` and `WORLD_RP_SIGNING_KEY`, plus `WORLD_STAGING_VERIFICATION_TOKEN` in staging.
 - A Postgres `DATABASE_URL`.
 - An Alchemy Sepolia URL, and optionally its websocket URL for live toasts.
+- Optionally MultiBaas: `MULTIBAAS_URL`, `MULTIBAAS_API_KEY` and `MULTIBAAS_WEBHOOK_SECRET` (see [`apps/web/README.md`](apps/web/README.md#multibaas-curvegrid)).
 
 Deployment notes, the price routes and the daily cron are in [`apps/web/README.md`](apps/web/README.md).
 
@@ -278,6 +288,7 @@ A broadcast run is resumable (`scripts/.rehearse-state.sepolia.json`, git-ignore
 - **World ID runs in the staging environment.** Production Passport proofs fail inside World's verifier (see the debrief above), and the cause is unresolved.
 - **A single vendor.** One vendor key mints and releases cards, and it is trusted to hold the physical cards.
 - **Seeded demo data.** Part of the vault's history on Sepolia comes from the rehearsal script's synthetic `seed…kura.eth` wallets, with synthetic World ID nullifiers.
+- **MultiBaas holds only recent vault history.** Our MultiBaas plan syncs past logs at most 100 blocks back and keeps events for 72 h, so the vault was linked from 95 blocks before the link and MultiBaas serves only the dashboard's 24h figures, after a full day of coverage. 7d, All and everything before the link come from the Ponder indexer, and per-auction bid data is indexed only by Ponder.
 - **Testnet only.** Everything runs on Sepolia with Circle's test USDC.
 
 ## Security notes
