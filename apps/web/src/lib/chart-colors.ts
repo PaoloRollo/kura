@@ -57,8 +57,8 @@ export function premiumLabel(p: number | null): string {
   return p > 0 ? `+${v}%` : `${v}%`;
 }
 
-/** Plain-number USD (from `Number(formatUnits(x, 6))`) through `money()`: "$1,712", "$1,562.50". */
-export function usd(v: number, dp = 0): string {
+/** Plain-number USD (from `Number(formatUnits(x, 6))`) through `money()`: "$1,712.00", "$0.22". */
+export function usd(v: number, dp = 2): string {
   return money(BigInt(Math.round(v * 1e6)), dp);
 }
 

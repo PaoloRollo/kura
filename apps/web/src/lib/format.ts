@@ -25,17 +25,17 @@ function fixed(s: string, dp: number): string {
   return `${neg ? "-" : ""}${grouped}${frac}`;
 }
 
-/** USDC as money, the way the designs show it: "$1,712", "$27,386.40". Truncates, never rounds up. */
+/**
+ * USDC as money, always with at least two decimals so small amounts never read "$0": "$1,712.00", "$0.22".
+ * `dp` can add decimals, never remove them. Truncates, never rounds up.
+ */
 export function money(x: bigint, dp = 2): string {
-  const v = fixed(formatUnits(x, 6), dp);
+  const v = fixed(formatUnits(x, 6), Math.max(2, dp));
   return v.startsWith("-") ? `-$${v.slice(1)}` : `$${v}`;
 }
 
-/** "$1,712", or with cents under $100 ("$17.50", "$0.22") so small amounts never round to "$0". */
-export function moneyShort(x: bigint): string {
-  const abs = x < 0n ? -x : x;
-  return money(x, abs < 100_000_000n ? 2 : 0);
-}
+/** Kept for call sites that used the short form; every amount now shows two decimals ("$0.22", "$1,712.00"). */
+export const moneyShort = (x: bigint): string => money(x);
 
 /** Shards with a fixed number of decimals, the way the designs show them: "13.0", "0.5". */
 export function shardsFixed(x: bigint, dp = 1): string {

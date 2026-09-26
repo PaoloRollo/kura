@@ -104,7 +104,7 @@ export function shardCount(units: bigint): string {
 }
 
 /** Money without ".00" on whole dollars ("$1,840", "$5,007.60"). */
-export const cash = (x: bigint) => money(x, x % 1_000_000n === 0n ? 0 : 2);
+export const cash = (x: bigint) => money(x);
 
 export type LiveContext = {
   me: string | null;
