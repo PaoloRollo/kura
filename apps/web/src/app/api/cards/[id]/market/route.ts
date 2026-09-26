@@ -6,7 +6,7 @@ import { marketPrices } from "@/lib/db/schema";
 import { jsonError } from "@/lib/http";
 import { marketPriceForCard, mintDescription } from "@/lib/market-price";
 import { MAX_CARD_ID } from "@/lib/price-memo";
-import { applyMultiplier, conditionMultiplier, finishOf, finishPrice } from "@/lib/pricing";
+import { applyMultiplier, conditionMultiplier, finishPrice } from "@/lib/pricing";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
 import { scryfall as sharedScryfall, ScryfallUnavailableError } from "@/lib/scryfall";
@@ -34,12 +34,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   if (!card) return jsonError("NOT_FOUND", "unknown card", 404);
   try {
-    const s = sharedScryfall();
-    const printing = await s.getCard(card.scryfallId);
-    if (!printing) return jsonError("NOT_FOUND", "card data unavailable", 404);
-    const finish = finishOf(description, printing);
-    const quote = await marketPriceForCard(card, s, { description });
-    const printingId = quote?.source.englishFallback && quote.source.printingId ? quote.source.printingId : card.scryfallId;
+    // The quote is null only when the card's printing is unknown; it carries the finish lib/pricing chose.
+    const quote = await marketPriceForCard(card, sharedScryfall(), { description });
+    if (!quote) return jsonError("NOT_FOUND", "card data unavailable", 404);
+    const finish = quote.source.finish;
+    const printingId = quote.source.englishFallback && quote.source.printingId ? quote.source.printingId : card.scryfallId;
     const rows = await getDb().select().from(marketPrices).where(eqApp(marketPrices.scryfallId, printingId)).orderBy(asc(marketPrices.date));
     const m = conditionMultiplier(card.condition);
     const series: MarketPoint[] = rows.map((r) => {

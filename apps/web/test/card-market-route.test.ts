@@ -16,7 +16,8 @@ vi.mock("@/lib/ponder-server", async () => {
 vi.mock("@/lib/market-price", () => ({ mintDescription: async () => state.description, marketPriceForCard: async () => state.quote }));
 vi.mock("@/lib/scryfall", () => ({
   ScryfallUnavailableError: class extends Error {},
-  scryfall: () => ({ getCard: async (id: string) => ({ id, finishes: ["nonfoil", "foil"], prices: {} }) }),
+  // The route prices through marketPriceForCard (mocked) alone: any direct Scryfall lookup fails the test.
+  scryfall: () => ({ getCard: async () => { throw new Error("unexpected getCard"); } }),
 }));
 vi.mock("drizzle-orm", async (orig) => {
   const real = await orig<typeof import("drizzle-orm")>();
@@ -57,6 +58,20 @@ describe("GET /api/cards/[id]/market", () => {
     state.quote = q("en-print");
     await call("1");
     expect(state.queried).toContain("en-print");
+  });
+
+  it("takes the finish from the quote, not a second lookup", async () => {
+    state.description = null;
+    state.quote = { ...q(null), source: { ...q(null).source, finish: "nonfoil" } };
+    expect(await (await call("1")).json()).toEqual([
+      { date: "2026-09-24", usd: "10.00", adjustedUsd: "8.5" },
+      { date: "2026-09-25", usd: "10.00", adjustedUsd: "8.5" },
+    ]);
+  });
+
+  it("404s when the card's printing is unknown", async () => {
+    state.quote = null;
+    expect((await call("1")).status).toBe(404);
   });
 
   it("rejects bad ids and unknown cards", async () => {
