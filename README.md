@@ -21,9 +21,11 @@ Built for **ETHGlobal Tokyo 2026**.
                               shardAndAuction (16–512 shards)
                                                           ▼
                         Uniswap CCA auction  ◄── bids gated by World ID (proof of human)
-                                                          │ settle
+                          (half the shards)               │ settle
                                                           ▼
-              Vendor fee + owner proceeds (USDC)     Shard holders (ERC-20)
+   Vendor fee    Uniswap v4 pool at the clearing price    Shard holders (ERC-20)
+                 (held half + unsold + proceeds, owner    │  buy and sell shards
+                  is the locked LP and earns the fees) ◄──┘  in the pool
                                                           │
                           holder with ≥ 80% redeems at max(clearing price, appraisal)
                                                           ▼
@@ -33,15 +35,17 @@ Built for **ETHGlobal Tokyo 2026**.
 ```
 
 1. **Vault** (`CardVault.mint`). The vendor scans a card at the station. The app identifies it against Scryfall and records its condition, language and printing, then mints an ERC-721 to the owner. The physical card never leaves the vendor's vault until it is released.
-2. **Shard** (`CardVault.shardAndAuction`). The owner splits the card into 16 to 512 shards, in multiples of 16. Each sharding deploys its own ERC-20 `ShardToken`.
+2. **Shard** (`CardVault.shardAndAuction`). The owner splits the card into 16 to 512 shards, in multiples of 16. Each sharding deploys its own ERC-20 `ShardToken`. Half the shards go on sale in the auction; the vault holds the other half for the card's pool.
 3. **Auction.** The shards are sold through a **Uniswap Continuous Clearing Auction** (CCA v2.1.0), priced in Circle USDC.
    - Four durations are offered: 5 minutes, 1 day, 1 week or 1 month.
    - Every bid (`submitBid` on the auction) must carry a signed **World ID proof-of-human** ticket, so one human gets one bidding wallet.
-4. **Settle** (`CardVault.settle`). When the auction ends, anyone can settle it. The proceeds go to the owner minus the vendor's fee (2.5% on this deployment, capped at 10%), and unsold shards go back to the owner. Bidders then `exitBid` (or `exitPartiallyFilledBid`) and `claimTokens` on the auction.
-5. **Buy out** (`CardVault.redeem`, `CardVault.claimPayout`). A holder with at least 80% of the shards can redeem the whole card.
+4. **Settle** (`CardVault.settle`). When the auction ends, anyone can settle it. If it graduated, the vault takes the vendor's fee (2.5% on this deployment, capped at 10%) and hands the held half, the unsold shards and the rest of the USDC to `ShardMarket`, which opens the card's **Uniswap v4 pool** at the clearing price. The owner is the pool's locked liquidity provider: they collect the swap fees but can't withdraw. If it didn't graduate, every shard goes back to the owner and bids are refunded. Bidders then `exitBid` (or `exitPartiallyFilledBid`) and `claimTokens` on the auction.
+5. **Trade** (`ShardMarket`). Anyone can buy or sell shards in the pool from the card page, through the Universal Router with a quoted price and a slippage limit.
+6. **Buy out** (`CardVault.redeem`, `CardVault.claimPayout`). A holder with at least 80% of the shards can redeem the whole card. The pool's shards don't count towards anyone's 80%.
    - The price per shard is the higher of the auction's clearing price and a fresh appraisal signed by the vendor, based on Scryfall market data. The redeemer pays for every shard they don't hold, plus the vendor fee.
+   - The buyout unwinds the market: the pool is frozen (no more swaps or liquidity) and its positions go to the owner, who claims the pool's shards like any other holder.
    - Every other holder then claims their USDC pro rata. Each sharding has its own payout pool, so a card can be sharded, bought out and sharded again without earlier holders ever losing their claim.
-6. **Release** (`CardVault.confirmRelease`). The holder of a whole card can collect the physical card. The vendor confirms the handover with a single-use **World ID Passport** ticket bound to the holder's wallet. The card's ENS name is then revoked.
+7. **Release** (`CardVault.confirmRelease`). The holder of a whole card can collect the physical card. The vendor confirms the handover with a single-use **World ID Passport** ticket bound to the holder's wallet. The card's ENS name is then revoked.
 
 ## Architecture
 
@@ -61,7 +65,8 @@ Built for **ETHGlobal Tokyo 2026**.
    Railway Postgres (app schema:          Railway: Ponder indexer          Ethereum Sepolia
    tickets, appraisals, prices,  ◄──────  (apps/indexer) ◄──── events ──── CardVault · ShardToken
    release tickets)                        cards, bids, checkpoints,        BidGateHook · CardNames
-                                           holders, fees, ENS records       Uniswap CCA · Permit2 · USDC
+                                           holders, fees, pools, swaps,     ShardMarket (Uniswap v4 hook)
+                                           ENS records                      Uniswap CCA · v4 · Permit2 · USDC
                                                                             ENSv2 registry + resolvers
 ```
 
@@ -84,7 +89,7 @@ Every card lives under `kura.eth` on ENSv2:
 | Collector | `paolo.kura.eth` | Handles use `a-z0-9` only, 3 to 32 characters. There are no dashes, so they can never collide with card names. |
 | Appraiser | `appraiser.kura.eth` | Resolves to the key that signs appraisals and tickets. |
 
-The vendor and the appraiser get write rights to specific record keys on specific names. For example, the vendor can set `condition` but not `vault.state`, and card holders can't edit records at all.
+The vendor and the appraiser get write rights to specific record keys on the card names. For example, the vendor can set `condition` but not `vault.state`, and card holders can't edit records at all.
 
 ## Deployed contracts (Ethereum Sepolia, chain id 11155111)
 
@@ -111,7 +116,7 @@ These roles and external contracts are used by the deployment:
 | ENSv2 VerifiableFactory | [`0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C`](https://sepolia.etherscan.io/address/0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C) |
 | ENSv2 PermissionedResolver implementation | [`0x14F09Fd05d4585759e54844DC9B00147131Cf243`](https://sepolia.etherscan.io/address/0x14F09Fd05d4585759e54844DC9B00147131Cf243) |
 
-- **Deploy block:** 11779719.
+- **Deploy block:** 11786036 (the current vault and ShardMarket).
 - **Machine-readable copies:** [`contracts/deployments/sepolia.json`](contracts/deployments/sepolia.json) and [`contracts/deployments/sepolia.ens.json`](contracts/deployments/sepolia.ens.json). The web app and the indexer read these through `@kura/shared`.
 
 ## Analytics and real-time
@@ -140,21 +145,26 @@ Real-time:
 
 ## Sponsor tech
 
-### Uniswap: Continuous Clearing Auction
+### Uniswap: Continuous Clearing Auction and v4
 
-Every shard sale is a CCA v2.1.0 auction, created and settled by the vault.
-- **Creating the auction:** [`CardVault.shardAndAuction`](contracts/src/CardVault.sol#L271-L323) deploys the `ShardToken`, calls the CCA factory's `create` (line 288), mints the shards for sale into the auction and calls `onTokensReceived`. [`_auctionParams`](contracts/src/CardVault.sol#L326-L343) sets the vault as both the tokens and the funds recipient, puts the floor on an exact tick, and builds the release schedule with [`AuctionSteps.linear`](contracts/src/libraries/AuctionSteps.sol#L22-L28).
+Every shard sale is a CCA v2.1.0 auction, created and settled by the vault, and every graduated auction opens a Uniswap v4 pool for the card, run by our own hook.
+- **Creating the auction:** [`CardVault.shardAndAuction`](contracts/src/CardVault.sol#L280-L332) deploys the `ShardToken`, calls the CCA factory's `create` (line 298) for half the shards, mints them into the auction and calls `onTokensReceived`. [`_auctionParams`](contracts/src/CardVault.sol#L335-L352) sets the vault as both the tokens and the funds recipient, puts the floor on an exact tick, and builds the release schedule with [`AuctionSteps.linear`](contracts/src/libraries/AuctionSteps.sol#L22-L28).
 - **Gating bids:** [`BidGateHook.validate`](contracts/src/BidGateHook.sol#L30-L43) is the auction's validation hook. It decodes a signed ticket from `hookData`, checks the kind, the subject and the signature, and binds the World ID nullifier to the first wallet that bids with it. The web encodes that `hookData` in [`encodeHookData`](apps/web/src/lib/tx-core.ts#L26-L35).
 - **Bidding through Permit2:** [`bid-form.tsx`](apps/web/src/components/bid-form.tsx#L119-L147) runs three steps: approve USDC to Permit2 once, `permit2.approve` the auction for the budget, then `submitBid` with the ticket. Hook reverts arrive wrapped in `ValidationHookCallFailed(bytes)`; [`decodeRevert`](apps/web/src/lib/tx-core.ts#L135-L158) unwraps the inner `BidGateHook` error, so an expired ticket asks for a new World ID check and `AlreadyBound` explains the one-wallet rule.
-- **Settling:** [`CardVault.settle`](contracts/src/CardVault.sol#L360-L396) calls `sweepUnsoldTokens` (returned to the owner) and, when the auction graduated, `sweepCurrency`, then pays the vendor fee and forwards the rest to the owner.
+- **Settling:** [`CardVault.settle`](contracts/src/CardVault.sol#L369-L409) calls `sweepUnsoldTokens` and, when the auction graduated, `sweepCurrency`, pays the vendor fee and seeds the card's v4 pool with the rest (line 401). A non-graduated auction returns every shard to the owner.
 - **Exits:** [`exitRoute`](apps/web/src/lib/bid-math.ts#L61-L68) picks `exitBid` or `exitPartiallyFilledBid` with checkpoint hints computed from the indexed `CheckpointUpdated` events ([`apps/indexer/src/auction.ts`](apps/indexer/src/auction.ts#L74)).
-- Our integration notes for the Uniswap team are in [`FEEDBACK.md`](FEEDBACK.md).
+- **The v4 pool and hook:** [`ShardMarket`](contracts/src/ShardMarket.sol) is both the market and the pool's hook (1% fee, tick spacing 200), and only it can initialize a pool with itself as the hook, so every pool it sees is a Kura card pool.
+  - [`seed`](contracts/src/ShardMarket.sol#L75-L84) opens the shards/USDC pool at the auction's clearing price and places the liquidity; positions it can't mint are kept as dust for the owner, so settle can never be bricked by pool math.
+  - The hooks [`_beforeSwap`](contracts/src/ShardMarket.sol#L253-L261) and [`_beforeAddLiquidity`](contracts/src/ShardMarket.sol#L243-L251) refuse swaps and new liquidity once the pool is frozen; [`_afterSwap`](contracts/src/ShardMarket.sol#L264-L276) emits `ShardSwap` with the new price for the indexer.
+  - [`collectFees`](contracts/src/ShardMarket.sol#L166-L195) pays the swap fees to the owner; [`unwind`](contracts/src/ShardMarket.sol#L134-L161) runs from `redeem` (line 450), freezes the pool and hands its positions' contents to the owner.
+- **Trading in the app:** [`buildSwapSteps`](apps/web/src/lib/market.ts#L209-L261) quotes through the v4 Quoter, approves Permit2 for the Universal Router and sends an exact-input single swap through its `execute`, with a minimum output from the slippage limit (1% by default); the indexer follows `PoolSeeded`, `ShardSwap`, `FeesCollected` and `Unwound` ([`apps/indexer/src/market.ts`](apps/indexer/src/market.ts)).
+- Our integration notes for the Uniswap team, for both CCA and v4, are in [`FEEDBACK.md`](FEEDBACK.md).
 
 ### World: World ID (IDKit 4)
 
-- **Widget:** [`world-id-gate.tsx`](apps/web/src/components/world-id-gate.tsx#L134-L186) opens `IDKitRequestWidget` with the `proofOfHuman` preset for bids and `passport` for release. The proof's signal is the wallet address.
+- **Widget:** [`world-id-gate.tsx`](apps/web/src/components/world-id-gate.tsx#L140-L191) opens `IDKitRequestWidget` with the `proofOfHuman` preset for bids and `passport` for release. The proof's signal is the wallet address.
 - **Server verify:** [`verifyWorld`](apps/web/src/lib/world.ts#L66-L121) checks the action, the signal hash (the proof must be for this wallet), the credential and the environment, then forwards the proof to `https://developer.world.org/api/v4/verify/<rp_id>`. `/api/worldid/verify` binds one nullifier per action to one wallet in Postgres and signs an EIP-712 ticket: a 24-hour HUMAN ticket for bidding, a 15-minute PASSPORT ticket for release.
-- **On-chain enforcement:** `BidGateHook.validate` (above) for bids. For release, [`CardVault.confirmRelease`](contracts/src/CardVault.sol#L467-L481) is vendor-only and requires a PASSPORT ticket whose subject is the card's current holder; each ticket works once.
+- **On-chain enforcement:** `BidGateHook.validate` (above) for bids. For release, [`CardVault.confirmRelease`](contracts/src/CardVault.sol#L481-L495) is vendor-only and requires a PASSPORT ticket whose subject is the card's current holder; each ticket works once.
 - **Credentials, and why** ([`acceptedCredentials`](apps/web/src/lib/world.ts#L40-L44)):
   - Bidding accepts Proof of Human, Passport or Selfie Check. The point is one human, one bidding wallet, so an auction's price discovery can't be flooded by one person with many wallets. Bids require World ID 4.0 proofs, because legacy and v4 nullifiers differ and accepting both would let one human bind two wallets.
   - Release accepts Passport only (`WORLD_RELEASE_CREDENTIALS`). Handing over a valuable physical card warrants document-grade proof, and the holder starts the check from their own logged-in app, so the ticket is always bound to the wallet that owns the card.
@@ -170,10 +180,10 @@ Every shard sale is a CCA v2.1.0 auction, created and settled by the vault.
 
 ### ENS: ENSv2
 
-- **Registry and resolver:** [`SetupEns.s.sol`](contracts/script/SetupEns.s.sol#L69-L122) deploys `kura.eth`'s own ENSv2 UserRegistry and PermissionedResolver through the VerifiableFactory, then registers `kura.eth` and names the appraiser agent (lines 125–193). It targets the ENSv2 deployment on [docs.ens.domains](https://docs.ens.domains/learn/deployments) (contracts-v2 `71a3b73`), so names resolve in the ENS App and through UniversalResolverV2; [`MigrateNames.s.sol`](contracts/script/MigrateNames.s.sol) moved the live vault's names onto it.
-- **Card names:** [`CardNames.registerCard`](contracts/src/CardNames.sol#L134-L159) issues `<slug>-<set>-<id>.kura.eth`, owned by the adapter itself with no transfer role ([`EnsRoles`](contracts/src/libraries/EnsRoles.sol#L38-L39)), so card names are **non-transferable**. It writes the records by DNS-encoded name in one multicall and grants scoped **EAC** per-key text roles with `grantSetterRoles`: `condition` and `grade` to the vendor, `appraisal.usd` and `appraisal.at` to the appraiser (lines 152–155). [`setState`](contracts/src/CardNames.sol#L162-L176) mirrors the vault state, shard token, auction and clearing price, and [`revoke`](contracts/src/CardNames.sol#L184-L190) unregisters the name when the card is released.
+- **Registry and resolver:** [`SetupEns.s.sol`](contracts/script/SetupEns.s.sol#L98-L151) deploys `kura.eth`'s own ENSv2 UserRegistry and PermissionedResolver through the VerifiableFactory, then registers `kura.eth` and names the appraiser agent (lines 154–222). It targets the ENSv2 deployment on [docs.ens.domains](https://docs.ens.domains/learn/deployments) (contracts-v2 `71a3b73`), so names resolve in the ENS App and through UniversalResolverV2; [`MigrateNames.s.sol`](contracts/script/MigrateNames.s.sol) moved the live vault's names onto it.
+- **Card names:** [`CardNames.registerCard`](contracts/src/CardNames.sol#L134-L159) issues `<slug>-<set>-<id>.kura.eth`, owned by the adapter itself with no transfer role ([`EnsRoles`](contracts/src/libraries/EnsRoles.sol#L38-L39)), so card names are **non-transferable**. It writes the records by DNS-encoded name in one multicall. The first registration grants scoped **EAC** per-key text roles on the card resolver with `grantSetterRoles` ([`_setPartyRoles`](contracts/src/CardNames.sol#L263-L277)): `condition` and `grade` to the vendor, `appraisal.usd` and `appraisal.at` to the appraiser. [`setState`](contracts/src/CardNames.sol#L162-L176) mirrors the vault state, shard token, auction and clearing price, and [`revoke`](contracts/src/CardNames.sol#L184-L190) unregisters the name when the card is released.
 - **Collector handles:** [`registerCollector`](contracts/src/CardNames.sol#L195-L216) deploys a PermissionedResolver for the collector, with the collector as its sole admin, and registers `<handle>.kura.eth` to them.
-- **Agent namespace:** `appraiser.kura.eth` resolves to the signer. With `APPRAISER_WRITE_ENS=true`, that signer publishes each appraisal on the card's name as `appraisal.usd` (the whole card's market price) and `appraisal.at`, using its EAC grant, in one resolver multicall ([`writeAppraisalText`](apps/web/src/lib/appraise.ts#L247-L295)), skipped only when the signer is stuck: an appraisal write sent over two minutes ago is still unmined and transactions are pending behind it ([`sendUnlessStuck`](apps/web/src/lib/appraise.ts#L195-L224)); a write seconds old is just in flight, and the next one queues behind it on the pending nonce. Writes are serialized: an in-process queue plus a per-card Postgres advisory lock ([`pgEnsWriteLock`](apps/web/src/lib/appraise.ts#L116-L148)), each sent with the chain's pending nonce and retried once on a nonce clash ([`sendWithFreshNonce`](apps/web/src/lib/appraise.ts#L165-L193)). Inside the lock's transaction the write is claimed in `app.ens_appraisal_writes` ([`claimEnsWrite`](apps/web/src/lib/appraise.ts#L350-L364)), so another instance, an overlapping cron run or a buyout can't send the same price again while the indexed record lags; a failed send puts the claim back (only if the row is still its own claim), a sent one records its tx hash, and a claim that never got a hash is taken over after five minutes. [`publishAppraisalRecord`](apps/web/src/lib/appraise.ts#L380-L438) skips the write unless the price changed or the record is over an hour old. Records are written on a buyout appraisal and, so every sharded card carries one without a buyout, by the daily price cron: after each card's snapshot, [`/api/cron/prices`](apps/web/src/app/api/cron/prices/route.ts) publishes the market price of every sharded card, and of every card in a live auction (on purpose: a market reference while it runs), through the same path. Whole and released cards, and cards with no USD price, are skipped. The cron writes at most 20 records per run, none while the signer holds under 0.003 ETH (buyouts keep that headroom), and stops starting writes after one times out, finds the signer stuck or runs out of funds; a failed write never fails the snapshot, and the cron reports `appraised` and `appraisalErrors`. At 1 gwei a write costs roughly 60–80k gas, so 0.02 ETH covers about 250–330 writes. On Vercel this needs `SIGNER_PRIVATE_KEY`, `APPRAISER_WRITE_ENS=true`, `ALCHEMY_HTTP_URL` and `CRON_SECRET`.
+- **Agent namespace:** `appraiser.kura.eth` resolves to the signer. With `APPRAISER_WRITE_ENS=true`, that signer publishes each appraisal on the card's name as `appraisal.usd` (the whole card's market price) and `appraisal.at`, using its EAC grant, in one resolver multicall ([`writeAppraisalText`](apps/web/src/lib/appraise.ts#L273-L295)), skipped only when the signer is stuck: an appraisal write sent over two minutes ago is still unmined and transactions are pending behind it ([`sendUnlessStuck`](apps/web/src/lib/appraise.ts#L214-L224)); a write seconds old is just in flight, and the next one queues behind it on the pending nonce. Writes are serialized: an in-process queue plus a per-card Postgres advisory lock ([`pgEnsWriteLock`](apps/web/src/lib/appraise.ts#L128-L148)), each sent with the chain's pending nonce and retried once on a nonce clash ([`sendWithFreshNonce`](apps/web/src/lib/appraise.ts#L185-L193)). Inside the lock's transaction the write is claimed in `app.ens_appraisal_writes` ([`claimEnsWrite`](apps/web/src/lib/appraise.ts#L356-L364)), so another instance, an overlapping cron run or a buyout can't send the same price again while the indexed record lags; a failed send puts the claim back (only if the row is still its own claim), a sent one records its tx hash, and a claim that never got a hash is taken over after five minutes. [`publishAppraisalRecord`](apps/web/src/lib/appraise.ts#L388-L438) skips the write unless the price changed or the record is over an hour old. Records are written on a buyout appraisal and, so every sharded card carries one without a buyout, by the daily price cron: after each card's snapshot, [`/api/cron/prices`](apps/web/src/app/api/cron/prices/route.ts) publishes the market price of every sharded card, and of every card in a live auction (on purpose: a market reference while it runs), through the same path. Whole and released cards, and cards with no USD price, are skipped. The cron writes at most 20 records per run, none while the signer holds under 0.003 ETH (buyouts keep that headroom), and stops starting writes after one times out, finds the signer stuck or runs out of funds; a failed write never fails the snapshot, and the cron reports `appraised` and `appraisalErrors`. At 1 gwei a write costs roughly 60–80k gas, so 0.02 ETH covers about 250–330 writes. On Vercel this needs `SIGNER_PRIVATE_KEY`, `APPRAISER_WRITE_ENS=true`, `ALCHEMY_HTTP_URL` and `CRON_SECRET`.
 
 ### Curvegrid: real-world asset dashboards
 
@@ -185,17 +195,17 @@ Every shard sale is a CCA v2.1.0 auction, created and settled by the vault.
 ## Repository layout
 
 ```
-contracts/          Foundry project: CardVault, ShardToken, BidGateHook, CardNames, libraries, scripts, fork tests
+contracts/          Foundry project: CardVault, ShardToken, BidGateHook, ShardMarket (v4 hook), CardNames, libraries, scripts, fork tests
 packages/shared/    ABIs, EIP-712 types, ENS label rules and the deployment loader, shared by web and indexer
 apps/web/           Next.js app: /vendor (scanning station, vault) and /app (collector, analytics)
-apps/indexer/       Ponder indexer on Postgres: cards, shardings, bids, checkpoints, holders, fees, ENS records
+apps/indexer/       Ponder indexer on Postgres: cards, shardings, bids, checkpoints, holders, fees, pools, swaps, ENS records
 scripts/            deploy-sepolia.sh, sync-deployments.mjs, rehearse.ts (demo rehearsal and seeding)
 docs/               demo-script.md, submission-checklist.md
 ```
 
 ## Tech stack
 
-- **Contracts:** Solidity 0.8.26, Foundry, OpenZeppelin, Uniswap CCA v2.1.0, ENSv2.
+- **Contracts:** Solidity 0.8.26, Foundry, OpenZeppelin, Uniswap CCA v2.1.0, Uniswap v4 (core and periphery), ENSv2.
 - **App:** Next.js, shadcn/ui, Privy (embedded wallets, gas sponsorship), wagmi/viem, Drizzle + Postgres, World ID IDKit.
 - **Card data:** Scryfall. Cards are identified in the browser by matching image embeddings against an index of Scryfall card images.
 - **Indexer:** Ponder, with GraphQL and SQL over HTTP.
@@ -289,7 +299,8 @@ A broadcast run is resumable (`scripts/.rehearse-state.sepolia.json`, git-ignore
 
 This is a hackathon prototype on a testnet. It is not audited.
 - **Trusted parties:** the vendor and the signer. A compromised signer can issue bid tickets and inflate appraisals. An inflated appraisal can only raise a buyout price, never lower what minority holders receive. The signer cannot release a card without the vendor.
-- **Owner powers:** the contract owner can change the fee (at most 10%), the vendor, the signer and the names adapter. The owner cannot move vaulted NFTs or payout pools.
+- **Owner powers:** the contract owner can change the fee (at most 10%), the vendor, the signer and the names adapter, and wires the shard market once. The owner cannot move vaulted NFTs, payout pools or pool liquidity.
+- **Pool liquidity is locked:** the card owner's auction proceeds go into the card's pool as liquidity and stay there until a buyout unwinds it; the owner earns the swap fees meanwhile. Swaps themselves aren't World ID-gated, only auction bids are.
 - **Replay protection:** tickets and appraisals are EIP-712 signed under separate domains ("Kura BidGate" and "Kura CardVault"), bound to the chain and the verifying contract. Tickets are single use.
 
 ## License
