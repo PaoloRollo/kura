@@ -86,7 +86,7 @@ export const MB_TIMEOUT_MS = 4_000;
 /**
  * One REST call. Answers the `result` of MultiBaas's `{ status, message, result }` envelope (null when there is none),
  * null for a 404, and throws a MultibaasError (method, path, status and MultiBaas's message, never the headers) for any
- * other failure, a timeout included.
+ * other failure: a timeout (while connecting or reading the body) and a success whose body is not JSON included.
  */
 export async function mbRequest<T>(
   cfg: MbConfig,
@@ -112,11 +112,17 @@ export async function mbRequest<T>(
     const why = name === "TimeoutError" || name === "AbortError" ? "timed out" : `failed: ${(e as Error)?.message ?? String(e)}`;
     throw new MultibaasError(null, `${method} ${path} ${why}`);
   }
-  if (res.status === 404) return null;
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => undefined); // release the connection; the body says nothing we use
+    return null;
+  }
   let body: { message?: unknown; result?: unknown } | null = null;
   try {
     body = (await res.json()) as { message?: unknown; result?: unknown };
-  } catch {
+  } catch (e) {
+    const name = (e as { name?: string } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") throw new MultibaasError(null, `${method} ${path} timed out`);
+    if (res.ok) throw new MultibaasError(res.status, `${method} ${path} answered non-JSON`);
     body = null;
   }
   if (!res.ok) throw new MultibaasError(res.status, `${method} ${path} → ${res.status}${typeof body?.message === "string" ? `: ${body.message}` : ""}`);

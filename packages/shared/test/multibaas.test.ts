@@ -83,6 +83,33 @@ describe("mbRequest", () => {
   });
 });
 
+describe("mbRequest bodies", () => {
+  it("throws on a success that is not JSON instead of answering null", async () => {
+    const err = await mbRequest(cfg, "GET", "/queries/q/results", { fetch: async () => new Response("<html>proxy</html>", { status: 200 }) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MultibaasError);
+    expect((err as MultibaasError).status).toBe(200);
+    expect((err as MultibaasError).message).toBe("GET /queries/q/results answered non-JSON");
+  });
+
+  it("reports a body that stalls past the timeout as timed out", async () => {
+    const stalled = (_u: string, init: RequestInit) => {
+      const body = new ReadableStream({ start: (c) => init.signal!.addEventListener("abort", () => c.error(init.signal!.reason)) });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    };
+    const err = await mbRequest(cfg, "GET", "/queries/q/results", { fetch: stalled, timeoutMs: 20 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MultibaasError);
+    expect((err as MultibaasError).status).toBeNull();
+    expect((err as MultibaasError).message).toBe("GET /queries/q/results timed out");
+  });
+
+  it("releases a 404's body", async () => {
+    const res = new Response("404 page not found", { status: 404 });
+    const cancel = vi.spyOn(res.body!, "cancel");
+    await expect(mbRequest(cfg, "GET", "/contracts/x", { fetch: async () => res })).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalled();
+  });
+});
+
 describe("mbQueryRows", () => {
   it("pages through a saved query and refuses to truncate", async () => {
     const all = Array.from({ length: 5 }, (_, i) => ({ n: i }));
