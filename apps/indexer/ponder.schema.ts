@@ -1,11 +1,11 @@
-import { index, onchainEnum, onchainTable, primaryKey } from "ponder";
+import { index, onchainEnum, onchainTable, primaryKey, relations } from "ponder";
 
 export const cardState = onchainEnum("card_state", ["whole", "auctioning", "sharded", "released"]);
 export const feeKind = onchainEnum("fee_kind", ["sale", "buyout"]);
 export const nameKind = onchainEnum("name_kind", ["card", "collector", "agent"]);
 export const bidStatus = onchainEnum("bid_status", ["open", "exited", "claimed"]);
 export const activityKind = onchainEnum("activity_kind", [
-  "mint", "shard", "bid", "exit", "claim", "settle", "redeem", "payout", "release", "named", "transfer",
+  "mint", "shard", "bid", "exit", "claim", "settle", "redeem", "payout", "release", "named", "transfer", "pool_opened", "swap",
 ]);
 
 export const cards = onchainTable("cards", (t) => ({
@@ -74,6 +74,8 @@ export const shardBalances = onchainTable("shard_balances", (t) => ({
   shardToken: t.hex().notNull(),
   holder: t.hex().notNull(),
   balance: t.bigint().notNull(),
+  // True for the Uniswap v4 PoolManager, which holds the shards of every pool (label it "Uniswap pool").
+  isPool: t.boolean().notNull(),
   updatedBlock: t.bigint().notNull(),
   updatedAt: t.integer().notNull(),
 }), (table) => ({ tokenIdx: index().on(table.shardToken), holderIdx: index().on(table.holder) }));
@@ -156,8 +158,9 @@ export const activities = onchainTable("activities", (t) => ({
   kind: activityKind("kind").notNull(),
   cardId: t.bigint(),
   actor: t.hex().notNull(),
-  // Units depend on kind: "shard" and "claim" are 18-decimal shard units; "bid", "exit", "settle", "redeem" and
-  // "payout" are 6-decimal USDC; "mint", "named", "transfer" and "release" carry no amount (null).
+  // Units depend on kind: "shard" and "claim" are 18-decimal shard units; "bid", "exit", "settle", "redeem",
+  // "payout" and "swap" (the USDC leg) are 6-decimal USDC; "pool_opened" is the opening USDC per whole shard (6 dp);
+  // "mint", "named", "transfer" and "release" carry no amount (null).
   amount: t.bigint(),
   meta: t.json(),
   txHash: t.hex().notNull(),
@@ -212,4 +215,61 @@ export const bidderBindings = onchainTable("bidder_bindings", (t) => ({
   wallet: t.hex().notNull(),
   blockNumber: t.bigint().notNull(),
   boundAt: t.integer().notNull(),
+}));
+
+// One Uniswap v4 pool per settled (graduated) card, seeded by ShardMarket. A card without a row has no market.
+// Prices are USDC raw units (6 dp) per whole shard (1e18 raw). Timestamps are block timestamps in seconds.
+export const pools = onchainTable("pools", (t) => ({
+  cardId: t.bigint().primaryKey(),
+  poolId: t.hex().notNull(),
+  shardToken: t.hex().notNull(),
+  shardIsCurrency0: t.boolean().notNull(),
+  // Pool price after the latest swap (the seed price until the first one).
+  sqrtPriceX96: t.bigint().notNull(),
+  priceUsdcPerShard: t.bigint().notNull(),
+  seededAt: t.bigint().notNull(),
+  // Raw amounts the vault handed to ShardMarket at seed (18 dp shards, 6 dp USDC).
+  seedShards: t.bigint().notNull(),
+  seedUsdc: t.bigint().notNull(),
+  lastSwapAt: t.bigint(),
+  swapCount: t.integer().notNull(),
+  volumeUsdc: t.bigint().notNull(),
+  // Set at buyout (Unwound): swaps and new liquidity revert from then on.
+  frozen: t.boolean().notNull(),
+  lpOwner: t.hex().notNull(),
+  // Cumulative swap fees collected on the locked positions to lpOwner.
+  feesShards: t.bigint().notNull(),
+  feesUsdc: t.bigint().notNull(),
+}));
+
+export const swaps = onchainTable("swaps", (t) => ({
+  id: t.text().primaryKey(), // logId(txHash, logIndex)
+  cardId: t.bigint().notNull(),
+  // Transaction sender; the hook only sees the router.
+  trader: t.hex().notNull(),
+  // The trader's side for shards: "buy" when shardDelta > 0.
+  side: t.text().notNull(),
+  shardAmount: t.bigint().notNull(), // abs, raw 18 dp
+  usdcAmount: t.bigint().notNull(), // abs, raw 6 dp
+  // Execution price: usdcAmount * 1e18 / shardAmount.
+  priceUsdcPerShard: t.bigint().notNull(),
+  sqrtPriceX96: t.bigint().notNull(), // pool price after the swap
+  blockNumber: t.bigint().notNull(),
+  timestamp: t.bigint().notNull(),
+  txHash: t.hex().notNull(),
+}), (table) => ({ cardIdx: index().on(table.cardId), traderIdx: index().on(table.trader) }));
+
+export const cardsRelations = relations(cards, ({ one, many }) => ({
+  pool: one(pools, { fields: [cards.id], references: [pools.cardId] }),
+  swaps: many(swaps),
+}));
+
+export const poolsRelations = relations(pools, ({ one, many }) => ({
+  card: one(cards, { fields: [pools.cardId], references: [cards.id] }),
+  swaps: many(swaps),
+}));
+
+export const swapsRelations = relations(swaps, ({ one }) => ({
+  card: one(cards, { fields: [swaps.cardId], references: [cards.id] }),
+  pool: one(pools, { fields: [swaps.cardId], references: [pools.cardId] }),
 }));
