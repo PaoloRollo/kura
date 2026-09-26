@@ -135,3 +135,19 @@ describe("mbQueryRows", () => {
     await expect(mbQueryRows(cfg, "kura_mints", { fetch: async () => new Response("404 page not found", { status: 404 }) })).rejects.toThrow(/kura_mints is missing/);
   });
 });
+
+describe("Event Query input indices", () => {
+  it("gives every input field its position in the event (MultiBaas requires inputIndex)", async () => {
+    const { EVENT_QUERIES } = await import("../src/multibaas");
+    const { cardVaultAbi } = await import("../src/abi");
+    for (const q of Object.values(EVENT_QUERIES)) {
+      for (const e of q.events) {
+        const name = e.eventName.slice(0, e.eventName.indexOf("("));
+        const abiEvent = (cardVaultAbi as unknown as { type: string; name?: string; inputs: { name: string }[] }[]).find((x) => x.type === "event" && x.name === name)!;
+        for (const f of e.select.filter((f) => f.type === "input")) {
+          expect(f.inputIndex, `${name}.${f.name}`).toBe(abiEvent.inputs.findIndex((p) => p.name === f.name));
+        }
+      }
+    }
+  });
+});

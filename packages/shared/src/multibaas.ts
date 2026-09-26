@@ -31,7 +31,7 @@ export const CARD_VAULT_EVENTS: Record<CardVaultEventName, string> = {
 };
 
 export type MbFieldType = "input" | "triggered_at" | "block_number" | "tx_hash" | "contract_address_alias";
-export type MbField = { type: MbFieldType; name?: string; alias: string; aggregator?: "add" };
+export type MbField = { type: MbFieldType; name?: string; inputIndex?: number; alias: string; aggregator?: "add" };
 export type MbEventQuery = { events: { eventName: string; select: MbField[] }[]; groupBy?: string; orderBy?: string; order?: "ASC" | "DESC" };
 
 export const MB_QUERIES = {
@@ -45,7 +45,14 @@ export const MB_QUERIES = {
 export type MbQueryKey = keyof typeof MB_QUERIES;
 
 const META: MbField[] = [{ type: "triggered_at", alias: "at" }, { type: "block_number", alias: "block" }, { type: "tx_hash", alias: "tx" }];
-const input = (name: string, alias: string): MbField => ({ type: "input", name, alias });
+/** The position of `name` among `event`'s inputs: MultiBaas requires `inputIndex` on input fields (400 "missing field index"). */
+const inputIndexOf = (event: CardVaultEventName, name: string): number => {
+  const item = (cardVaultAbi as unknown as readonly { type: string; name?: string; inputs?: { name: string }[] }[]).find((x) => x.type === "event" && x.name === event);
+  const i = item?.inputs?.findIndex((p) => p.name === name) ?? -1;
+  if (i < 0) throw new Error(`cardVaultAbi event ${event} has no input ${name}`);
+  return i;
+};
+const input = (event: CardVaultEventName, name: string, alias: string): MbField => ({ type: "input", name, inputIndex: inputIndexOf(event, name), alias });
 /** One row per event, oldest block first. MultiBaas has no date bucketing and no count: we bucket and count rows. */
 const list = (event: CardVaultEventName, fields: MbField[]): MbEventQuery => ({
   events: [{ eventName: CARD_VAULT_EVENTS[event], select: [...META, ...fields] }],
@@ -54,7 +61,7 @@ const list = (event: CardVaultEventName, fields: MbField[]): MbEventQuery => ({
 });
 /** Σ of one input across every event, grouped by the vault's alias (one row): MultiBaas's `add` aggregator. */
 const total = (event: CardVaultEventName, name: string, alias: string): MbEventQuery => ({
-  events: [{ eventName: CARD_VAULT_EVENTS[event], select: [{ type: "contract_address_alias", alias: "vault" }, { type: "input", name, alias, aggregator: "add" }] }],
+  events: [{ eventName: CARD_VAULT_EVENTS[event], select: [{ type: "contract_address_alias", alias: "vault" }, { type: "input", name, inputIndex: inputIndexOf(event, name), alias, aggregator: "add" }] }],
   groupBy: "vault",
 });
 
@@ -63,10 +70,10 @@ const total = (event: CardVaultEventName, name: string, alias: string): MbEventQ
  * graduate (CardVault.sol, settle), so Σ raisedUsdc is the graduated total; list rows carry `graduated` for counts.
  */
 export const EVENT_QUERIES: Record<MbQueryKey, MbEventQuery> = {
-  settles: list("AuctionSettled", [input("id", "card"), input("raisedUsdc", "raised"), input("feeUsdc", "fee"), input("graduated", "graduated")]),
-  redeems: list("CardRedeemed", [input("id", "card"), input("payoutUsdc", "payout"), input("feeUsdc", "fee")]),
-  mints: list("CardMinted", [input("id", "card")]),
-  fees: list("FeeAccrued", [input("id", "card"), input("kind", "kind"), input("amountUsdc", "amount")]),
+  settles: list("AuctionSettled", [input("AuctionSettled", "id", "card"), input("AuctionSettled", "raisedUsdc", "raised"), input("AuctionSettled", "feeUsdc", "fee"), input("AuctionSettled", "graduated", "graduated")]),
+  redeems: list("CardRedeemed", [input("CardRedeemed", "id", "card"), input("CardRedeemed", "payoutUsdc", "payout"), input("CardRedeemed", "feeUsdc", "fee")]),
+  mints: list("CardMinted", [input("CardMinted", "id", "card")]),
+  fees: list("FeeAccrued", [input("FeeAccrued", "id", "card"), input("FeeAccrued", "kind", "kind"), input("FeeAccrued", "amountUsdc", "amount")]),
   raisedTotal: total("AuctionSettled", "raisedUsdc", "raised"),
   feesTotal: total("FeeAccrued", "amountUsdc", "fees"),
 };
