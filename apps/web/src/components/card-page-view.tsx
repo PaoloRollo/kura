@@ -5,7 +5,8 @@ import type * as React from "react";
 import Link from "next/link";
 import { ActivityFeed, ActivityList } from "@/components/activity-feed";
 import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
-import { AuctionSummary, OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
+import { AuctionPanel } from "@/components/auction-panel";
+import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
 import { MobileNav } from "@/components/mobile-nav";
 import { HoldersList, OwnershipSummary } from "@/components/holders-list";
@@ -120,7 +121,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
         {tab === "activity" && <ActivityFeed rows={feed} now={now} capped={c.activities.length >= ACTIVITY_LIMIT} />}
         {tab === "auction" && (
           c.sharding ? (
-            <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
+            <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
           ) : c.allShardings[0] ? (
             <PastAuction s={c.allShardings[0]} settledAt={(() => { const st = settleOf(c.allShardings[0].shardToken); return st ? dateTime(st.timestamp) : null; })()} />
           ) : (
@@ -142,7 +143,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
 
   const panel =
     card.state === "whole" ? (isOwner ? <OwnerPanel c={c} /> : <OwnedByPanel c={c} />)
-    : card.state === "auctioning" && c.sharding ? <AuctionSummary c={c} block={block} auctionHref={tabHref("auction")} />
+    : card.state === "auctioning" && c.sharding ? <AuctionPanel c={c} me={me as `0x${string}` | null} block={block} />
     : card.state === "sharded" && c.sharding ? <ShardedSummary c={c} />
     : released ? <ReleasedSummary c={c} />
     : null;

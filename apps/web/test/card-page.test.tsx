@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ back: vi.fn(), push: vi.fn() }) }));
 vi.mock("@ponder/react", () => ({ usePonderQuery: () => ({ data: undefined, isSuccess: false }), usePonderStatus: () => ({ data: undefined }) }));
+// The auction panel sends through Privy and reads the chain; neither is reached here.
+vi.mock("@/hooks/use-kura-user", () => ({ useKuraUser: () => ({ address: null, identityToken: null, login: vi.fn(), logout: vi.fn() }), apiFetch: vi.fn() }));
+vi.mock("@/lib/tx", async () => ({ ...(await vi.importActual<object>("@/lib/tx-core")), useSendTx: () => ({ send: vi.fn(), walletKind: "embedded" }), getReceipt: async () => null }));
+vi.mock("@/lib/chain", async (orig) => ({ ...(await orig<object>()), publicClient: { readContract: () => new Promise(() => {}) } }));
+vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c }));
+Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
 import { CardNotFound, CardPageView } from "@/components/card-page-view";
 import { ACTIVITY_LIMIT } from "@/hooks/use-card";
@@ -17,9 +24,11 @@ const NOW = 1_790_000_000;
 function renderCard(state: PreviewState, opts: { me?: string | null; tab?: CardTab } = {}) {
   const c = cardFixture(state, NOW);
   return render(
-    <HandlesFixture.Provider value={HANDLES}>
-      <CardPageView c={c} me={opts.me === undefined ? PAOLO : opts.me} now={NOW} block={FIXTURE_HEAD} tab={opts.tab ?? "overview"} tabHref={(t) => `/app/cards/1?tab=${t}`} />
-    </HandlesFixture.Provider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <HandlesFixture.Provider value={HANDLES}>
+        <CardPageView c={c} me={opts.me === undefined ? PAOLO : opts.me} now={NOW} block={FIXTURE_HEAD} tab={opts.tab ?? "overview"} tabHref={(t) => `/app/cards/1?tab=${t}`} />
+      </HandlesFixture.Provider>
+    </QueryClientProvider>,
   );
 }
 
@@ -64,6 +73,14 @@ describe("CardPageView", () => {
     expect(within(profile).getByText("appraiser")).toBeTruthy();
     expect(within(profile).getByText("vendor")).toBeTruthy();
     expect(screen.getAllByText(/Illustrated by Christopher Rush/).length).toBeGreaterThan(0);
+  });
+
+  it("puts the bid form behind World ID on a live auction", () => {
+    renderCard("auctioning");
+    expect(screen.getByText("Clearing price, per block")).toBeTruthy();
+    expect(screen.getByText("Prove you're a unique human")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Verify to place a bid/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Spend up to")).toBeTruthy();
   });
 
   it("marks a released card's profile as revoked read-only history", () => {

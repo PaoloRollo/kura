@@ -146,7 +146,8 @@ const INDEXING = "indexing";
 type Phase = "idle" | "running" | "indexing" | "failed" | "lagging";
 
 const desktopQuery = "(min-width: 768px)";
-function useIsDesktop() {
+/** True from `md` up (768px), where the stepper renders inline; below it uses a bottom sheet. */
+export function useIsDesktop() {
   return useSyncExternalStore(
     (cb) => {
       const m = window.matchMedia(desktopQuery);

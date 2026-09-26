@@ -46,7 +46,7 @@ export const POST = withAuth(async (req, user) => {
     .onConflictDoNothing({ target: [worldidVerifications.nullifier, worldidVerifications.action] });
   const [bound] = await db.select().from(worldidVerifications).where(and(eq(worldidVerifications.nullifier, nullifier), eq(worldidVerifications.action, body.action))).limit(1);
   if (!bound || bound.subject.toLowerCase() !== subject.toLowerCase()) {
-    throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409);
+    throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409, bound ? { boundTo: bound.subject } : undefined);
   }
 
   const kind = body.action === "bid" ? TicketKind.HUMAN : TicketKind.PASSPORT;

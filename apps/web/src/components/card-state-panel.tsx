@@ -10,12 +10,12 @@ import { Button } from "@/components/kura";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { CardData, ShardingRow } from "@/hooks/use-card";
 import { explorerTx } from "@/lib/chain";
-import { countdown, money, shardsFixed, shortHash } from "@/lib/format";
+import { money, shardsFixed, shortHash } from "@/lib/format";
 import { dateTime } from "@/lib/card-view";
-import { priceSourceLabel, quoteUsdc, vsMarket } from "@/lib/pricing";
+import { priceSourceLabel, quoteUsdc } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
-function Stat({ label, value, sub, tone, small }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "shu" | "good" | "kin"; small?: boolean }) {
+export function Stat({ label, value, sub, tone, small }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "shu" | "good" | "kin"; small?: boolean }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <span className={cn("text-muted-foreground", small ? "text-[11px]" : "text-[12px] tracking-[0.5px] uppercase")}>{label}</span>
@@ -25,7 +25,7 @@ function Stat({ label, value, sub, tone, small }: { label: string; value: React.
   );
 }
 
-const Panel = ({ children, className }: { children: React.ReactNode; className?: string }) => (
+export const Panel = ({ children, className }: { children: React.ReactNode; className?: string }) => (
   <section className={cn("rounded-3xl border border-border bg-surface", className)}>{children}</section>
 );
 
@@ -88,33 +88,6 @@ export function OwnedByPanel({ c }: { c: CardData }) {
         <span className="text-[12px] text-text-2">Whole card, not sharded</span>
       </div>
       <MarketStat c={c} />
-    </Panel>
-  );
-}
-
-/** Live auction summary. The full auction panel (chart, bid form) is the Auction tab's (Task 6). */
-export function AuctionSummary({ c, block, auctionHref }: { c: CardData; block: bigint | null; auctionHref: string }) {
-  const s = c.sharding!;
-  const lastTick = c.ticks.filter((t) => t.auction === s.auction).at(-1);
-  const clearing = q96ToUsdcPerShard(s.clearingPriceQ96 ?? lastTick?.clearingPriceQ96 ?? s.floorPriceQ96);
-  const raised = lastTick?.currencyRaised ?? 0n;
-  const market = quoteUsdc(c.price);
-  const vs = vsMarket(clearing, market, s.totalShards);
-  const left = block != null ? s.endBlock - block : null;
-  return (
-    <Panel className="flex flex-col gap-6 p-6 md:p-7">
-      <div className="grid grid-cols-2 gap-6 lg:grid-cols-4">
-        <Stat label="Clearing price" value={money(clearing, 0)} sub={`per shard · floor ${money(q96ToUsdcPerShard(s.floorPriceQ96), 0)}`} />
-        <Stat label="Raised" value={money(raised, 0)} sub={`${s.forSale} of ${s.totalShards} shards for sale`} />
-        <Stat label="Ends in" value={left == null ? "…" : left > 0n ? countdown(left) : "ended"} tone="shu" sub={`block ${s.endBlock.toLocaleString("en-US")}`} />
-        <Stat
-          label="VS market"
-          value={vs == null ? "n/a" : `${vs >= 0 ? "+" : ""}${(vs * 100).toFixed(1)}%`}
-          tone={vs != null && vs >= 0 ? "good" : undefined}
-          sub={market != null ? `Scryfall ${money(market, 0)} / ${s.totalShards}` : "no market price"}
-        />
-      </div>
-      <Button asChild variant="primary" size="md" className="w-full sm:w-fit"><Link href={auctionHref}>Open the auction</Link></Button>
     </Panel>
   );
 }
