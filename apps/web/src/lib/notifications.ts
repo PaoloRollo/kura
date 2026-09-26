@@ -2,7 +2,7 @@
 // tests cover it.
 import { q96ToUsdcPerShard } from "@kura/shared";
 import { canRedeem, custodians, pct, shareOf } from "@/lib/card-view";
-import { money } from "@/lib/format";
+import { moneyShort } from "@/lib/format";
 import { cash, shardCount } from "@/lib/live-events";
 
 type Hex = `0x${string}`;
@@ -113,7 +113,7 @@ export function deriveNotifications(p: NotificationInput): Notification[] {
         kind: "outbid",
         cardId: s.cardId,
         title: `You were outbid on ${name}`,
-        body: `Clearing ${money(q96ToUsdcPerShard(latest.clearingPriceQ96), 0)} passed your ${money(q96ToUsdcPerShard(best.maxPriceQ96), 0)} max`,
+        body: `Clearing ${moneyShort(q96ToUsdcPerShard(latest.clearingPriceQ96))} passed your ${moneyShort(q96ToUsdcPerShard(best.maxPriceQ96))} max`,
         time: Math.max(passed.timestamp, best.submittedAt),
         href: cardHref(s.cardId, "auction"),
         action: "Raise bid",
@@ -128,7 +128,7 @@ export function deriveNotifications(p: NotificationInput): Notification[] {
         kind: "ends-soon",
         cardId: s.cardId,
         title: `${name} ends in ${minutes} minute${minutes === 1 ? "" : "s"}`,
-        body: `You're in at ${money(q96ToUsdcPerShard(clearingQ96), 0)} per shard`,
+        body: `You're in at ${moneyShort(q96ToUsdcPerShard(clearingQ96))} per shard`,
         time: endsSoonTime(s.endBlock, latest, p.now, left),
         href: cardHref(s.cardId, "auction"),
       });
