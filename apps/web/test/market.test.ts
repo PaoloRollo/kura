@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseUsdcInput } from "@/lib/shard-math";
+import { parseShardAmount } from "@/components/send-shards";
 import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, maxUint160, parseAbiParameters as pap, type Log, parseAbiParameters, type Address } from "viem";
 import { abi, universalRouterAbi } from "@kura/shared";
 import {
@@ -7,6 +9,7 @@ import {
   impliedCardValue,
   livePrice,
   loadPool,
+  maxAmountText,
   loadSwaps,
   marketPrice,
   pctDelta,
@@ -269,5 +272,25 @@ describe("receipts", () => {
     const l = log(HOOK, "FeesCollected", { cardId: 1n, lpOwner: ME.toLowerCase() }, encodeAbiParameters(pap("uint256,uint256"), [SHARD / 10n, 420_000n]));
     expect(feesFromReceipt([l], 1n, HOOK)).toEqual({ shards: SHARD / 10n, usdc: 420_000n });
     expect(feesFromReceipt([], 1n, HOOK)).toBeNull();
+  });
+});
+
+describe("maxAmountText", () => {
+  it("fills the whole USDC balance on a buy, exactly, and it parses back to the balance", () => {
+    expect(maxAmountText("buy", 10_000_000_000n)).toBe("10000");
+    expect(maxAmountText("buy", 1_234_567n)).toBe("1.234567");
+    expect(parseUsdcInput(maxAmountText("buy", 1_234_567n)!)).toBe(1_234_567n);
+  });
+
+  it("fills the whole shard balance on a sell to the last wei, so nothing is left behind", () => {
+    expect(maxAmountText("sell", 3n * 10n ** 18n)).toBe("3");
+    const odd = 7_200_000_000_000_000_001n;
+    expect(maxAmountText("sell", odd)).toBe("7.200000000000000001");
+    expect(parseShardAmount(maxAmountText("sell", odd)!)).toBe(odd);
+  });
+
+  it("offers no max without a balance", () => {
+    expect(maxAmountText("buy", null)).toBeNull();
+    expect(maxAmountText("sell", 0n)).toBeNull();
   });
 });
