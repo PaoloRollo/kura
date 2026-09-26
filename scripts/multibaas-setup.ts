@@ -21,6 +21,7 @@ import {
   DeploymentsSchema,
   EVENT_QUERIES,
   MB,
+  MB_MAX_PAGES,
   MB_PAGE,
   MB_QUERIES,
   cardVaultAbi,
@@ -56,8 +57,14 @@ export function parseSetupArgs(argv: readonly string[]): Args {
   return { apply, verify, showSecret: argv.includes("--show-secret"), webhookBase };
 }
 
+/**
+ * MultiBaas stores bytecode in a NOT NULL column, so an ABI-only upload still sends `bin`. "0x" (empty bytecode)
+ * matches its ByteCode pattern: the contract is linked to the already-deployed CardVault, never deployed from here.
+ */
+export const ABI_ONLY_BIN = "0x";
+
 export type Desired = {
-  contract: { label: string; contractName: string; version: string; rawAbi: string };
+  contract: { label: string; contractName: string; version: string; rawAbi: string; bin: string };
   address: { alias: string; address: string; startingBlock: string };
   queries: Record<string, MbEventQuery>;
   webhook: { label: string; url: string; subscriptions: string[] } | null;
@@ -65,8 +72,9 @@ export type Desired = {
 
 export function desiredState(deploymentsJson: unknown, webhookBase: string | null): Desired {
   const d = DeploymentsSchema.parse(deploymentsJson);
+  if (d.chainId !== SEPOLIA) throw new Error(`the deployments file is for chain ${d.chainId}, expected Sepolia (${SEPOLIA})`);
   return {
-    contract: { label: MB.contractLabel, contractName: MB.contractName, version: MB.contractVersion, rawAbi: JSON.stringify(cardVaultAbi) },
+    contract: { label: MB.contractLabel, contractName: MB.contractName, version: MB.contractVersion, rawAbi: JSON.stringify(cardVaultAbi), bin: ABI_ONLY_BIN },
     address: { alias: MB.addressAlias, address: d.cardVault, startingBlock: String(d.deployBlock) },
     queries: Object.fromEntries(Object.entries(MB_QUERIES).map(([k, label]) => [label, EVENT_QUERIES[k as keyof typeof MB_QUERIES]])),
     webhook: webhookBase ? { label: MB.webhookLabel, url: `${webhookBase}${MB.webhookPath}`, subscriptions: ["event.emitted"] } : null,
@@ -166,9 +174,15 @@ export const readOnly =
 type Hook = { id: number; label: string; url: string; subscriptions: string[]; secret?: string; failedCalls?: number; lastError?: string };
 type Io = { cfg: MbConfig; fetch: MbFetch; log: (line: string) => void };
 
+/** The kura_web webhook, looked for on every page of /webhooks (at most MB_PAGE per page). Throws rather than miss it. */
 async function findHook(io: Io, timeoutMs?: number): Promise<Hook | null> {
-  const hooks = await mbRequest<Hook[]>(io.cfg, "GET", `/webhooks?limit=${MB_PAGE}`, { fetch: io.fetch, timeoutMs });
-  return (hooks ?? []).find((h) => h.label === MB.webhookLabel) ?? null;
+  for (let page = 0; page < MB_MAX_PAGES; page++) {
+    const hooks = (await mbRequest<Hook[]>(io.cfg, "GET", `/webhooks?offset=${page * MB_PAGE}&limit=${MB_PAGE}`, { fetch: io.fetch, timeoutMs })) ?? [];
+    const hit = hooks.find((h) => h.label === MB.webhookLabel);
+    if (hit) return hit;
+    if (hooks.length < MB_PAGE) return null;
+  }
+  throw new Error(`MultiBaas has ${MB_PAGE * MB_MAX_PAGES} webhooks or more; kura_web was not among them`);
 }
 
 async function readCurrent(io: Io, want: Desired): Promise<Current> {

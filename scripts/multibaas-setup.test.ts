@@ -40,6 +40,8 @@ describe("planSetup", () => {
     expect(steps.map((s) => s.kind)).toEqual(["contract", "address", "link", "query", "query", "query", "query", "query", "query", "webhook-create"]);
     expect(steps[0]).toMatchObject({ method: "POST", path: "/contracts/kura_cardvault", body: { label: "kura_cardvault", contractName: "CardVault", version: "1.0" } });
     expect(JSON.parse((steps[0]!.body as { rawAbi: string }).rawAbi)).toEqual(cardVaultAbi);
+    // MultiBaas rejects a contract without bytecode (NOT NULL); an ABI-only upload sends empty "0x".
+    expect((steps[0]!.body as { bin: string }).bin).toBe("0x");
     expect(steps[1]).toMatchObject({ method: "POST", path: "/chains/ethereum/addresses", body: { alias: "kura_vault", address: VAULT } });
     expect(steps[2]).toMatchObject({ method: "POST", path: "/chains/ethereum/addresses/kura_vault/contracts", body: { label: "kura_cardvault", version: "1.0", startingBlock: String(deployments.deployBlock) } });
     expect(steps.filter((s) => s.kind === "query").map((s) => s.path).sort()).toEqual(Object.values(MB_QUERIES).map((l) => `/queries/${l}`).sort());
