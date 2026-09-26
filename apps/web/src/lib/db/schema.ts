@@ -81,6 +81,9 @@ export const appraisals = app.table("appraisals", {
   shardToken: text("shard_token").notNull(),
   usdcPerShard: bigint("usdc_per_shard", { mode: "bigint" }).notNull(),
   marketUsd: numeric("market_usd"),
+  /** Where the price came from ("Scryfall USD · foil · EN printing · NM ×1.00") and whether it was live or cached. */
+  priceSource: text("price_source"),
+  conditionMultiplier: numeric("condition_multiplier"),
   expiresAt: bigint("expires_at", { mode: "bigint" }).notNull(),
   signature: text("signature").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
