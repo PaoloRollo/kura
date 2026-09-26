@@ -203,7 +203,9 @@ Requirements: Node 24, pnpm 10 and Foundry.
 
 ```bash
 pnpm install
-git submodule update --init contracts/lib/forge-std contracts/lib/openzeppelin-contracts contracts/lib/continuous-clearing-auction
+git submodule update --init contracts/lib/forge-std contracts/lib/openzeppelin-contracts contracts/lib/continuous-clearing-auction contracts/lib/v4-periphery
+git -C contracts/lib/v4-periphery submodule update --init lib/v4-core lib/permit2
+git -C contracts/lib/v4-periphery/lib/v4-core submodule update --init lib/solmate
 cp .env.example .env     # fill in what you need; .env is git-ignored
 ```
 

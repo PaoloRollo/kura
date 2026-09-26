@@ -382,6 +382,19 @@ export const cardVaultAbi = [
   },
   {
     "type": "function",
+    "name": "market",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IShardMarket"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mint",
     "inputs": [
       {
@@ -657,6 +670,19 @@ export const cardVaultAbi = [
       },
       {
         "name": "p",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMarket",
+    "inputs": [
+      {
+        "name": "m",
         "type": "address",
         "internalType": "address"
       }
@@ -1633,11 +1659,6 @@ export const cardVaultAbi = [
   },
   {
     "type": "error",
-    "name": "InvalidForSale",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidLabel",
     "inputs": []
   },
@@ -1659,6 +1680,11 @@ export const cardVaultAbi = [
   {
     "type": "error",
     "name": "InvalidShortString",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketAlreadySet",
     "inputs": []
   },
   {

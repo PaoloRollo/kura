@@ -35,10 +35,16 @@ STEP="${1:-all}"
 # submodules are not needed to build and would pull over a gigabyte.
 if [[ ! -f "$ROOT/contracts/lib/forge-std/src/Script.sol" \
    || ! -f "$ROOT/contracts/lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol" \
-   || ! -f "$ROOT/contracts/lib/continuous-clearing-auction/src/interfaces/IValidationHook.sol" ]]; then
+   || ! -f "$ROOT/contracts/lib/continuous-clearing-auction/src/interfaces/IValidationHook.sol" \
+   || ! -f "$ROOT/contracts/lib/v4-periphery/lib/v4-core/lib/solmate/src/tokens/ERC721.sol" \
+   || ! -f "$ROOT/contracts/lib/v4-periphery/lib/permit2/src/interfaces/IAllowanceTransfer.sol" ]]; then
   echo "==> fetching contract libraries"
   git -C "$ROOT" submodule update --init \
-    contracts/lib/forge-std contracts/lib/openzeppelin-contracts contracts/lib/continuous-clearing-auction
+    contracts/lib/forge-std contracts/lib/openzeppelin-contracts contracts/lib/continuous-clearing-auction \
+    contracts/lib/v4-periphery
+  # Uniswap v4: only the nested libraries the imports need (v4-core, permit2, and v4-core's solmate).
+  git -C "$ROOT/contracts/lib/v4-periphery" submodule update --init lib/v4-core lib/permit2
+  git -C "$ROOT/contracts/lib/v4-periphery/lib/v4-core" submodule update --init lib/solmate
 fi
 
 cd "$ROOT/contracts"
