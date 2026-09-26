@@ -37,11 +37,19 @@ age) and writes its JSON to the git-ignored `deployments/tmp/`.
 
 Addresses are written to `deployments/sepolia.json` and re-exported by `packages/shared`.
 
-ENSv2 addresses default to `ensdomains/contracts-v2` at commit `48b3e2d` (`contracts/deployments/sepolia/*.json`) and
-can be overridden with the `ENS_*` variables. The registrar is paid in that deployment's MockUSDC, which anyone can
-mint; `SetupEnsCommit` mints the fee if the deployer holds too little.
-The registrar also accepts Circle USDC: set `ENS_FEE_TOKEN=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` to pay with it
-instead, in which case the deployer must already hold the fee (Circle USDC cannot be minted by the script).
+ENSv2 addresses default to the deployment on [docs.ens.domains/learn/deployments](https://docs.ens.domains/learn/deployments),
+which the ENS App, the ENS Explorer and the universal resolver proxies use: `ensdomains/contracts-v2` at commit
+`71a3b73` (`contracts/docs/addresses/sepolia.md`, ABIs in `contracts/deployments/sepolia/*.json`). Override any of them
+with `ENS_ROOT_REGISTRY`, `ENS_ETH_REGISTRY`, `ENS_ETH_REGISTRAR`, `ENS_VERIFIABLE_FACTORY`, `ENS_USER_REGISTRY_IMPL`,
+`ENS_RESOLVER_IMPL`, `ENS_UNIVERSAL_RESOLVER` or `ENS_FEE_TOKEN`. The registrar is paid in that deployment's MockUSDC
+(`0x16f95D91DBa7dA3Aca778Ec053dF0FF6C6A8aA8e`, 6 decimals), which anyone can mint; `SetupEnsCommit` mints the fee
+(160 USDC a year for a four-letter label) if the deployer holds too little.
+
+Records on the `PermissionedResolver` are written by DNS-encoded name (`setText(name, key, value)`,
+`setAddress(name, 60, addr)`) and read through `resolve(name, data)` or `UniversalResolverV2`. Per-key rights are
+granted with `grantSetterRoles` and cover that key on every name on the resolver: the vendor holds `condition` and
+`grade`, the appraiser holds `appraisal.usd` and `appraisal.at`, and CardNames holds every text and address key.
+Role bitmaps are in `src/libraries/EnsRoles.sol`.
 
 `SetupEnsRegister` must run between the registrar's minimum commitment age (60 s) and its maximum (24 h) after
 `SetupEnsCommit`. If the 24 h window lapses, rerun both phases with a new `VAULT_ENS_LABEL`: the registry and resolver
