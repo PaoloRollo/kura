@@ -16,6 +16,7 @@ const sources = {
   ccaAuction: ["ICCA.sol", "ICCAAuction"],
   ccaFactory: ["ICCA.sol", "ICCAFactory"],
   shardToken: ["ShardToken.sol", "ShardToken"],
+  shardMarket: ["IShardMarket.sol", "IShardMarket"],
   erc20: ["IERC20Metadata.sol", "IERC20Metadata"],
   permit2: ["ICCA.sol", "IPermit2"],
   ensResolver: ["IENSv2.sol", "IENSResolverV2"],

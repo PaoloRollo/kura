@@ -19,6 +19,12 @@ export const DeploymentsSchema = z.object({
   ensParentNode: bytes32,
   signer: address,
   vendor: address,
+  shardMarket: address,
+  poolManager: address,
+  positionManager: address,
+  universalRouter: address,
+  stateView: address,
+  v4Quoter: address,
 });
 
 export type Deployments = z.infer<typeof DeploymentsSchema>;
