@@ -198,6 +198,31 @@ export const ensRecords = onchainTable("ens_records", (t) => ({
   updatedAt: t.integer().notNull(),
 }), (table) => ({ pk: primaryKey({ columns: [table.node, table.key] }) }));
 
+// PermissionedResolver (ENSv2) stores records per record id; a node points at one record and several nodes can share
+// one (linkToNode / linkToRecord aliases). Record writes land here by id and are projected onto ens_records for every
+// node linked to that id, so the web keeps reading records by node.
+export const ensRecordLinks = onchainTable("ens_record_links", (t) => ({
+  resolver: t.hex().notNull(),
+  node: t.hex().notNull(),
+  recordId: t.bigint().notNull(), // 0 after linkToRecord(name, 0): the node has no record of its own
+  name: t.hex().notNull(), // DNS-encoded name from Linked
+  updatedBlock: t.bigint().notNull(),
+  updatedAt: t.integer().notNull(),
+}), (table) => ({
+  pk: primaryKey({ columns: [table.resolver, table.node] }),
+  recordIdx: index().on(table.resolver, table.recordId),
+}));
+
+export const ensResolverRecords = onchainTable("ens_resolver_records", (t) => ({
+  resolver: t.hex().notNull(),
+  recordId: t.bigint().notNull(),
+  key: t.text().notNull(), // text key, "addr" (coin type 60) or "addr:<coinType>"
+  value: t.text().notNull(),
+  setBy: t.hex().notNull(),
+  updatedBlock: t.bigint().notNull(),
+  updatedAt: t.integer().notNull(),
+}), (table) => ({ pk: primaryKey({ columns: [table.resolver, table.recordId, table.key] }) }));
+
 export const collectors = onchainTable("collectors", (t) => ({
   address: t.hex().primaryKey(),
   label: t.text().notNull(),
