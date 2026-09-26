@@ -129,15 +129,12 @@ export function InventoryView({
 }) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<bigint | null>(initialSelected);
-  // A card just handed over keeps its panel (the confirmation) after the indexer marks it released.
-  const [handedOver, setHandedOver] = useState<bigint | null>(null);
   const counts = tabCounts(items);
   const shown = items.filter((i) => inTab(i.state, tab) && matchesSearch({ name: i.name, ensName: i.ensName, owner: i.owner }, query));
-  const selected = items.find((i) => i.id === selectedId && (i.state === "whole" || i.id === handedOver)) ?? null;
-  const close = () => {
-    setSelectedId(null);
-    setHandedOver(null);
-  };
+  // The Whole check applies when a row is opened (only Whole rows have Hand over). Once open, the selection is pinned:
+  // the row turning released mid-indexing must not unmount the panel and its confirmation.
+  const selected = selectedId != null ? (items.find((i) => i.id === selectedId) ?? null) : null;
+  const close = () => setSelectedId(null);
 
   return (
     <div className={cn("grid grid-cols-[minmax(0,1fr)] items-start gap-6", selected && "xl:grid-cols-[minmax(0,1fr)_400px]")}>
@@ -225,7 +222,6 @@ export function InventoryView({
           card: { name: selected.name ?? `Card #${selected.id}`, image: selected.image, ensName: selected.ensName },
           redeemedAt: selected.redeemedAt,
           onClose: close,
-          onReleased: () => setHandedOver(selected.id),
           onShowReleased: () => {
             close();
             onTab("released");
