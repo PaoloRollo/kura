@@ -1,4 +1,4 @@
-import { bigint, integer, jsonb, numeric, pgSchema, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, index, integer, jsonb, numeric, pgSchema, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const app = pgSchema("app");
 
@@ -74,6 +74,26 @@ export const tickets = app.table("tickets", {
   domain: text("domain").notNull(), // "bidgate" | "vault"
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * A signed PASSPORT release ticket waiting for the vendor: the card's owner verified in their own session, and the vendor
+ * station picks it up by card id. `status`: pending -> consumed (released, or refused on-chain) | cancelled | replaced.
+ */
+export const releaseTickets = app.table(
+  "release_tickets",
+  {
+    id: text("id").primaryKey(),
+    cardId: bigint("card_id", { mode: "bigint" }).notNull(),
+    subject: text("subject").notNull(),
+    nullifier: numeric("nullifier", { precision: 78, scale: 0 }).notNull(),
+    expiresAt: bigint("expires_at", { mode: "bigint" }).notNull(),
+    signature: text("signature").notNull(),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("release_tickets_card_status").on(t.cardId, t.status)],
+);
 
 export const appraisals = app.table("appraisals", {
   id: text("id").primaryKey(),

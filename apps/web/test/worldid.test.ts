@@ -9,6 +9,7 @@ import { worldidVerifications } from "@/lib/db/schema";
 import { setWorldFetchForTests } from "@/lib/world";
 import { privateKeyToAccount } from "viem/accounts";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
+import { setVaultReaderForTests } from "@/lib/release-tickets";
 
 const alice = "0x1111111111111111111111111111111111111111" as const;
 const bob = "0x2222222222222222222222222222222222222222" as const;
@@ -35,7 +36,8 @@ function worldOk(nullifier = "0x0a", forceAction?: string) {
   }) as unknown as typeof fetch;
 }
 
-const vendorWallet = async () => (await import("@/generated/deployments.json")).default.vendor as `0x${string}`;
+/** Card 1 is Whole and owned by `owner` on-chain. */
+const ownsCard1 = (owner: `0x${string}`) => setVaultReaderForTests(async () => ({ state: 1, owner }));
 
 const post = (body: unknown) => verifyRoute(new Request("http://localhost/api/worldid/verify", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
 
@@ -51,7 +53,10 @@ describe("POST /api/worldid/verify", () => {
     setUserForTests({ did: "did:privy:alice", wallet: alice });
   });
 
-  afterEach(() => resetDeploymentsForTests());
+  afterEach(() => {
+    resetDeploymentsForTests();
+    setVaultReaderForTests(null);
+  });
 
   it("issues a HUMAN ticket for the caller's wallet", async () => {
     setWorldFetchForTests(worldOk());
@@ -97,22 +102,19 @@ describe("POST /api/worldid/verify", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("release tickets require the vendor, name the holder, and need a passport", async () => {
+  it("release tickets are for the card's owner, in their own session, with a passport", async () => {
+    ownsCard1(bob);
+    setUserForTests({ did: "did:privy:bob", wallet: bob });
     setWorldFetchForTests(worldOk("0x0b"));
-    let res = await post({ action: "release", subject: bob, idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } });
-    expect(res.status).toBe(403);
-
-    setUserForTests({ did: "did:privy:vendor", wallet: await vendorWallet() });
-    res = await post({ action: "release", subject: bob, idkitResponse: { ...idkitResponse(bob, 1), action: "release" } });
+    let res = await post({ action: "release", cardId: "1", idkitResponse: { ...idkitResponse(bob, 1), action: "release" } });
     expect((await res.json()).error.code).toBe("WRONG_CREDENTIAL");
 
-    setWorldFetchForTests(worldOk("0x0b"));
-    res = await post({ action: "release", subject: bob, idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } });
+    res = await post({ action: "release", cardId: "1", idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.ticket.kind).toBe(2);
-    expect(json.ticket.subject).toBe(bob);
-    expect(json.credential).toBe("passport");
+    expect(json).toMatchObject({ ok: true, cardId: "1", credential: "passport" });
+    // The ticket itself goes to the vendor station, not back to the holder.
+    expect(json.signature).toBeUndefined();
   });
   it("refuses legacy v3 proofs for bid unless WORLD_BID_ALLOW_LEGACY is on", async () => {
     const fetchSpy = worldOk("0x0c");
@@ -147,8 +149,9 @@ describe("POST /api/worldid/verify", () => {
 
     delete process.env.WORLD_BID_ALLOW_LEGACY;
     // Release keeps accepting legacy proofs without the flag.
-    setUserForTests({ did: "did:privy:vendor", wallet: await vendorWallet() });
-    res = await post({ action: "release", subject: bob, idkitResponse: legacyResponse(bob, "document", "release") });
+    ownsCard1(bob);
+    setUserForTests({ did: "did:privy:bob", wallet: bob });
+    res = await post({ action: "release", cardId: "1", idkitResponse: legacyResponse(bob, "document", "release") });
     expect(res.status).toBe(200);
     expect((await res.json()).credential).toBe("passport");
   });
@@ -164,12 +167,15 @@ describe("POST /api/worldid/verify", () => {
   });
 
   it("binds a release nullifier to one holder", async () => {
-    setUserForTests({ did: "did:privy:vendor", wallet: await vendorWallet() });
     setWorldFetchForTests(worldOk("0x0b"));
     const charlie = "0x3333333333333333333333333333333333333333" as const;
-    expect((await post({ action: "release", subject: bob, idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } })).status).toBe(200);
-    expect((await post({ action: "release", subject: bob, idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } })).status).toBe(200);
-    const res = await post({ action: "release", subject: charlie, idkitResponse: { ...idkitResponse(charlie, 9303), action: "release" } });
+    ownsCard1(bob);
+    setUserForTests({ did: "did:privy:bob", wallet: bob });
+    expect((await post({ action: "release", cardId: "1", idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } })).status).toBe(200);
+    expect((await post({ action: "release", cardId: "1", idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } })).status).toBe(200);
+    ownsCard1(charlie);
+    setUserForTests({ did: "did:privy:charlie", wallet: charlie });
+    const res = await post({ action: "release", cardId: "1", idkitResponse: { ...idkitResponse(charlie, 9303), action: "release" } });
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe("ALREADY_BOUND");
   });
@@ -211,8 +217,8 @@ describe("POST /api/worldid/verify", () => {
     expect((await res.json()).error.code).toBe("WORLD_REJECTED");
   });
 
-  it("requires a subject for vendor release requests", async () => {
-    setUserForTests({ did: "did:privy:vendor", wallet: await vendorWallet() });
+  it("requires a card id for release requests", async () => {
+    setUserForTests({ did: "did:privy:bob", wallet: bob });
     setWorldFetchForTests(worldOk("0x0b"));
     const res = await post({ action: "release", idkitResponse: { ...idkitResponse(bob, 9303), action: "release" } });
     expect(res.status).toBe(400);
