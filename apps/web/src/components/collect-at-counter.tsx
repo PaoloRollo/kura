@@ -19,7 +19,8 @@ const POLL_MS = 5000;
 const readyKey = (cardId: bigint) => ["release-ready", cardId.toString()];
 
 /**
- * The owner's side of a handover: their waiting release ticket for the card (restored on reload and polled), the
+ * The owner's side of a handover: their waiting release ticket for the card (restored on reload, polled while it waits
+ * or while `setChecking(true)` says the Passport check is open), the
  * Passport check that creates it, and cancelling it. A ticket that stops waiting on its own (the vendor used it, the
  * vault refused it, or the card changed) turns the screen to "ended" and refreshes the card.
  */
@@ -27,6 +28,8 @@ export function useCollect(cardId: bigint) {
   const { identityToken } = useKuraUser();
   const queryClient = useQueryClient();
   const now = useNow(1000);
+  // The Passport check sheet is open: its ticket may land any moment.
+  const [checking, setChecking] = useState(false);
   const ready = useQuery<Ready>({
     queryKey: readyKey(cardId),
     queryFn: async () => {
@@ -35,7 +38,8 @@ export function useCollect(cardId: bigint) {
       return ((await r.json()) as { ready: Ready }).ready;
     },
     enabled: !!identityToken,
-    refetchInterval: POLL_MS,
+    // Read once (a reload restores a waiting ticket), then poll only while a ticket waits or a check is under way.
+    refetchInterval: (q) => (q.state.data || checking ? POLL_MS : false),
   });
   const [ended, setEnded] = useState(false);
   const [seen, setSeen] = useState<Ready>(null);
@@ -70,7 +74,7 @@ export function useCollect(cardId: bigint) {
     if (data) void cancel();
     else queryClient.setQueryData<Ready>(readyKey(cardId), null);
   };
-  return { stage, onReady, cancel, dismiss };
+  return { stage, onReady, cancel, dismiss, setChecking };
 }
 
 /** The refusal sentence for the owner's check; ALREADY_BOUND names the wallet their Passport already collects for. */
@@ -82,8 +86,20 @@ export function releaseRefusal(code: string, details?: Record<string, unknown>):
 }
 
 /** "Collect at the counter": the explainer sheet and the Passport check, in the owner's own session. */
-export function CollectButton({ cardId, me, onReady, className, label = "Collect at the counter" }: { cardId: bigint; me: `0x${string}`; onReady: (r: ReleaseReady) => void; className?: string; label?: string }) {
-  const [open, setOpen] = useState(false);
+export function CollectButton({ cardId, me, onReady, onOpenChange, className, label = "Collect at the counter" }: {
+  cardId: bigint;
+  me: `0x${string}`;
+  onReady: (r: ReleaseReady) => void;
+  /** The check sheet opened or closed (useCollect polls while it is open). */
+  onOpenChange?: (open: boolean) => void;
+  className?: string;
+  label?: string;
+}) {
+  const [open, setOpenState] = useState(false);
+  const setOpen = (v: boolean) => {
+    setOpenState(v);
+    onOpenChange?.(v);
+  };
   return (
     <>
       <Button variant="secondary" size="md" className={className} onClick={() => setOpen(true)}>

@@ -50,7 +50,7 @@ export function OwnerPanel({ c, name }: { c: CardData; name?: string }) {
         stage={collect.stage}
         cardName={name ?? `Card #${id}`}
         onCancel={() => (collect.stage.kind === "ready" ? void collect.cancel() : collect.dismiss())}
-        retry={<CollectButton cardId={card.id} me={me} onReady={collect.onReady} label="Verify again" />}
+        retry={<CollectButton cardId={card.id} me={me} onReady={collect.onReady} onOpenChange={collect.setChecking} label="Verify again" />}
       />
     );
   }
@@ -65,7 +65,7 @@ export function OwnerPanel({ c, name }: { c: CardData; name?: string }) {
         <Button asChild variant="primary" size="md" className="sm:flex-1">
           <Link href={`/app/cards/${id}/shard`}><LayersIcon aria-hidden />Shard this card</Link>
         </Button>
-        <CollectButton cardId={card.id} me={me} onReady={collect.onReady} className="sm:flex-1" />
+        <CollectButton cardId={card.id} me={me} onReady={collect.onReady} onOpenChange={collect.setChecking} className="sm:flex-1" />
       </div>
       {/* Room under the content for the two pinned CTAs, so they never cover it. */}
       <div aria-hidden className="h-36 md:hidden" />
