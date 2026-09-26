@@ -103,6 +103,9 @@ export function shardCount(units: bigint): string {
   return String(Number((Number(units) / 1e18).toFixed(2)));
 }
 
+/** Money without ".00" on whole dollars ("$1,840", "$5,007.60"). */
+export const cash = (x: bigint) => money(x, x % 1_000_000n === 0n ? 0 : 2);
+
 export type LiveContext = {
   me: string | null;
   /** The card an auction sells. */
@@ -144,7 +147,7 @@ export function liveToast(e: LiveEvent, ctx: LiveContext): LiveToast | null {
   if (e.kind === "settled") {
     const perShard = q96ToUsdcPerShard(e.clearingPriceQ96);
     const body = e.graduated
-      ? `${perShard > 0n ? `${shardCount((e.raisedUsdc * SHARD) / perShard)} ` : ""}${name} shards sold · ${money(e.raisedUsdc)}`
+      ? `${perShard > 0n ? `${shardCount((e.raisedUsdc * SHARD) / perShard)} ` : ""}${name} shards sold · ${cash(e.raisedUsdc)}`
       : "Reserve not met · bids refunded";
     return { title: mine ? "Your auction settled" : "Auction settled", body, tone: "good", icon: "settled", action: { label: "View", href: cardHref(cardId, "auction") } };
   }
@@ -152,7 +155,7 @@ export function liveToast(e: LiveEvent, ctx: LiveContext): LiveToast | null {
   const by = ctx.name(e.redeemer);
   return {
     title: `${name} was bought out`,
-    body: held > 0n ? `Payout ready: ${money((held * e.buyoutPerShard) / SHARD)} · by ${by}` : `by ${by} at ${money(e.buyoutPerShard)}/shard`,
+    body: held > 0n ? `Payout ready: ${cash((held * e.buyoutPerShard) / SHARD)} · by ${by}` : `by ${by} at ${cash(e.buyoutPerShard)}/shard`,
     tone: "kin",
     icon: "redeemed",
     // The payout panel sits on the card page's overview, under the card header.

@@ -16,6 +16,7 @@ import {
   WalletIcon,
 } from "lucide-react";
 import { BarChip, TabBar, TopBar, type NavItem } from "@/components/kura";
+import { NotificationsBell } from "@/components/notifications-panel";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -157,6 +158,8 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
           signedIn && address ? (
             <>
               {role === "vendor" && isVendor && <FeesChip />}
+              {/* RWhQ9: the bell sits before the USDC chip; desktop only (no mobile screen has it). */}
+              {role === "collector" && <NotificationsBell address={address} className="max-md:hidden" />}
               {role === "collector" && <UsdcChip address={address} />}
               <WalletChip address={address} role={isVendor ? "vendor" : undefined} onLogout={logout} />
             </>
