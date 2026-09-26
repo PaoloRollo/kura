@@ -69,3 +69,21 @@ export function isCondition(s: string): s is Condition {
 export function isLanguage(s: string): boolean {
   return /^[a-z]{2,3}$/.test(s);
 }
+
+/**
+ * DNS wire format of an ENS name ("kura.eth" -> 0x046b7572610365746800), the `name` argument of the ENSv2
+ * PermissionedResolver setters (`setText(name, key, value)`, `setAddress(name, coinType, addr)`) and of `resolve()`.
+ * Labels are taken as given (already normalized), each 1 to 255 bytes.
+ */
+export function dnsEncodeName(name: string): `0x${string}` {
+  const out: number[] = [];
+  if (name !== "") {
+    for (const label of name.split(".")) {
+      const bytes = new TextEncoder().encode(label);
+      if (bytes.length === 0 || bytes.length > 255) throw new Error(`invalid DNS label in ${JSON.stringify(name)}`);
+      out.push(bytes.length, ...bytes);
+    }
+  }
+  out.push(0);
+  return `0x${out.map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
