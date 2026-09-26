@@ -14,28 +14,42 @@ describe("MultiBaas delivery claims", () => {
   });
 
   it("claims a log once; a redelivery while it runs or after it is done is refused", async () => {
-    expect(await claimDelivery(c)).toBe(true);
-    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBe(false);
-    await finishDelivery(c.key, "done", "written");
-    expect(await claimDelivery({ ...c, deliveryId: "d3" })).toBe(false);
+    expect(await claimDelivery(c)).toBe(1);
+    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBeNull();
+    expect(await finishDelivery(c.key, 1, "done", "written")).toBe(true);
+    expect(await claimDelivery({ ...c, deliveryId: "d3" })).toBeNull();
     expect(await row()).toMatchObject({ status: "done", outcome: "written", attempts: 1, deliveryId: "d1", cardId: 4n, eventName: "AuctionSettled" });
   });
 
   it("lets a redelivery retry a failed attempt, counting attempts", async () => {
     await claimDelivery(c);
-    await finishDelivery(c.key, "failed", "error");
-    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBe(true);
+    await finishDelivery(c.key, 1, "failed", "error");
+    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBe(2);
     expect(await row()).toMatchObject({ status: "processing", attempts: 2, deliveryId: "d2" });
   });
 
   it("takes over a claim stuck in processing past DELIVERY_STALE_SEC", async () => {
     await claimDelivery(c);
     await getDb().update(multibaasDeliveries).set({ updatedAt: new Date(Date.now() - (DELIVERY_STALE_SEC + 60) * 1000) }).where(eq(multibaasDeliveries.eventKey, c.key));
-    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBe(true);
+    expect(await claimDelivery({ ...c, deliveryId: "d2" })).toBe(2);
+  });
+
+  it("never lets a stale claimer overwrite the claim that took over from it", async () => {
+    const stale = (await claimDelivery(c))!;
+    await getDb().update(multibaasDeliveries).set({ updatedAt: new Date(Date.now() - (DELIVERY_STALE_SEC + 60) * 1000) }).where(eq(multibaasDeliveries.eventKey, c.key));
+    const fresh = (await claimDelivery({ ...c, deliveryId: "d2" }))!;
+    expect(fresh).toBe(stale + 1);
+    // The first handler wakes up and reports a failure: refused, the newer claim stays processing.
+    expect(await finishDelivery(c.key, stale, "failed", "error")).toBe(false);
+    expect(await row()).toMatchObject({ status: "processing", attempts: fresh, outcome: null });
+    expect(await finishDelivery(c.key, fresh, "done", "written")).toBe(true);
+    // A finished claim can't be finished again, even with its own token.
+    expect(await finishDelivery(c.key, fresh, "failed", "error")).toBe(false);
+    expect(await row()).toMatchObject({ status: "done", outcome: "written" });
   });
 
   it("gives a log to exactly one of two concurrent deliveries", async () => {
     const wins = await Promise.all([claimDelivery(c), claimDelivery({ ...c, deliveryId: "d2" })]);
-    expect(wins.filter(Boolean)).toHaveLength(1);
+    expect(wins.filter((w) => w !== null)).toEqual([1]);
   });
 });
