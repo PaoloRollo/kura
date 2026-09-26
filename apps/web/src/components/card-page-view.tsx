@@ -100,7 +100,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPa
     return (
       <div className="flex flex-col gap-7">
         <MobileNav title={identity.name} className="-mt-2 -mb-3" />
-        <CompactHeader card={card} identity={identity} shards={shards} />
+        <CompactHeader card={card} identity={identity} shards={shards} sharding={c.sharding} block={block} />
         <CardTabs tab={tab} href={tabHref} />
         {tab === "holders" && (
           <HoldersList

@@ -21,6 +21,8 @@ export type AuctionCardProps = Omit<React.ComponentProps<"article">, "children">
   /** Footnote under the bar, e.g. "3 of 16 shards for sale · 62% of time elapsed". */
   footnote?: React.ReactNode;
   status?: PillTone;
+  /** The pill's text (lib/card-status), e.g. "Ended · sold"; the tone's default label when absent. */
+  statusLabel?: string;
   href?: string;
 };
 
@@ -35,6 +37,7 @@ export function AuctionCard({
   progress,
   footnote,
   status = "live",
+  statusLabel,
   href,
   className,
   ...props
@@ -45,7 +48,7 @@ export function AuctionCard({
       <div className="relative flex h-[260px] items-center justify-center bg-surface-2">
         <CardArt src={image} alt={name} className="h-[223px] w-auto" />
         {/* Capped to the art area so a long label ("Redeemable") truncates instead of running over a narrow card. */}
-        <Pill tone={status} className="absolute top-3 left-3 max-w-[calc(100%-1.5rem)] truncate" />
+        <Pill tone={status} className="absolute top-3 left-3 max-w-[calc(100%-1.5rem)] truncate">{statusLabel}</Pill>
       </div>
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">

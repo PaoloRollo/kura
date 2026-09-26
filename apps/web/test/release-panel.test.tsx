@@ -33,6 +33,7 @@ import { releaseRefusal } from "@/components/collect-at-counter";
 import { OwnerPanel } from "@/components/card-state-panel";
 import { ReleasePanel } from "@/components/release-panel";
 import { InventoryView, type InventoryItem } from "@/components/vendor/inventory";
+import { cardStatusOf } from "@/lib/card-status";
 import { worldIdErrorMessage, worldIdRefusalTitle } from "@/components/world-id-gate";
 import type { CardData } from "@/hooks/use-card";
 import { addresses, publicClient } from "@/lib/chain";
@@ -163,6 +164,18 @@ describe("InventoryView", () => {
     fireEvent.click(screen.getByRole("button", { name: /Confirm handover/ }));
     expect(await screen.findByText("Handover confirmed", {}, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText("released")).toBeTruthy();
+  });
+
+  it("pills a sharded card by how its auction ended, and a live one as live", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const items: InventoryItem[] = [
+      { ...item("sharded"), id: 2n, awaiting: false, status: cardStatusOf("sold") },
+      { ...item("auctioning"), id: 3n, awaiting: false, status: cardStatusOf("awaiting") },
+    ];
+    render(<QueryClientProvider client={qc}><InventoryView items={items} stats={stats} tab="all" onTab={() => {}} /></QueryClientProvider>);
+    expect(screen.getByText("ended · sold")).toBeTruthy();
+    expect(screen.getByText("ended · awaiting settle")).toBeTruthy();
+    expect(screen.queryByText("sharded")).toBeNull();
   });
 });
 

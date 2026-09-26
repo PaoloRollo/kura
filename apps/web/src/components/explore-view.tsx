@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpDownIcon, ChevronDownIcon, CompassIcon, LayoutGridIcon, ListIcon, SearchXIcon, SlidersHorizontalIcon, TimerIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
-import { AuctionCard, Button, CardArt, FilterChip, SearchInput, type PillTone } from "@/components/kura";
+import { AuctionCard, Button, CardArt, FilterChip, SearchInput } from "@/components/kura";
+import { cardStatusOf } from "@/lib/card-status";
 import { MobilePageTitle } from "@/components/page-title";
 import { IndexerLoading } from "@/components/sync-state";
 import {
@@ -72,11 +73,8 @@ function timeLeft(it: AuctionItem): React.ReactNode {
   return <Countdown endBlock={it.endBlock} />;
 }
 
-const STATUS: Record<AuctionItem["status"], { tone: PillTone; label?: string }> = {
-  live: { tone: "live" },
-  awaiting: { tone: "neutral", label: "Awaiting settle" },
-  settled: { tone: "sharded", label: "Settled" },
-};
+/** The pill (lib/card-status): Live, Ended · awaiting settle, then how the settled auction ended. */
+const statusOf = (it: AuctionItem) => cardStatusOf(it.status === "live" ? "live" : it.status === "awaiting" ? "awaiting" : it.graduated === false ? "reserve-not-met" : "sold");
 
 /** A transparent pixel while the art loads (the card keeps its shape). */
 const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -94,7 +92,7 @@ function Premium({ premium, className }: { premium: number | null; className?: s
 }
 
 function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
-  const s = STATUS[it.status];
+  const s = statusOf(it);
   const pct = Math.round(elapsed(it, block) * 100);
   return (
     <AuctionCard
@@ -107,8 +105,9 @@ function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
       timeLeft={timeLeft(it)}
       progress={elapsed(it, block)}
       status={s.tone}
+      statusLabel={s.label}
       footnote={`${it.forSale} of ${it.totalShards} shards for sale · ${it.status === "live" ? `${pct}% of time elapsed` : it.status === "awaiting" ? "awaiting settle" : it.graduated === false ? "reserve not met" : "settled"}`}
-      aria-label={s.label ? `${it.name}, ${s.label}` : it.name}
+      aria-label={`${it.name}, ${s.label}`}
     />
   );
 }

@@ -66,7 +66,7 @@ describe("CardPageView", () => {
 
   it("shows the live auction context and the on-chain profile with key roles", () => {
     renderCard("auctioning");
-    expect(screen.getByText("Live auction")).toBeTruthy();
+    expect(screen.getByText("Live", { selector: "[data-slot=pill]" })).toBeTruthy();
     expect(screen.getByText("LEA · Rare")).toBeTruthy();
     expect(screen.getByText(/sharded by/)).toBeTruthy();
     const profile = screen.getAllByRole("region", { name: "On-chain profile" })[0]!;
@@ -110,13 +110,15 @@ describe("CardPageView", () => {
     expect(screen.getByText("1 wallet")).toBeTruthy();
     expect(screen.getByText("3.0 shards")).toBeTruthy();
     expect(screen.getByText("can redeem")).toBeTruthy();
-    expect(screen.getByText("black-lotus-lea-1.kura.eth · auctioning · 16 shards")).toBeTruthy();
+    expect(screen.getByText("black-lotus-lea-1.kura.eth · live · 16 shards")).toBeTruthy();
   });
 
   it("lists a winning bidder who hasn't claimed as 'to claim', counted but set apart", () => {
     renderCard("settled-unclaimed", { tab: "holders" });
     // paolo and x7a3 hold; kenji's 2 shards are still in the auction.
     expect(screen.getByText("3 wallets")).toBeTruthy();
+    // A settled, graduated auction reads as ended, not "sharded".
+    expect(screen.getByText("black-lotus-lea-1.kura.eth · ended, sold · 16 shards")).toBeTruthy();
     const row = document.querySelector("tr[data-to-claim]") as HTMLElement;
     expect(within(row).getByText("To claim")).toBeTruthy();
     expect(within(row).getByText("kenji.kura.eth")).toBeTruthy();

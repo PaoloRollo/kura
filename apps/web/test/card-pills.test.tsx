@@ -12,17 +12,25 @@ const sharding = { endBlock: 100n, settled: false };
 describe("CardPills", () => {
   it("says the auction is live before its end block", () => {
     render(<CardPills card={card} identity={identity} sharding={sharding} block={99n} />);
-    expect(screen.getByText("Live auction")).toBeTruthy();
+    expect(screen.getByText("Live")).toBeTruthy();
   });
 
-  it("says awaiting settle once the end block is reached and it isn't settled", () => {
+  it("says ended, awaiting settle once the end block is reached and it isn't settled", () => {
     render(<CardPills card={card} identity={identity} sharding={sharding} block={100n} />);
-    expect(screen.getByText("Awaiting settle")).toBeTruthy();
-    expect(screen.queryByText("Live auction")).toBeNull();
+    expect(screen.getByText("Ended · awaiting settle")).toBeTruthy();
+    expect(screen.queryByText("Live")).toBeNull();
   });
 
   it("stays live while the block is unknown", () => {
     render(<CardPills card={card} identity={identity} sharding={sharding} block={null} />);
-    expect(screen.getByText("Live auction")).toBeTruthy();
+    expect(screen.getByText("Live")).toBeTruthy();
+  });
+
+  it("says how a settled auction ended, not 'sharded'", () => {
+    render(<CardPills card={{ ...card, state: "sharded" }} identity={identity} sharding={{ ...sharding, settled: true, graduated: true }} block={200n} />);
+    expect(screen.getByText("Ended · sold")).toBeTruthy();
+    cleanup();
+    render(<CardPills card={{ ...card, state: "sharded" }} identity={identity} sharding={{ ...sharding, settled: true, graduated: false }} block={200n} />);
+    expect(screen.getByText("Ended · reserve not met")).toBeTruthy();
   });
 });

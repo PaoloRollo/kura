@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ReleaseBody, ReleaseShell, StaticConfirm } from "@/components/release-panel";
 import { Fees, FeesView, type LedgerEntry } from "@/components/vendor/fees";
 import { Inventory, InventoryView, type InventoryItem } from "@/components/vendor/inventory";
+import { cardStatusOf } from "@/lib/card-status";
 import { usePayoutBalance } from "@/hooks/use-vendor-data";
 import { usdc } from "@/lib/format";
 import type { ReleaseStage } from "@/lib/release";
@@ -19,8 +20,8 @@ const A = (n: string) => `0x${n.repeat(40).slice(0, 40)}`;
 const ITEMS: InventoryItem[] = [
   { id: 1n, name: "Black Lotus", image: "/cards/black-lotus.webp", set: "LEA", condition: "NM", ensName: "black-lotus-lea-1.kura.eth", state: "whole", owner: A("4f2c"), awaiting: true },
   { id: 2n, name: "Mox Sapphire", image: "/cards/mox-sapphire.webp", set: "LEA", condition: "NM", ensName: "mox-sapphire-lea-2.kura.eth", state: "whole", owner: A("91a0"), awaiting: false },
-  { id: 3n, name: "Time Walk", image: "/cards/time-walk.webp", set: "LEA", condition: "LP", ensName: "time-walk-lea-3.kura.eth", state: "sharded", holders: 14, awaiting: false },
-  { id: 4n, name: "Ancestral Recall", image: "/cards/ancestral-recall.webp", set: "LEA", condition: "LP", ensName: "ancestral-recall-lea-4.kura.eth", state: "auctioning", holders: 3, awaiting: false },
+  { id: 3n, name: "Time Walk", image: "/cards/time-walk.webp", set: "LEA", condition: "LP", ensName: "time-walk-lea-3.kura.eth", state: "sharded", holders: 14, awaiting: false, status: cardStatusOf("sold") },
+  { id: 4n, name: "Ancestral Recall", image: "/cards/ancestral-recall.webp", set: "LEA", condition: "LP", ensName: "ancestral-recall-lea-4.kura.eth", state: "auctioning", holders: 3, awaiting: false, status: cardStatusOf("live") },
   { id: 5n, name: "Sol Ring", image: "/cards/sol-ring.webp", set: "LEA", condition: "MP", ensName: "sol-ring-lea-5.kura.eth", state: "released", owner: A("a1b2"), awaiting: false },
 ];
 const STATS = { inCustody: 4, feesTotal: 2_410_500_000n, feesWeek: 412_000_000n, awaiting: 1, released: 1 };
