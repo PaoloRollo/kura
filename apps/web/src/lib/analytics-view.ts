@@ -153,7 +153,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     const size = e.implied ?? e.market;
     if (size == null || size === 0n) return [];
     return [{
-      id: e.card.id.toString(), name: e.name, value: toUsd(size), premium: e.implied == null ? null : e.premium,
+      id: e.card.id.toString(), name: e.name, value: toUsd(size), premium: e.implied == null ? null : e.premium, sizedByMarket: e.implied == null,
       href: cardHref(e.card.id), thumb: e.thumb, ensName: e.card.ensName,
     }];
   });

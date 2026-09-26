@@ -57,9 +57,9 @@ describe("analytics view", () => {
     expect(v.premiums[0]).toMatchObject({ rank: 1, value: "+9.6%", tone: "pos", href: "/app/cards/1?tab=analytics", thumb: "/cards/black-lotus.webp" });
     expect(v.premiums[1]).toMatchObject({ value: "+3.1%", tone: "pos" });
     const na = v.treemap.find((i) => i.id === "2")!;
-    expect(na).toMatchObject({ premium: null, value: 900, href: "/app/cards/2?tab=analytics" });
+    expect(na).toMatchObject({ premium: null, value: 900, sizedByMarket: true, href: "/app/cards/2?tab=analytics" });
     // No market price: still mapped at its implied value, premium n/a.
-    expect(v.treemap.find((i) => i.id === "6")).toMatchObject({ value: 1600, premium: null });
+    expect(v.treemap.find((i) => i.id === "6")).toMatchObject({ value: 1600, premium: null, sizedByMarket: false });
     // Whole and released cards are not in the map.
     expect(v.treemap.map((i) => i.id).sort()).toEqual(["1", "2", "3", "6"]);
   });

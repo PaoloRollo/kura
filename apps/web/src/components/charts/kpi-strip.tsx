@@ -26,7 +26,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
     <div
       data-slot="kpi-strip"
       className={cn(
-        "grid grid-cols-2 gap-2 lg:gap-0 lg:divide-x lg:divide-border lg:overflow-hidden lg:rounded-2xl lg:border lg:border-border lg:bg-surface",
+        "grid grid-cols-2 gap-2 lg:gap-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-border lg:bg-surface",
         items.length >= 6 ? "lg:grid-cols-6" : items.length === 5 ? "lg:grid-cols-5" : "lg:grid-cols-4",
         className,
       )}
@@ -37,7 +37,7 @@ export function KpiStrip({ items, className }: { items: Kpi[]; className?: strin
           bare
           data-tone={k.tone ?? "default"}
           className={cn(
-            "rounded-2xl border border-border bg-surface p-4 lg:rounded-none lg:border-0 lg:bg-transparent lg:px-5 lg:py-[22px]",
+            "rounded-2xl border border-border bg-surface p-4 lg:rounded-none lg:border-0 lg:not-last:border-r lg:border-border lg:bg-transparent lg:px-5 lg:py-[22px]",
             k.hideOnMobile && "max-lg:hidden",
           )}
           label={k.shortLabel ? <><span className="lg:hidden">{k.shortLabel}</span><span className="max-lg:hidden">{k.label}</span></> : k.label}

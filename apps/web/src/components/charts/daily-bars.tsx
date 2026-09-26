@@ -34,7 +34,7 @@ export function DailyBars({ points, label, title = "Daily volume", subtitle = "U
       subtitle={subtitle}
       table={{ columns: [unit === "hour" ? "Hour (UTC)" : "Day (UTC)", label], rows: points.map((p) => [unit === "hour" ? `${p.date.slice(0, 10)} ${p.date.slice(11, 13)}:00` : p.date, usd(p.value)]) }}
     >
-      <div className="flex flex-col gap-2" role="img" aria-label={`${label} per day, latest ${usd(points.at(-1)?.value ?? 0)}`}>
+      <div className="flex flex-col gap-2" role="img" aria-label={`${label} per ${unit === "hour" ? "hour" : "day"}, latest ${usd(points.at(-1)?.value ?? 0)}`}>
         <div className="flex items-end gap-2 border-b border-border sm:gap-0" style={{ height }}>
           {points.map((p, i) => (
             <div key={p.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5" title={`${unit === "hour" ? `${p.date.slice(0, 10)} ${p.date.slice(11, 13)}:00 UTC` : `${weekday(p.date)} ${p.date}`}: ${usd(p.value)}`}>

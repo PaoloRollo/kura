@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { count, desc, inArray } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
+import { useIsFetching } from "@tanstack/react-query";
 import { useAttributes, useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
 import { useNow } from "@/hooks/use-now";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
@@ -72,8 +73,12 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const mapped = cardRows.filter((c) => c.state === "sharded" || c.state === "auctioning");
   const attributes = useAttributes(cardRows.filter((c) => c.state !== "released").map((c) => c.scryfallId));
   const markets = useMarketPrices(mapped.map((c) => c.id));
+  // useMarketPrices leaves a card out until its batch arrives; wait for it (while it is fetching) so the premiums panel
+  // does not flash its "no market price" note. A failed batch stops fetching and the panel degrades instead.
+  const pricesFetching = useIsFetching({ queryKey: ["card-prices"] }) > 0;
+  const pricesPending = pricesFetching && mapped.some((c) => !markets.has(c.id.toString()));
 
-  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || block == null;
+  const isLoading = cards.isLoading || shardings.isLoading || active.isLoading || activities.isLoading || fees.isLoading || collectors.isLoading || pricesPending || block == null;
   const view = isLoading || block == null ? null : analyticsView({
     cards: cardRows,
     shardings: shardings.data ?? [],

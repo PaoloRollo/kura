@@ -10,8 +10,10 @@ import { ChartFrame } from "./chart-frame";
 export type TreemapItem = {
   id: string;
   name: string;
-  /** Implied value, USD. */
+  /** Implied value, USD; the market value when `sizedByMarket`. */
   value: number;
+  /** No implied value (n/a): the tile is sized by the market value instead. */
+  sizedByMarket?: boolean;
   /** Premium to the Scryfall price as a fraction (0.096 = +9.6%); null when there is no market price. */
   premium: number | null;
   /** `/app/cards/[id]?tab=analytics`. */
@@ -144,7 +146,7 @@ export function MarketTreemap({ items, height = 360, title = "Market map", subti
       title={title}
       subtitle={subtitle}
       aside={<Gradient />}
-      table={{ columns: ["Card", "Implied value", "Premium"], rows: sorted.map((i) => [i.name, usd(i.value), premiumLabel(i.premium)]) }}
+      table={{ columns: ["Card", "Value", "Premium"], rows: sorted.map((i) => [i.name, i.sizedByMarket ? `${usd(i.value)} (market)` : usd(i.value), premiumLabel(i.premium)]) }}
     >
       <div ref={ref} className="relative -m-0.5" style={{ height: height + 4 }}>
         {sorted.length === 0 && <p className="py-10 text-center text-[12px] text-muted-foreground">No cards in the vault yet</p>}
