@@ -208,8 +208,9 @@ export function useTopHolding(address: string | null): TopHolding {
   if (!top || !sharding) return null;
   const meta = metas.get(sharding.cardId);
   const card = meta ? meta.name.replace(/ \([^)]*\) #\d+$/, "") : `card #${sharding.cardId}`;
+  // A bought-out sharding's shards are only a payout claim now: no share of the card to show.
   const total = BigInt(sharding.totalShards) * 10n ** 18n;
-  const pct = total > 0n ? `${(Number((top.balance * 10_000n) / total) / 100).toFixed(1)}%` : "";
+  const pct = sharding.redeemer ? "payout due" : total > 0n ? `${(Number((top.balance * 10_000n) / total) / 100).toFixed(1)}%` : "";
   return { card, shards: shardsFixed(top.balance, top.balance % 10n ** 18n === 0n ? 0 : 1), pct };
 }
 
