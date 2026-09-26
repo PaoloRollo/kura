@@ -90,11 +90,12 @@ The vendor and the appraiser get write rights to specific record keys on specifi
 
 | Contract | Address |
 |---|---|
-| CardVault (ERC-721) | [`0xEC598d41513A15Bb17D4FAeF5e127aB47A54f1B4`](https://sepolia.etherscan.io/address/0xEC598d41513A15Bb17D4FAeF5e127aB47A54f1B4) |
-| CardNames (ENSv2 adapter) | [`0x93f5A4c05A6Ba8f785463efD3C15B34c72C63c49`](https://sepolia.etherscan.io/address/0x93f5A4c05A6Ba8f785463efD3C15B34c72C63c49) |
-| BidGateHook (CCA validation hook) | [`0x572E7C7001Cc48fB18015325cF97F660056adA7E`](https://sepolia.etherscan.io/address/0x572E7C7001Cc48fB18015325cF97F660056adA7E) |
-| `kura.eth` registry (ENSv2 UserRegistry) | [`0xB995ae648F54033DD955E34548a46AF9a8F083A0`](https://sepolia.etherscan.io/address/0xB995ae648F54033DD955E34548a46AF9a8F083A0) |
-| `kura.eth` resolver (ENSv2 PermissionedResolver) | [`0xf6639887bF239c448c73E787a1F07E98d2af526c`](https://sepolia.etherscan.io/address/0xf6639887bF239c448c73E787a1F07E98d2af526c) |
+| CardVault (ERC-721) | [`0x62FB23ec64994F658E9DD4E0FC223DdF8a7D62c2`](https://sepolia.etherscan.io/address/0x62FB23ec64994F658E9DD4E0FC223DdF8a7D62c2) |
+| ShardMarket (Uniswap v4 hook, seeds and holds each card's pool) | [`0x6812fA7Dd04108cf39D0205BA52E5665Ca40A8c0`](https://sepolia.etherscan.io/address/0x6812fA7Dd04108cf39D0205BA52E5665Ca40A8c0) |
+| CardNames (ENSv2 adapter) | [`0x0CE01d29746f65360c4e0ad6a3644D66Cc2b8c0D`](https://sepolia.etherscan.io/address/0x0CE01d29746f65360c4e0ad6a3644D66Cc2b8c0D) |
+| BidGateHook (CCA validation hook) | [`0x747190Bf3BC832f98326728ae778E954B1E7CE1e`](https://sepolia.etherscan.io/address/0x747190Bf3BC832f98326728ae778E954B1E7CE1e) |
+| `kura.eth` registry (ENSv2 UserRegistry) | [`0xc565c77715671BF6b43A69E7CdBa24c822Cc6400`](https://sepolia.etherscan.io/address/0xc565c77715671BF6b43A69E7CdBa24c822Cc6400) |
+| `kura.eth` resolver (ENSv2 PermissionedResolver) | [`0x807BDD92fD47579a22E12289C089A55Ee52821aC`](https://sepolia.etherscan.io/address/0x807BDD92fD47579a22E12289C089A55Ee52821aC) |
 
 These roles and external contracts are used by the deployment:
 
