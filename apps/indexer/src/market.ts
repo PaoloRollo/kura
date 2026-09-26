@@ -16,7 +16,9 @@ if (marketEnabled(deployments.shardMarket)) {
     const lpOwner = card?.beneficialOwner
       ?? (await context.client.readContract({ abi: abi.shardMarket, address: event.log.address, functionName: "lpOwnerOf", args: [a.cardId] }));
     const row = seededPoolRow({ ...a, lpOwner, timestamp: event.block.timestamp });
-    await context.db.insert(pools).values(row).onConflictDoNothing();
+    // One row per card: a card bought out and sharded again replaces its earlier sharding's frozen pool with the new one.
+    const { cardId: _, ...fresh } = row;
+    await context.db.insert(pools).values(row).onConflictDoUpdate(fresh);
     await recordActivity(context, event, {
       cardId: a.cardId,
       ...poolOpenedActivity({ lpOwner, poolId: a.poolId, shardToken: a.shardToken, priceUsdcPerShard: row.priceUsdcPerShard, shardAmount: a.shardAmount, usdcAmount: a.usdcAmount }),
