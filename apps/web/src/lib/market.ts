@@ -56,14 +56,17 @@ type Query<T> = { from: (x: never) => Query<T>; where: (x: never) => Query<T>; o
 // Indexer
 
 /** The card's pool row from the indexer, or null when it has none (the auction never graduated, or not yet settled). */
-export async function loadPool(db: Db, cardId: bigint): Promise<PoolRow | null> {
+/**
+ * The card's pool query: at most one row, none when the card has no pool. Returned unexecuted, like every
+ * usePonderQuery queryFn, so the hook can compile it to SQL and keep it live.
+ */
+export function loadPool(db: Db, cardId: bigint): Promise<PoolRow[]> {
   const q = db.select() as Query<PoolRow>;
-  const rows = await q.from(t(schema.pools)).where(t(eq(t(schema.pools.cardId), cardId))).limit(1);
-  return rows[0] ?? null;
+  return q.from(t(schema.pools)).where(t(eq(t(schema.pools.cardId), cardId))).limit(1);
 }
 
-/** The card's latest swaps, newest first. */
-export async function loadSwaps(db: Db, cardId: bigint, limit: number): Promise<SwapRow[]> {
+/** The card's latest swaps query, newest first. Returned unexecuted, like loadPool. */
+export function loadSwaps(db: Db, cardId: bigint, limit: number): Promise<SwapRow[]> {
   const q = db.select() as Query<SwapRow>;
   return q.from(t(schema.swaps)).where(t(eq(t(schema.swaps.cardId), cardId))).orderBy(t(desc(t(schema.swaps.blockNumber)))).limit(limit);
 }

@@ -212,16 +212,22 @@ describe("indexer reads", () => {
     return { db: q as never, calls };
   }
 
-  it("returns the card's pool row, or null when it has none", async () => {
+  // usePonderQuery needs the unexecuted query builder (it compiles it to SQL and subscribes to live updates):
+  // an awaited or wrapped Promise fails at runtime with '"queryFn" must return SQL'.
+  it("builds the card's pool query without executing it: at most one row", async () => {
     const one = fakeDb([pool(LOW)]);
-    expect((await loadPool(one.db, 1n))?.shardToken).toBe(LOW);
+    const q = loadPool(one.db, 1n);
+    expect(q).toBe(one.db);
     expect(one.calls).toContain("limit:1");
-    expect(await loadPool(fakeDb([]).db, 1n)).toBeNull();
+    expect((await q)[0]?.shardToken).toBe(LOW);
+    expect(await loadPool(fakeDb([]).db, 1n)).toEqual([]);
   });
 
-  it("returns the latest swaps up to the limit", async () => {
+  it("builds the latest-swaps query without executing it, up to the limit", async () => {
     const f = fakeDb([{ id: "a" }]);
-    expect(await loadSwaps(f.db, 1n, 50)).toEqual([{ id: "a" }]);
+    const q = loadSwaps(f.db, 1n, 50);
+    expect(q).toBe(f.db);
+    expect(await q).toEqual([{ id: "a" }]);
     expect(f.calls).toContain("limit:50");
   });
 });
