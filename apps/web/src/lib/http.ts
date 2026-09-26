@@ -40,7 +40,11 @@ export function withAuth(handler: Handler) {
       return await handler(req, user);
     } catch (e) {
       if (e instanceof AuthError) return jsonError(e.code, e.message, e.status);
-      if (e instanceof HttpError) return jsonError(e.code, e.message, e.status, e.details);
+      if (e instanceof HttpError) {
+        // Log refusals (code + message only, never request bodies) so 4xx failures are diagnosable.
+        if (e.status >= 400) console.warn(`[api] ${new URL(req.url).pathname} → ${e.status} ${e.code}: ${e.message}`);
+        return jsonError(e.code, e.message, e.status, e.details);
+      }
       console.error(e);
       return jsonError("INTERNAL", "unexpected error", 500);
     }
