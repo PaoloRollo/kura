@@ -3,6 +3,7 @@ import {
   CONDITION_MULTIPLIERS,
   applyMultiplier,
   finishFromDescription,
+  finishOf,
   finishPrice,
   marketPerShard,
   priceSourceLabel,
@@ -27,6 +28,17 @@ describe("finish", () => {
     expect(finishFromDescription("Sol Ring, Foil Collection Promos")).toBe("nonfoil");
     expect(finishFromDescription("Sol Ring, Commander, foil edition")).toBe("nonfoil");
     expect(finishFromDescription("Sol Ring, Commander, Foil")).toBe("foil");
+  });
+
+  it("prices a foil-only printing at the finish it has, the description first", () => {
+    expect(finishOf("Black Lotus, Limited Edition Alpha, foil", { finishes: ["nonfoil", "foil"] })).toBe("foil");
+    expect(finishOf("Sol Ring, Commander Legends, etched", { finishes: ["nonfoil", "etched"] })).toBe("etched");
+    expect(finishOf("Black Lotus, Limited Edition Alpha", { finishes: ["nonfoil", "foil"] })).toBe("nonfoil");
+    expect(finishOf("Some Promo, Judge Gift", { finishes: ["foil"] })).toBe("foil");
+    expect(finishOf(null, { finishes: ["etched", "foil"] })).toBe("foil");
+    expect(finishOf(null, { finishes: ["etched"] })).toBe("etched");
+    expect(finishOf(null, { finishes: [] })).toBe("nonfoil");
+    expect(finishOf(null, null)).toBe("nonfoil");
   });
 
   it("picks the finish's own price and never falls back across finishes", () => {

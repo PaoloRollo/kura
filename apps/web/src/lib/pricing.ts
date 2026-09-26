@@ -42,6 +42,22 @@ export function finishFromDescription(description: string | null | undefined): F
   return "nonfoil";
 }
 
+/**
+ * The finish a card is priced at, the one rule for every price (display, shard wizard, appraisal): the finish its mint
+ * description names (", foil" / ", etched"); otherwise a printing that has no non-foil finish is priced at the finish it
+ * has, foil before etched; everything else is non-foil.
+ */
+export function finishOf(description: string | null | undefined, printing: { finishes?: readonly string[] | null } | null | undefined): Finish {
+  const named = finishFromDescription(description);
+  if (named !== "nonfoil") return named;
+  const f = printing?.finishes;
+  if (f && f.length > 0 && !f.includes("nonfoil")) {
+    if (f.includes("foil")) return "foil";
+    if (f.includes("etched")) return "etched";
+  }
+  return "nonfoil";
+}
+
 /** The price for exactly this finish; never falls back across finishes. */
 export function finishPrice(p: PrintingPrices["prices"], finish: Finish): string | null {
   const v = finish === "foil" ? p.usd_foil : finish === "etched" ? p.usd_etched : p.usd;

@@ -8,7 +8,8 @@ import { appraisals, marketPrices, scryfallCache } from "@/lib/db/schema";
 import { HttpError } from "@/lib/http";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
-import { finishFromDescription, priceSourceLabel, quoteMarketPrice, type Finish, type PriceQuote, type PrintingPrices } from "@/lib/pricing";
+import { finishOf, priceSourceLabel, quoteMarketPrice, type PriceQuote, type PrintingPrices } from "@/lib/pricing";
+import { marketPriceForCard } from "@/lib/market-price";
 import { ScryfallUnavailableError, scryfall as sharedScryfall, type Scryfall, type ScryfallCard } from "@/lib/scryfall";
 import { nowSec, signAppraisal } from "@/lib/signer";
 
@@ -17,75 +18,59 @@ export function computeUsdcPerShard(priceUsd: string, totalShards: number): bigi
   return parseUnits(priceUsd, 6) / BigInt(totalShards);
 }
 
-/**
- * The finish to price (W4): the mint description says foil or etched ("…, foil"); otherwise a printing that has no
- * non-foil finish is priced as the finish it does have. Everything else is non-foil.
- */
-export function resolveFinish(description: string | null | undefined, finishes: readonly string[] | undefined): Finish {
-  const fromDescription = finishFromDescription(description);
-  if (fromDescription !== "nonfoil") return fromDescription;
-  if (finishes && finishes.length > 0 && !finishes.includes("nonfoil")) return finishes.includes("foil") ? "foil" : finishes.includes("etched") ? "etched" : "nonfoil";
-  return "nonfoil";
-}
-
 export type PriceSource = "scryfall" | "snapshot";
 /** A priced card: the quote (lib/pricing's rule), whether it came live or from the cache, and when it was fetched (unix s). */
 export type PriceLookup = { quote: PriceQuote | null; source: PriceSource | null; pricedAt: number | null };
 
-type PrintingSource = {
-  card: (id: string) => Promise<ScryfallCard | null>;
-  printing: (set: string, number: string, lang: string) => Promise<ScryfallCard | null>;
-};
+/** A cached price older than this is no price at all: the appraisal answers NO_PRICE instead. */
+export const SNAPSHOT_MAX_AGE_SEC = 7 * 24 * 60 * 60;
 
-/** Cached printings regardless of age: the fallback while Scryfall is rate limiting or down. */
-async function staleCache(where: SQL): Promise<{ card: ScryfallCard; fetchedAt: Date } | null> {
+type CachedPrinting = { card: ScryfallCard; fetchedAt: Date };
+
+/** A cached printing whatever its age (the fallback while Scryfall is rate limiting or down). */
+async function cached(where: SQL): Promise<CachedPrinting | null> {
   const rows = await getDb().select({ raw: scryfallCache.raw, fetchedAt: scryfallCache.fetchedAt }).from(scryfallCache).where(where).limit(1);
   return rows[0] ? { card: rows[0].raw as ScryfallCard, fetchedAt: rows[0].fetchedAt } : null;
 }
+const cachedById = (id: string) => cached(dbEq(scryfallCache.scryfallId, id));
+const cachedPrinting = (set: string, number: string, lang: string) =>
+  cached(dbAnd(dbEq(scryfallCache.setCode, set), dbEq(scryfallCache.collectorNumber, number), dbEq(scryfallCache.lang, lang))!);
 
-async function quoteFrom(src: PrintingSource, card: { scryfallId: string; condition: string }, description: string | null) {
-  const printing = await src.card(card.scryfallId);
-  if (!printing) return null;
-  return quoteMarketPrice({
-    printing: printing as PrintingPrices,
-    finish: resolveFinish(description, printing.finishes),
-    condition: card.condition,
-    englishPrinting: (set, number) => src.printing(set, number, "en"),
-  });
-}
+const sec = (d: Date) => Math.floor(d.getTime() / 1000);
 
 /**
- * The card's price for an appraisal. Live through the shared Scryfall client (its 24 h cache first); when Scryfall is
- * unavailable, the last cached printing whatever its age, labelled "snapshot" with when it was fetched.
+ * The card's price for an appraisal: `marketPriceForCard` (the card page's rule, one finish rule) through the shared
+ * Scryfall client, `pricedAt` being when the priced printing was fetched. While Scryfall is unavailable, the last cached
+ * printing up to SNAPSHOT_MAX_AGE_SEC old, labelled "snapshot"; older than that, no price.
  */
-export async function lookupPrice(card: { scryfallId: string; condition: string }, description: string | null, client: Scryfall = sharedScryfall()): Promise<PriceLookup> {
+export async function lookupPrice(card: { id: bigint; scryfallId: string; condition: string }, description: string | null, client: Scryfall = sharedScryfall()): Promise<PriceLookup> {
+  const nowS = Math.floor(Date.now() / 1000);
   try {
-    const quote = await quoteFrom({ card: (id) => client.getCard(id), printing: (s, n, l) => client.getPrinting(s, n, l) }, card, description);
-    if (quote?.usd) {
-      const date = new Date().toISOString().slice(0, 10);
-      const column = quote.source.finish === "foil" ? { usdFoil: quote.usd } : quote.source.finish === "nonfoil" ? { usd: quote.usd } : null;
-      if (column) await getDb().insert(marketPrices).values({ scryfallId: card.scryfallId, date, ...column }).onConflictDoNothing().catch(() => undefined);
-    }
-    return { quote, source: quote ? "scryfall" : null, pricedAt: quote ? Math.floor(Date.now() / 1000) : null };
+    const quote = await marketPriceForCard(card, client, { description });
+    if (!quote?.usd) return { quote, source: null, pricedAt: null };
+    const row = await cachedById(quote.source.printingId ?? card.scryfallId).catch(() => null);
+    const date = new Date().toISOString().slice(0, 10);
+    const column = quote.source.finish === "foil" ? { usdFoil: quote.usd } : quote.source.finish === "nonfoil" ? { usd: quote.usd } : null;
+    if (column) await getDb().insert(marketPrices).values({ scryfallId: card.scryfallId, date, ...column }).onConflictDoNothing().catch(() => undefined);
+    return { quote, source: "scryfall", pricedAt: row ? sec(row.fetchedAt) : nowS };
   } catch (e) {
     if (!(e instanceof ScryfallUnavailableError)) throw e;
   }
-  let fetchedAt: Date | null = null;
-  const src: PrintingSource = {
-    card: async (id) => {
-      const hit = await staleCache(dbEq(scryfallCache.scryfallId, id));
-      fetchedAt = hit?.fetchedAt ?? null;
-      return hit?.card ?? null;
+  const own = await cachedById(card.scryfallId);
+  if (!own) return { quote: null, source: null, pricedAt: null };
+  let pricedAt = sec(own.fetchedAt);
+  const quote = await quoteMarketPrice({
+    printing: own.card as PrintingPrices,
+    finish: finishOf(description, own.card),
+    condition: card.condition,
+    englishPrinting: async (set, number) => {
+      const en = await cachedPrinting(set, number, "en");
+      if (en) pricedAt = sec(en.fetchedAt);
+      return en?.card ?? null;
     },
-    printing: async (set, number, lang) => {
-      const rows = await getDb().select({ raw: scryfallCache.raw }).from(scryfallCache)
-        .where(dbAnd(dbEq(scryfallCache.setCode, set), dbEq(scryfallCache.collectorNumber, number), dbEq(scryfallCache.lang, lang))).limit(1);
-      return (rows[0]?.raw as ScryfallCard | undefined) ?? null;
-    },
-  };
-  const quote = await quoteFrom(src, card, description);
-  const at = fetchedAt as Date | null;
-  return { quote, source: quote?.usd ? "snapshot" : null, pricedAt: quote?.usd && at ? Math.floor(at.getTime() / 1000) : null };
+  });
+  if (!quote.usd || nowS - pricedAt > SNAPSHOT_MAX_AGE_SEC) return { quote: null, source: null, pricedAt: null };
+  return { quote, source: "snapshot", pricedAt };
 }
 
 type CardRow = { id: bigint; scryfallId: string; condition: string; shardToken: Address | null; state: string };
@@ -120,17 +105,26 @@ export const defaultDeps: Deps = {
   loadEnsText: async (node, key) =>
     ((await db().select().from(t(schema.ensRecords)).where(and(eq(t(schema.ensRecords.node), node), eq(t(schema.ensRecords.key), key))).limit(1)) as Row<typeof schema.ensRecords>[])[0]?.value ?? null,
   price: (card, description) => lookupPrice(card, description),
-  writeEnsRecord: async (node, usd) => {
-    if (process.env.APPRAISER_WRITE_ENS !== "true") return;
-    const [{ createWalletClient, http }, { privateKeyToAccount }, { sepolia }, { abi }, { addresses }, { serverEnv }] = await Promise.all([
-      import("viem"), import("viem/accounts"), import("viem/chains"), import("@kura/shared"), import("@/lib/chain"), import("@/env"),
-    ]);
-    const account = privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY as Hex);
-    const wallet = createWalletClient({ account, chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) });
-    await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.usd", usd] });
-    await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.at", String(Math.floor(Date.now() / 1000))] });
+  // One signer, one nonce sequence: writes for different cards queue behind each other.
+  writeEnsRecord: (node, usd) => {
+    if (process.env.APPRAISER_WRITE_ENS !== "true") return Promise.resolve();
+    const run = ensQueue.then(() => writeAppraisalText(node, usd));
+    ensQueue = run.catch(() => undefined);
+    return run;
   },
 };
+
+let ensQueue: Promise<unknown> = Promise.resolve();
+
+async function writeAppraisalText(node: Hex, usd: string) {
+  const [{ createWalletClient, http }, { privateKeyToAccount }, { sepolia }, { abi }, { addresses }, { serverEnv }] = await Promise.all([
+    import("viem"), import("viem/accounts"), import("viem/chains"), import("@kura/shared"), import("@/lib/chain"), import("@/env"),
+  ]);
+  const account = privateKeyToAccount(process.env.SIGNER_PRIVATE_KEY as Hex);
+  const wallet = createWalletClient({ account, chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) });
+  await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.usd", usd] });
+  await wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "setText", args: [node, "appraisal.at", String(Math.floor(Date.now() / 1000))] });
+}
 
 export type AppraiseResult = {
   appraisal: { cardId: string; shardToken: Address; usdcPerShard: string; expiresAt: string };
@@ -148,6 +142,49 @@ export type AppraiseResult = {
   /** The auction's clearing price per shard, from clearingPriceQ96 even when the auction did not graduate. */
   clearingUsdcPerShard: string;
 };
+
+/** Re-publish `appraisal.usd` only when the price changed or the record is at least this old. */
+export const ENS_REWRITE_SEC = 60 * 60;
+/** How long a request waits for the ENS write before answering anyway (the write is logged, never retried here). */
+export const ENS_WRITE_TIMEOUT_MS = 5_000;
+
+// Per card: the last value written by this instance (the indexer lags a fresh write) and the write in flight.
+const lastWrite = new Map<string, { usd: string; at: number }>();
+const inFlight = new Map<string, Promise<void>>();
+export function resetAppraisalWritesForTests() {
+  lastWrite.clear();
+  inFlight.clear();
+}
+
+/** Whether `appraisal.usd` needs writing: a different price, or the same one published over ENS_REWRITE_SEC ago. */
+export function needsEnsWrite(current: { usd: string | null; at: number | null }, usd: string, now: number): boolean {
+  if (current.usd == null || Number(current.usd) !== Number(usd)) return true;
+  return current.at == null || now - current.at >= ENS_REWRITE_SEC;
+}
+
+/**
+ * Publishes the appraisal on the card's ENS name (appraisal.usd / appraisal.at), deduplicated per card: skipped while a
+ * write for the card is in flight, and when neither the indexed record nor this instance's last write needs replacing.
+ * Awaited with a short timeout, so a serverless request never leaves the write running unobserved.
+ */
+async function publishAppraisalRecord(id: bigint, node: Hex, usd: string, deps: Deps) {
+  const key = id.toString();
+  if (inFlight.has(key)) return;
+  const now = Math.floor(Date.now() / 1000);
+  const mem = lastWrite.get(key);
+  if (mem && !needsEnsWrite(mem, usd, now)) return;
+  const [cur, at] = await Promise.all([deps.loadEnsText(node, "appraisal.usd"), deps.loadEnsText(node, "appraisal.at")]).catch(() => [null, null] as const);
+  if (!needsEnsWrite({ usd: cur, at: at && /^\d+$/.test(at) ? Number(at) : null }, usd, now)) return;
+  const write = deps.writeEnsRecord(node, usd).then(
+    () => { lastWrite.set(key, { usd, at: now }); },
+    (e) => { console.error("appraise: ENS record write failed", e); },
+  ).finally(() => inFlight.delete(key));
+  inFlight.set(key, write);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((r) => { timer = setTimeout(() => { console.error(`appraise: ENS write for card ${key} still pending after ${ENS_WRITE_TIMEOUT_MS} ms`); r(); }, ENS_WRITE_TIMEOUT_MS); });
+  await Promise.race([write, timeout]);
+  clearTimeout(timer);
+}
 
 /** Signs a 10-minute appraisal of the card's live sharding at the market price per shard. */
 export async function runAppraise(body: { cardId: string }, deps: Deps = defaultDeps): Promise<AppraiseResult> {
@@ -174,7 +211,7 @@ export async function runAppraise(body: { cardId: string }, deps: Deps = default
     conditionMultiplier: String(quote.conditionMultiplier), expiresAt: appraisal.expiresAt, signature,
   });
 
-  if (node) deps.writeEnsRecord(node, quote.adjustedUsd).catch((e) => console.error("appraise: ENS record write failed", e));
+  if (node) await publishAppraisalRecord(id, node, quote.adjustedUsd, deps);
 
   return {
     appraisal: { cardId: id.toString(), shardToken: card.shardToken, usdcPerShard: usdcPerShard.toString(), expiresAt: appraisal.expiresAt.toString() },
