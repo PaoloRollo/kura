@@ -185,7 +185,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
         </CardArtColumn>
         <div className="flex min-w-0 flex-col gap-8">
           <div className="flex flex-col gap-2">
-            <CardHeader card={card} identity={identity} context={context} />
+            <CardHeader card={card} identity={identity} context={context} sharding={c.sharding} block={block} />
             {/* Mobile (yV8eD): the credit line sits under the ENS name; on desktop it is under the art. */}
             <Credit identity={identity} className="lg:hidden" />
           </div>

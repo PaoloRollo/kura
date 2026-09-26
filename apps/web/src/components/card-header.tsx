@@ -4,7 +4,7 @@ import type * as React from "react";
 import { ShieldCheckIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { CardArt, EnsName, Pill, type PillTone } from "@/components/kura";
-import type { CardRow } from "@/hooks/use-card";
+import type { CardRow, ShardingRow } from "@/hooks/use-card";
 import { setRarity } from "@/lib/card-view";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,7 @@ const STATE_PILL: Record<CardRow["state"], { tone: PillTone; label: string }> = 
   sharded: { tone: "sharded", label: "Sharded · settled" },
   released: { tone: "released", label: "Released" },
 };
+const AWAITING_PILL: { tone: PillTone; label: string } = { tone: "neutral", label: "Awaiting settle" };
 
 export type Identity = {
   name: string;
@@ -23,9 +24,19 @@ export type Identity = {
   artist: string | null;
 };
 
-/** Status pill, then neutral "LEA · Rare" and "NM · EN". */
-export function CardPills({ card, identity, className }: { card: Pick<CardRow, "state" | "condition" | "language">; identity: Identity; className?: string }) {
-  const s = STATE_PILL[card.state];
+/**
+ * Status pill, then neutral "LEA · Rare" and "NM · EN". An auction past its end block that isn't settled yet shows
+ * "Awaiting settle" (the explore rule), not "Live auction"; while the block is unknown it stays live.
+ */
+export function CardPills({ card, identity, sharding, block, className }: {
+  card: Pick<CardRow, "state" | "condition" | "language">;
+  identity: Identity;
+  sharding?: Pick<ShardingRow, "endBlock" | "settled"> | null;
+  block?: bigint | null;
+  className?: string;
+}) {
+  const awaiting = card.state === "auctioning" && !!sharding && !sharding.settled && block != null && block >= sharding.endBlock;
+  const s = awaiting ? AWAITING_PILL : STATE_PILL[card.state];
   const sr = setRarity(identity.set, identity.rarity);
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
@@ -40,16 +51,18 @@ export function CardPills({ card, identity, className }: { card: Pick<CardRow, "
  * The right column's head (HisVE): pills, the Fraunces name, the kin ENS name with copy, and a context line. A
  * released card's name shows in muted grey ("name revoked on release").
  */
-export function CardHeader({ card, identity, context, className }: {
+export function CardHeader({ card, identity, context, sharding, block, className }: {
   card: Pick<CardRow, "state" | "condition" | "language" | "ensName">;
   identity: Identity;
   context?: React.ReactNode;
+  sharding?: Pick<ShardingRow, "endBlock" | "settled"> | null;
+  block?: bigint | null;
   className?: string;
 }) {
   const released = card.state === "released";
   return (
     <header className={cn("flex flex-col gap-3", className)}>
-      <CardPills card={card} identity={identity} />
+      <CardPills card={card} identity={identity} sharding={sharding} block={block} />
       <h1 className="font-display text-[40px] leading-[1.05] font-semibold text-text md:text-[56px]">{identity.name}</h1>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-text-2">
         <EnsName name={card.ensName} avatar={false} tone={released ? "text" : "kin"} maxWidthClassName="max-w-[22rem]" className={cn("[&>span:first-child]:text-[15px]", released && "[&>span:first-child]:text-muted-foreground")} />
