@@ -282,7 +282,7 @@ function StatusRow({ icon, children, trailing }: { icon: React.ReactNode; childr
 /** The white QR card with 蔵 in the middle. */
 function PassportQr({ uri }: { uri: string | null }) {
   return (
-    <div className="flex aspect-[352/260] w-full items-center justify-center rounded-2xl bg-white p-5">
+    <div className="flex aspect-[352/260] max-h-[300px] w-full items-center justify-center rounded-2xl bg-white p-5">
       {uri ? (
         <a href={uri} target="_blank" rel="noreferrer" aria-label="Open the Passport check in World App" className="relative block h-full max-h-[220px] aspect-square">
           <QRCodeSVG value={uri} size={220} level="H" bgColor="#ffffff" fgColor="#111111" className="h-full w-full" />
@@ -297,7 +297,7 @@ function PassportQr({ uri }: { uri: string | null }) {
 
 function Notice({ tone, icon, title, body, action }: { tone: "shu" | "neutral"; icon: React.ReactNode; title: string; body?: string; action?: React.ReactNode }) {
   return (
-    <div className={cn("flex aspect-[352/260] w-full flex-col items-center justify-center gap-3 rounded-2xl border p-6 text-center", tone === "shu" ? "border-shu/30 bg-shu-soft" : "border-dashed border-border bg-bg")}>
+    <div className={cn("flex aspect-[352/260] max-h-[300px] w-full flex-col items-center justify-center gap-3 rounded-2xl border p-6 text-center", tone === "shu" ? "border-shu/30 bg-shu-soft" : "border-dashed border-border bg-bg")}>
       <span className={cn("flex size-12 items-center justify-center rounded-full [&_svg]:size-6", tone === "shu" ? "bg-shu/15 text-shu" : "bg-surface-2 text-text-2")}>{icon}</span>
       <div className="flex flex-col gap-1">
         <p className="text-[16px] font-semibold text-text">{title}</p>
@@ -310,7 +310,7 @@ function Notice({ tone, icon, title, body, action }: { tone: "shu" | "neutral"; 
 
 function Verified({ holder }: { holder: string }) {
   return (
-    <div className="flex aspect-[352/260] w-full flex-col items-center justify-center gap-4 rounded-2xl border border-good/40 bg-good-soft p-6 text-center">
+    <div className="flex aspect-[352/260] max-h-[300px] w-full flex-col items-center justify-center gap-4 rounded-2xl border border-good/40 bg-good-soft p-6 text-center">
       <span className="flex size-24 items-center justify-center rounded-full border-2 border-good text-good [&_svg]:size-10">
         <BadgeCheckIcon aria-hidden strokeWidth={1.75} />
       </span>
