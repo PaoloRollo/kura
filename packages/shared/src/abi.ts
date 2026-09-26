@@ -2466,6 +2466,19 @@ export const cardNamesAbi = [
   },
   {
     "type": "function",
+    "name": "partiesGranted",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "registerCard",
     "inputs": [
       {
@@ -5052,7 +5065,7 @@ export const permit2Abi = [
 export const ensResolverAbi = [
   {
     "type": "function",
-    "name": "addr",
+    "name": "getRecordId",
     "inputs": [
       {
         "name": "node",
@@ -5063,113 +5076,11 @@ export const ensResolverAbi = [
     "outputs": [
       {
         "name": "",
-        "type": "address",
-        "internalType": "address payable"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "authorizeAddrRoles",
-    "inputs": [
-      {
-        "name": "toName",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "coinType",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "grant",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "authorizeNameRoles",
-    "inputs": [
-      {
-        "name": "toName",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "roleBitmap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "grant",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "authorizeTextRoles",
-    "inputs": [
-      {
-        "name": "toName",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "key",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "grant",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -5197,12 +5108,36 @@ export const ensResolverAbi = [
   },
   {
     "type": "function",
-    "name": "initialize",
+    "name": "grantSetterRoles",
     "inputs": [
       {
-        "name": "admin",
+        "name": "setter",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hasRoles",
+    "inputs": [
+      {
+        "name": "resource",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "roleBitmap",
@@ -5210,7 +5145,67 @@ export const ensResolverAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "setters",
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasRootRoles",
+    "inputs": [
+      {
+        "name": "roleBitmap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initialize",
+    "inputs": [
+      {
+        "name": "grants",
+        "type": "tuple[]",
+        "internalType": "struct EnsGrant[]",
+        "components": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "roleBitmap",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "calls",
         "type": "bytes[]",
         "internalType": "bytes[]"
       }
@@ -5233,6 +5228,83 @@ export const ensResolverAbi = [
         "name": "results",
         "type": "bytes[]",
         "internalType": "bytes[]"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "multicallWithNodeCheck",
+    "inputs": [
+      {
+        "name": "node",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "calls",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "results",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resolve",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revokeRoles",
+    "inputs": [
+      {
+        "name": "resource",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "roleBitmap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "nonpayable"
@@ -5263,17 +5335,46 @@ export const ensResolverAbi = [
   },
   {
     "type": "function",
-    "name": "setAddr",
+    "name": "roles",
     "inputs": [
       {
-        "name": "node",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "resource",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "addr_",
+        "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setAddress",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "coinType",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "addressBytes",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -5284,9 +5385,9 @@ export const ensResolverAbi = [
     "name": "setText",
     "inputs": [
       {
-        "name": "node",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "name",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "key",
@@ -5303,52 +5404,40 @@ export const ensResolverAbi = [
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "text",
-    "inputs": [
-      {
-        "name": "node",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "key",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
-    "name": "AddrChanged",
+    "name": "AddressUpdated",
     "inputs": [
       {
-        "name": "node",
-        "type": "bytes32",
+        "name": "recordId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
-        "name": "a",
-        "type": "address",
+        "name": "coinType",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint256"
+      },
+      {
+        "name": "addressBytes",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TextChanged",
+    "name": "Linked",
     "inputs": [
+      {
+        "name": "recordId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "node",
         "type": "bytes32",
@@ -5356,7 +5445,26 @@ export const ensResolverAbi = [
         "internalType": "bytes32"
       },
       {
-        "name": "indexedKey",
+        "name": "name",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TextUpdated",
+    "inputs": [
+      {
+        "name": "recordId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "keyHash",
         "type": "string",
         "indexed": true,
         "internalType": "string"
@@ -5438,7 +5546,44 @@ export const ensRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "getParent",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "parent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getResolver",
+    "inputs": [
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSubregistry",
     "inputs": [
       {
         "name": "label",
@@ -5481,17 +5626,48 @@ export const ensRegistryAbi = [
   },
   {
     "type": "function",
-    "name": "initialize",
+    "name": "hasRootRoles",
     "inputs": [
-      {
-        "name": "rootAccount",
-        "type": "address",
-        "internalType": "address"
-      },
       {
         "name": "roleBitmap",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initialize",
+    "inputs": [
+      {
+        "name": "grants",
+        "type": "tuple[]",
+        "internalType": "struct EnsGrant[]",
+        "components": [
+          {
+            "name": "account",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "roleBitmap",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -5543,6 +5719,30 @@ export const ensRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "revokeRootRoles",
+    "inputs": [
+      {
+        "name": "roleBitmap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setParent",
     "inputs": [
       {
@@ -5567,6 +5767,29 @@ export const ensRegistryAbi = [
         "name": "anyId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unsafeTransfer",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -5624,6 +5847,31 @@ export const ensRegistryAbi = [
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ResolverUpdated",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "resolver",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "sender",
