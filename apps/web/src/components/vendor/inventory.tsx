@@ -5,14 +5,16 @@ import { useState } from "react";
 import Link from "next/link";
 import { PackageOpenIcon, ScanLineIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
-import { CardArt, Pill, SearchInput, StatTile, type PillTone } from "@/components/kura";
+import { CardArt, Pill, SearchInput, StatTile } from "@/components/kura";
 import { ReleasePanel } from "@/components/release-panel";
 import { IndexerLoading } from "@/components/sync-state";
 import { Button } from "@/components/ui/button";
 import { useNow } from "@/hooks/use-now";
-import { useAttributes } from "@/hooks/use-explore";
+import { useAttributes, useIndexerBlock } from "@/hooks/use-explore";
 import { useFeeEvents, useShardBalances, useShardings, useVaultCards } from "@/hooks/use-vendor-data";
 import { addresses } from "@/lib/chain";
+import { cardStatus, type CardStatus } from "@/lib/card-status";
+import { currentSharding } from "@/lib/card-view";
 import { money } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -41,18 +43,13 @@ export type InventoryItem = {
   /** Shard holders, for cards on auction or sharded. */
   holders?: number;
   awaiting: boolean;
+  /** lib/card-status, from the card's sharding and the indexer block; derived from `state` alone when absent. */
+  status?: CardStatus;
   /** When a card awaiting handover was redeemed (unix seconds). */
   redeemedAt?: number | null;
 };
 
 export type InventoryStats = { inCustody: number; feesTotal: bigint; feesWeek: bigint; awaiting: number; released: number };
-
-const PILL: Record<CardState, { tone: PillTone; label: string }> = {
-  whole: { tone: "neutral", label: "whole" },
-  auctioning: { tone: "live", label: "auction" },
-  sharded: { tone: "sharded", label: "sharded" },
-  released: { tone: "released", label: "released" },
-};
 
 const EMPTY_TAB: Record<InventoryTab, string> = {
   all: "No cards in the vault yet",
@@ -62,7 +59,7 @@ const EMPTY_TAB: Record<InventoryTab, string> = {
 };
 
 function Row({ item, selected, onHandOver }: { item: InventoryItem; selected: boolean; onHandOver: () => void }) {
-  const pill = PILL[item.state];
+  const pill = item.status ?? cardStatus(item, null, null);
   const released = item.state === "released";
   return (
     <tr className={cn("border-t border-border", selected && "bg-kin-soft/40")} aria-selected={selected || undefined}>
@@ -86,7 +83,7 @@ function Row({ item, selected, onHandOver }: { item: InventoryItem; selected: bo
       </td>
       <td className="py-3.5 pr-4">
         <Pill tone={pill.tone} dot={false} className="font-medium">
-          {pill.label}
+          {pill.label.toLowerCase()}
         </Pill>
       </td>
       <td className="py-3.5 pr-4 font-mono text-[12px] text-text-2">
@@ -241,6 +238,7 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
   const shardings = useShardings();
   const balances = useShardBalances();
   const now = useNow();
+  const block = useIndexerBlock();
   // Names, art and set in one batched attributes request, not one /api/meta call per card.
   const attributes = useAttributes((cards.data ?? []).map((c) => c.scryfallId));
 
@@ -263,6 +261,7 @@ export function Inventory({ tab, onTab }: { tab: InventoryTab; onTab: (tab: Inve
       owner: shardedState ? undefined : c.state === "released" ? c.beneficialOwner : c.ownerOf,
       holders: shardedState ? (holders.get(c.id) ?? 0) : undefined,
       awaiting: awaiting.has(c.id),
+      status: cardStatus(c, currentSharding(c, (shardings.data ?? []).filter((s) => s.cardId === c.id)), block),
       redeemedAt: awaiting.get(c.id),
     };
   });

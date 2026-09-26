@@ -16,3 +16,6 @@ apps/indexer/generated/*.db
 
 # Ponder codegen (regenerated on every run)
 apps/indexer/generated/schema.graphql
+
+# Rehearsal state (scripts/rehearse.ts), per network
+scripts/.rehearse-state.*

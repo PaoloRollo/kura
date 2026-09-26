@@ -22,6 +22,7 @@ export type TickRow = Row<typeof schema.auctionTicks>;
 export type CheckpointRow = Row<typeof schema.checkpoints>;
 export type EnsNameRow = Row<typeof schema.ensNames>;
 export type EnsRecordRow = Row<typeof schema.ensRecords>;
+export type FeeRow = Row<typeof schema.feeEvents>;
 
 type Db = Parameters<Parameters<typeof usePonderQuery>[0]["queryFn"]>[0];
 
@@ -52,8 +53,10 @@ export type CardData = {
   transfers: TransferRow[];
   bids: BidRow[];
   ticks: TickRow[];
-  /** The current auction's checkpoints, oldest first. */
+  /** The current auction's checkpoints, oldest first (the latest sharding's once the card is whole again, for its history). */
   checkpoints: CheckpointRow[];
+  /** Fees the vault took from this card (sales and buyouts), oldest first. */
+  fees: FeeRow[];
   ensNode: `0x${string}` | null;
   ensName: EnsNameRow | null;
   ensRecords: EnsRecordRow[];
@@ -62,6 +65,11 @@ export type CardData = {
   shardingsLoading?: boolean;
   /** The current shard token's balances haven't loaded yet: `myBalance` 0 means "not known", not "holds none". */
   holdersLoading?: boolean;
+  /** These queries haven't loaded yet: empty means "not known", not "none" (the Analytics tab shows skeletons). */
+  checkpointsLoading?: boolean;
+  bidsLoading?: boolean;
+  feesLoading?: boolean;
+  transfersLoading?: boolean;
 };
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -89,7 +97,8 @@ export function useCard(id: bigint): CardData {
   // Null once the card is whole again: a bought-out sharding's holders and auction are history (see lastBuyout).
   const current = currentSharding(row, allShardings);
   const token = (current?.shardToken ?? ZERO_ADDRESS) as `0x${string}`;
-  const auction = (current?.auction ?? ZERO_ADDRESS) as `0x${string}`;
+  // The latest sharding's auction after a buyout: the Analytics tab charts its history. Live panels only read it with `sharding`.
+  const auction = ((current ?? allShardings[0])?.auction ?? ZERO_ADDRESS) as `0x${string}`;
   const tokens = allShardings.length > 0 ? allShardings.map((s) => s.shardToken) : [ZERO_ADDRESS as `0x${string}`];
   const tokensKey = tokens.join(",");
 
@@ -119,6 +128,9 @@ export function useCard(id: bigint): CardData {
       (db: Db) => db.select().from(t(schema.checkpoints)).where(eq(t(schema.checkpoints.auction), auction)).orderBy(asc(t(schema.checkpoints.blockNumber))) as Promise<CheckpointRow[]>,
       [auction],
     ),
+  });
+  const fees = usePonderQuery({
+    queryFn: useCallback((db: Db) => db.select().from(t(schema.feeEvents)).where(eq(t(schema.feeEvents.cardId), id)).orderBy(asc(t(schema.feeEvents.blockNumber))) as Promise<FeeRow[]>, [id]),
   });
   const names = usePonderQuery({
     queryFn: useCallback((db: Db) => db.select().from(t(schema.ensNames)).where(eq(t(schema.ensNames.cardId), id)).limit(1) as Promise<EnsNameRow[]>, [id]),
@@ -160,11 +172,16 @@ export function useCard(id: bigint): CardData {
     bids: bids.data ?? [],
     ticks: ticks.data ?? [],
     checkpoints: checkpoints.data ?? [],
+    fees: fees.data ?? [],
     ensNode,
     ensName: names.data?.[0] ?? null,
     ensRecords: ensRecords.data ?? [],
     isLoading: card.isLoading,
     shardingsLoading: shardingRows.isLoading,
     holdersLoading: shardingRows.isLoading || (!!current && holders.isLoading),
+    checkpointsLoading: shardingRows.isLoading || checkpoints.isLoading,
+    bidsLoading: bids.isLoading,
+    feesLoading: fees.isLoading,
+    transfersLoading: shardingRows.isLoading || transfers.isLoading,
   };
 }

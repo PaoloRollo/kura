@@ -2,7 +2,7 @@
 
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import { CardLoading, CardNotFound, identityOf } from "@/components/card-page-view";
+import { CardLoading, CardNotFound, identityOf } from "@/components/card-page-parts";
 import { MobileNav } from "@/components/mobile-nav";
 import { RedeemPage } from "@/components/redeem-panel";
 import { PayoutClaimedView, RedeemedView, showVaultSuccess, useVaultSuccess } from "@/components/vault-success";

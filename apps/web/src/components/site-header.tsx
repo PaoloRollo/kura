@@ -16,6 +16,7 @@ import {
   WalletIcon,
 } from "lucide-react";
 import { BarChip, TabBar, TopBar, type NavItem } from "@/components/kura";
+import { NotificationsBell } from "@/components/notifications-panel";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -29,6 +30,7 @@ import { useQuery } from "@tanstack/react-query";
 import { erc20Abi, type Address } from "viem";
 import { useDisplayName } from "@/hooks/use-handles";
 import { useKuraUser } from "@/hooks/use-kura-user";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { addresses, publicClient } from "@/lib/chain";
 import { usePayoutBalance } from "@/hooks/use-vendor-data";
 import { usdc } from "@/lib/format";
@@ -144,6 +146,7 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
   const tabRoot = role === "collector" && signedIn && ["/app", "/app/portfolio", "/app/vault", "/app/profile"].includes(bare);
   const tabs = showNav && !fullScreenStep && !detail ? TABS[role] : [];
   useEffect(() => recordNavigation(bare), [bare]);
+  const desktop = useMediaQuery("(min-width: 768px)");
   return (
     <>
       <TopBar
@@ -157,6 +160,9 @@ function Header({ role, path }: { role: "vendor" | "collector"; path: string | n
           signedIn && address ? (
             <>
               {role === "vendor" && isVendor && <FeesChip />}
+              {/* RWhQ9: the bell sits before the USDC chip; desktop only (no mobile screen has it), mounted only there so
+                  its queries don't run on mobile. */}
+              {role === "collector" && desktop && <NotificationsBell address={address} className="max-md:hidden" />}
               {role === "collector" && <UsdcChip address={address} />}
               <WalletChip address={address} role={isVendor ? "vendor" : undefined} onLogout={logout} />
             </>

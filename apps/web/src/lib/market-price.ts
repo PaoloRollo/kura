@@ -3,10 +3,10 @@ import { and, eq } from "@ponder/client";
 import { finishOf, quoteMarketPrice, type PriceQuote } from "@/lib/pricing";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
-import { scryfall as sharedScryfall, type Scryfall } from "@/lib/scryfall";
+import { scryfall as sharedScryfall, type Scryfall, type ScryfallCard } from "@/lib/scryfall";
 
 /** The card's mint description (its ENS `description` record), which carries ", foil" for foils. */
-async function mintDescription(cardId: bigint): Promise<string | null> {
+export async function mintDescription(cardId: bigint): Promise<string | null> {
   const db = ponderServer().db;
   const names = (await db.select().from(t(schema.ensNames)).where(eq(t(schema.ensNames.cardId), cardId)).limit(1)) as Row<typeof schema.ensNames>[];
   const node = names[0]?.node;
@@ -20,14 +20,16 @@ async function mintDescription(cardId: bigint): Promise<string | null> {
  * The market price quote for a vault card (lib/pricing's rule): its printing's Scryfall price for its finish (finishOf),
  * the English printing as fallback, times the condition multiplier. Null when the card or its printing is unknown.
  * `description`: the mint description when the caller already has it (undefined looks it up in the indexer).
+ * `fresh`: read Scryfall past its 24h cache (the daily snapshot cron). `printing`: the card's printing when the caller
+ * already fetched it (the cron snapshots it first), so it isn't fetched twice.
  */
 export async function marketPriceForCard(
   card: { id: bigint; scryfallId: string; condition: string },
   scryfall: Scryfall = sharedScryfall(),
-  opts: { description?: string | null } = {},
+  opts: { description?: string | null; fresh?: boolean; printing?: ScryfallCard | null } = {},
 ): Promise<PriceQuote | null> {
   const [printing, description] = await Promise.all([
-    scryfall.getCard(card.scryfallId),
+    opts.printing !== undefined ? opts.printing : scryfall.getCard(card.scryfallId, { fresh: opts.fresh }),
     opts.description !== undefined ? opts.description : mintDescription(card.id),
   ]);
   if (!printing) return null;
@@ -35,6 +37,6 @@ export async function marketPriceForCard(
     printing,
     finish: finishOf(description, printing),
     condition: card.condition,
-    englishPrinting: (set, number) => scryfall.getPrinting(set, number, "en"),
+    englishPrinting: (set, number) => scryfall.getPrinting(set, number, "en", { fresh: opts.fresh }),
   });
 }

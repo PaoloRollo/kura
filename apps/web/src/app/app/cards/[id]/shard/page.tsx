@@ -5,7 +5,7 @@ import { CheckIcon, GavelIcon } from "lucide-react";
 import type { Address, Hex, TransactionReceipt } from "viem";
 import { abi } from "@kura/shared";
 import { notify } from "@/components/kura";
-import { CardLoading, CardNotFound } from "@/components/card-page-view";
+import { CardLoading, CardNotFound } from "@/components/card-page-parts";
 import { ShardWizard, useUrlStepNav } from "@/components/shard-wizard";
 import { TxStepper, describeTxError } from "@/components/tx-stepper";
 import { useCard } from "@/hooks/use-card";

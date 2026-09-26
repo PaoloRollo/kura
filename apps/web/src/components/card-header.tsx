@@ -3,18 +3,13 @@
 import type * as React from "react";
 import { ShieldCheckIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
-import { CardArt, EnsName, Pill, type PillTone } from "@/components/kura";
+import { CardArt, EnsName, Pill } from "@/components/kura";
 import type { CardRow, ShardingRow } from "@/hooks/use-card";
 import { setRarity } from "@/lib/card-view";
+import { cardStatus } from "@/lib/card-status";
 import { cn } from "@/lib/utils";
 
-const STATE_PILL: Record<CardRow["state"], { tone: PillTone; label: string }> = {
-  whole: { tone: "neutral", label: "Whole" },
-  auctioning: { tone: "live", label: "Live auction" },
-  sharded: { tone: "sharded", label: "Sharded · settled" },
-  released: { tone: "released", label: "Released" },
-};
-const AWAITING_PILL: { tone: PillTone; label: string } = { tone: "neutral", label: "Awaiting settle" };
+type StatusSharding = Pick<ShardingRow, "endBlock" | "settled"> & { graduated?: boolean | null };
 
 export type Identity = {
   name: string;
@@ -25,18 +20,17 @@ export type Identity = {
 };
 
 /**
- * Status pill, then neutral "LEA · Rare" and "NM · EN". An auction past its end block that isn't settled yet shows
- * "Awaiting settle" (the explore rule), not "Live auction"; while the block is unknown it stays live.
+ * Status pill (lib/card-status: Live, Ended · awaiting settle, Ended · sold, Ended · reserve not met), then neutral
+ * "LEA · Rare" and "NM · EN". While the block is unknown a live auction stays live.
  */
 export function CardPills({ card, identity, sharding, block, className }: {
   card: Pick<CardRow, "state" | "condition" | "language">;
   identity: Identity;
-  sharding?: Pick<ShardingRow, "endBlock" | "settled"> | null;
+  sharding?: StatusSharding | null;
   block?: bigint | null;
   className?: string;
 }) {
-  const awaiting = card.state === "auctioning" && !!sharding && !sharding.settled && block != null && block >= sharding.endBlock;
-  const s = awaiting ? AWAITING_PILL : STATE_PILL[card.state];
+  const s = cardStatus(card, sharding, block);
   const sr = setRarity(identity.set, identity.rarity);
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
@@ -55,7 +49,7 @@ export function CardHeader({ card, identity, context, sharding, block, className
   card: Pick<CardRow, "state" | "condition" | "language" | "ensName">;
   identity: Identity;
   context?: React.ReactNode;
-  sharding?: Pick<ShardingRow, "endBlock" | "settled"> | null;
+  sharding?: StatusSharding | null;
   block?: bigint | null;
   className?: string;
 }) {
@@ -72,15 +66,21 @@ export function CardHeader({ card, identity, context, sharding, block, className
   );
 }
 
-/** The Holders / Activity tabs' compact header: thumb, name, then `ens · state · N shards` in kin mono. */
-export function CompactHeader({ card, identity, shards }: { card: Pick<CardRow, "state" | "ensName">; identity: Identity; shards: number | null }) {
+/** The Holders / Activity tabs' compact header: thumb, name, then `ens · status · N shards` in kin mono. */
+export function CompactHeader({ card, identity, shards, sharding, block }: {
+  card: Pick<CardRow, "state" | "ensName">;
+  identity: Identity;
+  shards: number | null;
+  sharding?: StatusSharding | null;
+  block?: bigint | null;
+}) {
   return (
     <header className="flex items-center gap-5">
       {identity.image ? <CardArt src={identity.image} alt={identity.name} className="w-14 shrink-0 rounded-[4px]" /> : <div className="aspect-[63/88] w-14 rounded-[4px] bg-surface-2" />}
       <div className="flex min-w-0 flex-col gap-1">
         <h1 className="truncate font-display text-[28px] font-semibold text-text md:text-[34px]">{identity.name}</h1>
         <p className="truncate font-mono text-[12px] text-kin">
-          {[card.ensName, card.state, shards != null ? `${shards} shards` : null].filter(Boolean).join(" · ")}
+          {[card.ensName, cardStatus(card, sharding, block).short, shards != null ? `${shards} shards` : null].filter(Boolean).join(" · ")}
         </p>
       </div>
     </header>

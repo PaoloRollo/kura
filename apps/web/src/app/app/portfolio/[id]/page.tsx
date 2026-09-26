@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { CardLoading, CardNotFound } from "@/components/card-page-view";
+import { CardLoading, CardNotFound } from "@/components/card-page-parts";
 import { MyShardsView } from "@/components/my-shards-view";
 import { useCard } from "@/hooks/use-card";
 import { useIndexerBlock } from "@/hooks/use-explore";

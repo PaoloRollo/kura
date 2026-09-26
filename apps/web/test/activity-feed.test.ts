@@ -75,13 +75,13 @@ describe("buildFeed", () => {
 
   it("writes each kind's row text in the right units", () => {
     const d = (kind: string) => text(feed.find((r) => r.kind === kind)!.detail);
-    expect(d("bid")).toBe("$3,424 up to $1,760");
+    expect(d("bid")).toBe("$3,424.00 up to $1,760.00");
     expect(d("exit")).toBe("filled 2.0 shards · refund $12.50");
     expect(d("claim")).toBe("2.0 shards");
     expect(d("shard")).toBe("16 shards · 3 for sale · 1 week");
-    expect(d("settle")).toBe("raised $5,136 · fee $128.40");
-    expect(d("redeem")).toBe("buyout $1,712/shard · paid $5,136");
-    expect(d("payout")).toBe("$2,568 for 1.5 shards");
+    expect(d("settle")).toBe("raised $5,136.00 · fee $128.40");
+    expect(d("redeem")).toBe("buyout $1,712.00/shard · paid $5,136.00");
+    expect(d("payout")).toBe("$2,568.00 for 1.5 shards");
     expect(d("named")).toBe("black-lotus-lea-1.kura.eth");
     expect(d("mint")).toBe(`to<${PAOLO}>`);
     expect(text(feed.find((r) => r.kind === "mint")!.who)).toBe(`vendor<${VENDOR}>`);
@@ -137,8 +137,8 @@ describe("pagination", () => {
     expect(pageWindow(9, 9)).toEqual([1, "gap", 7, 8, 9]);
   });
 
-  it("formats whole dollars without cents", () => {
-    expect(usd(1712n * U)).toBe("$1,712");
+  it("formats every amount with cents", () => {
+    expect(usd(1712n * U)).toBe("$1,712.00");
     expect(usd(128_400_000n)).toBe("$128.40");
   });
 });

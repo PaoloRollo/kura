@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { AddressName } from "@/components/address-name";
 import { RedemptionMeter, StatTile } from "@/components/kura";
-import { ago, pct, type HolderRow, type HoldersView, type Since } from "@/lib/card-view";
+import { ago, pct, toClaimColor, type HolderRow, type HoldersView, type Since, type ToClaimRow } from "@/lib/card-view";
 import { money, shardsFixed } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** The muted chip on a winning bidder whose shards are still in the auction. */
+const ToClaimChip = () => <span className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground">To claim</span>;
 
 const Name = ({ address, className }: { address: string; className?: string }) => (
   <AddressName address={address} avatar={false} copyable={false} maxWidthClassName="max-w-[12rem]" className={className} />
@@ -52,11 +55,11 @@ export function HoldersList({ view, now, whole, buyout }: {
       </div>
     );
   }
-  const { rows, top } = view;
+  const { rows, top, toClaim, holderCount } = view;
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile className={TILE} label="Holders" value={`${rows.length} wallet${rows.length === 1 ? "" : "s"}`} />
+        <StatTile className={TILE} label="Holders" value={`${holderCount} wallet${holderCount === 1 ? "" : "s"}`} />
         <StatTile
           className={TILE}
           label="Top holder"
@@ -81,10 +84,16 @@ export function HoldersList({ view, now, whole, buyout }: {
             {rows.map((r, i) => (
               <HolderTr key={r.holder} row={r} rank={i + 1} now={now} />
             ))}
+            {toClaim.map((r, i) => (
+              <ToClaimTr key={`claim-${r.holder}`} row={r} rank={rows.length + i + 1} color={toClaimColor(rows.length + i)} />
+            ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[12px] text-text-2">The auction contract and the vault are excluded. Redemption needs one holder at 80% or more.</p>
+      <p className="text-[12px] text-text-2">
+        The auction contract and the vault are excluded. Redemption needs one holder at 80% or more.
+        {toClaim.length > 0 && " To claim: shards won at auction, still in the auction contract until the bidder claims them (estimated at the clearing until the bid exits)."}
+      </p>
     </div>
   );
 }
@@ -111,6 +120,32 @@ function HolderTr({ row, rank, now }: { row: HolderRow; rank: number; now: numbe
       </td>
       <td className="px-3 py-3.5 font-mono text-text">{row.value == null ? "n/a" : money(row.value, 0)}</td>
       <td className="px-5 py-3.5 text-[12px] whitespace-nowrap text-text-2"><SinceCell since={row.since} now={now} /></td>
+    </tr>
+  );
+}
+
+function ToClaimTr({ row, rank, color }: { row: ToClaimRow; rank: number; color: string }) {
+  return (
+    <tr className="border-b border-border text-text-2 last:border-0" data-to-claim>
+      <td className="px-5 py-3.5 text-muted-foreground">{rank}</td>
+      <td className="px-3 py-3.5">
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: color }} />
+          <Name address={row.holder} />
+          <ToClaimChip />
+        </span>
+      </td>
+      <td className="px-3 py-3.5 font-mono">{shardsFixed(row.balance)}</td>
+      <td className="px-3 py-3.5">
+        <span className="flex items-center gap-3">
+          <span className="h-1.5 w-full max-w-[260px] min-w-[120px] overflow-hidden rounded-full bg-bg">
+            <span className="block h-full rounded-full" style={{ width: `${row.share * 100}%`, background: color }} />
+          </span>
+          <span className="w-12 font-mono text-[12px]">{pct(row.share)}</span>
+        </span>
+      </td>
+      <td className="px-3 py-3.5 font-mono">{row.value == null ? "n/a" : money(row.value, 0)}</td>
+      <td className="px-5 py-3.5 text-[12px] whitespace-nowrap">won at auction</td>
     </tr>
   );
 }
@@ -155,7 +190,11 @@ export function OwnershipSummary({ view, owner, className }: { view: HoldersView
         {whole ? (
           <OwnershipDonut segments={[{ share: 1, color: "var(--kura-kin)" }]} center="100%" sub="one owner" />
         ) : (
-          <OwnershipDonut segments={view.rows.map((r) => ({ share: r.share, color: r.color }))} center={top ? `${Math.round(top.share * 100)}%` : "0%"} sub="top holder" />
+          <OwnershipDonut
+            segments={[...view.rows.map((r) => ({ share: r.share, color: r.color })), ...view.toClaim.map((r, i) => ({ share: r.share, color: toClaimColor(view.rows.length + i) }))]}
+            center={top ? `${Math.round(top.share * 100)}%` : "0%"}
+            sub="top holder"
+          />
         )}
         <ul className="flex min-w-0 flex-1 flex-col gap-3">
           {whole && owner && (
@@ -170,7 +209,13 @@ export function OwnershipSummary({ view, owner, className }: { view: HoldersView
               <span className="font-mono text-[13px] whitespace-nowrap text-text-2">{shardsFixed(r.balance)} · {pct(r.share)}</span>
             </li>
           ))}
-          {!whole && view.rows.length === 0 && <li className="text-[13px] text-text-2">No holders yet: every shard is still in the auction.</li>}
+          {!whole && view.toClaim.slice(0, Math.max(0, 6 - rows.length)).map((r, i) => (
+            <li key={`claim-${r.holder}`} className="flex items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-2.5"><span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: toClaimColor(view.rows.length + i) }} /><Name address={r.holder} /><ToClaimChip /></span>
+              <span className="font-mono text-[13px] whitespace-nowrap text-text-2">{shardsFixed(r.balance)} · {pct(r.share)}</span>
+            </li>
+          ))}
+          {!whole && view.rows.length === 0 && view.toClaim.length === 0 && <li className="text-[13px] text-text-2">No holders yet: every shard is still in the auction.</li>}
         </ul>
       </div>
       {!whole && (

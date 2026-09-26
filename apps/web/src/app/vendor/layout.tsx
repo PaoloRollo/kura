@@ -7,9 +7,11 @@ import { GateCard } from "@/components/gate-card";
 import { SiteHeader, shortAddress } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { useKuraUser } from "@/hooks/use-kura-user";
+import { useLiveEvents } from "@/hooks/use-live-events";
 
 export default function VendorLayout({ children }: { children: React.ReactNode }) {
   const { ready, authenticated, login, logout, isVendor, address } = useKuraUser();
+  useLiveEvents();
   return (
     <div className="min-h-screen">
       <SiteHeader role="vendor" />

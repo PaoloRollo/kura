@@ -47,7 +47,7 @@ describe("AuctionPanel after the end block", () => {
   it("shows a neutral outcome with a plain Settle before the auction is settled", async () => {
     renderPanel(ended({ settled: false, graduated: true, mine: [[4n, 2000, 1760, "open", null]] }), true);
     expect(screen.getByText("Auction ended · settle to finalize the outcome")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText(/\$5,136 raised so far/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/\$5,136\.00 raised so far/)).toBeTruthy());
     expect(screen.getByRole("button", { name: /^Settle$/ })).toBeTruthy();
     expect(screen.queryByText("Auction graduated")).toBeNull();
     expect(screen.queryByText(/Cleared at/)).toBeNull();
@@ -58,7 +58,7 @@ describe("AuctionPanel after the end block", () => {
 
   it("does not call the reserve missed until the settled row says so", async () => {
     renderPanel(ended({ settled: false, graduated: false, mine: [[4n, 2000, 1760, "open", null]] }), false);
-    await waitFor(() => expect(screen.getByText(/\$1,240 raised so far/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/\$1,240\.00 raised so far/)).toBeTruthy());
     expect(screen.queryByText("Reserve not met")).toBeNull();
     expect(screen.queryByRole("button", { name: /Settle and refund/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^Settle$/ })).toBeTruthy();
@@ -67,7 +67,7 @@ describe("AuctionPanel after the end block", () => {
   it("reads the graduated outcome and shards sold from the settled auction", async () => {
     renderPanel(ended({ settled: true, graduated: true, mine: [] }), true);
     expect(screen.getByText("Auction graduated")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("3 of 3 shards sold · $5,136 raised")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("3 of 3 shards sold · $5,136.00 raised")).toBeTruthy());
   });
 
   it("shows exit then claim for a filled bid and treats a zero-fill exit as final", () => {
@@ -81,10 +81,10 @@ describe("AuctionPanel after the end block", () => {
 
   it("offers Take back once the settled row says the reserve was not met", async () => {
     renderPanel(ended({ settled: true, graduated: false, mine: [[4n, 2000, 1760, "open", null]] }), false);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Take back $2,000" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Take back $2,000.00" })).toBeTruthy());
     expect(screen.getByText("refund due")).toBeTruthy();
     expect(screen.getByText("Reserve not met")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("Raised $1,240 of $4,680")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Raised $1,240.00 of $4,680.00")).toBeTruthy());
   });
 
   it("says when I have no bids", () => {

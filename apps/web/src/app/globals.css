@@ -33,11 +33,13 @@
   --kura-s1-soft: #3987e522;
   --kura-s1-fg: #9cc4f5;
   --kura-s2: #d95926;
+  --kura-s2-fg: #f4a07e;
   --kura-s3: #199e70;
   --kura-s4: #c98500;
   --kura-s5: #d55181;
   --kura-s6: #d55181; /* unused in the designs; aliased so s1..s7 stays contiguous */
   --kura-s7: #9085e9;
+  --kura-grid: var(--kura-border); /* chart gridlines; the designs draw almost none */
 
   /* shadcn semantics */
   --background: var(--kura-bg);
@@ -63,6 +65,7 @@
   --chart-3: var(--kura-s3);
   --chart-4: var(--kura-s4);
   --chart-5: var(--kura-s5);
+  --chart-6: var(--kura-s7);
   --radius: 12px;
   --sidebar: var(--kura-surface);
   --sidebar-foreground: var(--kura-text);
@@ -99,11 +102,13 @@
   --color-s1-soft: var(--kura-s1-soft);
   --color-s1-fg: var(--kura-s1-fg);
   --color-s2: var(--kura-s2);
+  --color-s2-fg: var(--kura-s2-fg);
   --color-s3: var(--kura-s3);
   --color-s4: var(--kura-s4);
   --color-s5: var(--kura-s5);
   --color-s6: var(--kura-s6);
   --color-s7: var(--kura-s7);
+  --color-grid: var(--kura-grid);
 
   /* shadcn semantic colours */
   --color-background: var(--background);
@@ -116,6 +121,7 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --color-chart-6: var(--chart-6);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);

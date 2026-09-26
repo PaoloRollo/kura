@@ -12,7 +12,8 @@ vi.mock("@/lib/chain", async (orig) => ({ ...(await orig<object>()), publicClien
 vi.mock("@/components/world-id-gate", () => ({ WorldIdGate: () => <button type="button">Verify with World ID</button>, worldIdErrorMessage: (c: string) => c, worldIdRefusalTitle: () => "Refused" }));
 Object.defineProperty(window, "matchMedia", { value: (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }) });
 
-import { CardNotFound, CardPageView } from "@/components/card-page-view";
+import { CardPageView } from "@/components/card-page-view";
+import { CardNotFound } from "@/components/card-page-parts";
 import { ACTIVITY_LIMIT } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
 import type { CardTab } from "@/lib/card-view";
@@ -38,7 +39,7 @@ describe("CardPageView", () => {
     expect(screen.getByRole("link", { name: /Shard this card/ }).getAttribute("href")).toBe("/app/cards/1/shard");
     expect(screen.getByRole("button", { name: /Collect at the counter/ })).toBeTruthy();
     expect(screen.getByText("You own")).toBeTruthy();
-    expect(screen.getByText("$25,000")).toBeTruthy();
+    expect(screen.getByText("$25,000.00")).toBeTruthy();
     expect(screen.getByText("Scryfall USD · nonfoil · EN printing · NM ×1.00")).toBeTruthy();
   });
 
@@ -65,7 +66,7 @@ describe("CardPageView", () => {
 
   it("shows the live auction context and the on-chain profile with key roles", () => {
     renderCard("auctioning");
-    expect(screen.getByText("Live auction")).toBeTruthy();
+    expect(screen.getByText("Live", { selector: "[data-slot=pill]" })).toBeTruthy();
     expect(screen.getByText("LEA · Rare")).toBeTruthy();
     expect(screen.getByText(/sharded by/)).toBeTruthy();
     const profile = screen.getAllByRole("region", { name: "On-chain profile" })[0]!;
@@ -109,7 +110,23 @@ describe("CardPageView", () => {
     expect(screen.getByText("1 wallet")).toBeTruthy();
     expect(screen.getByText("3.0 shards")).toBeTruthy();
     expect(screen.getByText("can redeem")).toBeTruthy();
-    expect(screen.getByText("black-lotus-lea-1.kura.eth · auctioning · 16 shards")).toBeTruthy();
+    expect(screen.getByText("black-lotus-lea-1.kura.eth · live · 16 shards")).toBeTruthy();
+  });
+
+  it("lists a winning bidder who hasn't claimed as 'to claim', counted but set apart", () => {
+    renderCard("settled-unclaimed", { tab: "holders" });
+    // paolo and x7a3 hold; kenji's 2 shards are still in the auction.
+    expect(screen.getByText("3 wallets")).toBeTruthy();
+    // A settled, graduated auction reads as ended, not "sharded".
+    expect(screen.getByText("black-lotus-lea-1.kura.eth · ended, sold · 16 shards")).toBeTruthy();
+    const row = document.querySelector("tr[data-to-claim]") as HTMLElement;
+    expect(within(row).getByText("To claim")).toBeTruthy();
+    expect(within(row).getByText("kenji.kura.eth")).toBeTruthy();
+    expect(within(row).getByText("2.0")).toBeTruthy();
+    expect(within(row).getByText("$3,424.00")).toBeTruthy();
+    expect(document.querySelectorAll("tr[data-to-claim]")).toHaveLength(1);
+    // Nothing is left unattributed.
+    expect(screen.getByText("0.0 shards")).toBeTruthy();
   });
 
   it("shows a whole card's holders as one owner", () => {
@@ -174,7 +191,7 @@ describe("CardPageView", () => {
   it("shows the bought-out sharding's auction as history", () => {
     renderCard("whole-after-buyout", { tab: "auction" });
     expect(screen.getByText("Past auction · history")).toBeTruthy();
-    expect(screen.getByText("per shard · paid $5,136")).toBeTruthy();
+    expect(screen.getByText("per shard · paid $5,136.00")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open the auction" })).toBeNull();
   });
 

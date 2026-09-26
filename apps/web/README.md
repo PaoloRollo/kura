@@ -42,6 +42,40 @@ output too instead of stubbing it out there.
   zero-address placeholder, and refuses to sign when `SIGNER_PRIVATE_KEY` is not the
   deployment's `signer`.
 
+## Prices, cron and live toasts
+
+- **Price routes** (public, all priced by the one rule in `src/lib/pricing.ts`: the card's finish, the
+  condition multiplier, and the English printing when the card's own printing has no USD price):
+  - `GET /api/cards/[id]/price`: the current quote for one card.
+  - `GET /api/cards/prices?ids=1,2,3`: the same quote for up to 100 cards in one request (Explore, the
+    analytics dashboard); answers are memoised for 45 s (`src/lib/price-memo.ts`).
+  - `GET /api/cards/[id]/market`: the card's daily market price history from `market_prices`, empty until
+    the first cron run.
+- **Daily cron.** `vercel.json` schedules `GET /api/cron/prices` at 03:00 UTC. It writes one `market_prices`
+  row per vault card printing and UTC day. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, so set
+  `CRON_SECRET` in the Vercel project; without it the route answers 401 to everyone.
+  - **ENS appraisals.** With `APPRAISER_WRITE_ENS=true`, the cron also publishes `appraisal.usd` and
+    `appraisal.at` on the ENS name of every sharded card, and every card in a live auction (on purpose: a
+    market reference while it runs), that has a USD price: the whole card's market price at its finish and
+    condition, the value a buyout appraisal publishes. It goes through the buyout's write path in
+    `src/lib/appraise.ts` (`publishAppraisalRecord`: one write queue, a per-card advisory lock with a claim
+    row in `app.ens_appraisal_writes`, the pending nonce with one retry, no send while an appraisal write over
+    two minutes old is unmined with txs pending behind it, and a rewrite only on a price change or after an hour). Whole and released cards are skipped.
+    Per run it writes at most `MAX_ENS_WRITES_PER_RUN` (20) records, none while the signer holds under
+    0.003 ETH, and it stops starting writes after one times out, finds the signer stuck or runs out of funds.
+    It needs `SIGNER_PRIVATE_KEY` (the appraiser; at 1 gwei 0.02 ETH covers about 250–330 writes),
+    `APPRAISER_WRITE_ENS`, `ALCHEMY_HTTP_URL` and `CRON_SECRET` in Vercel. A failed write is logged and
+    counted, never failing the snapshot: the route answers `{ updated, total, appraised, appraisalErrors }`,
+    plus `partial: true` when it stopped at its 50 s budget or left writes for the next run.
+- **Migration.** `drizzle/0004_market_price_etched.sql` adds `market_prices.usd_etched`. Apply it with
+  `pnpm --filter web db:migrate` against the production `DATABASE_URL` before the cron runs; until then
+  every snapshot insert fails. `drizzle/0005_ens_appraisal_writes.sql` adds `app.ens_appraisal_writes`,
+  the ENS write claims; apply it before enabling `APPRAISER_WRITE_ENS`.
+- **Live toasts.** `NEXT_PUBLIC_ALCHEMY_WS_URL` (an Alchemy Sepolia `wss://` URL) lets signed-in pages
+  watch `BidSubmitted`, `AuctionSettled` and `CardRedeemed` and toast them (`src/hooks/use-live-events.ts`).
+  Like the HTTP URL it is baked in at build time and ships to the browser. Without it the toasts are off
+  and everything else still updates through the indexer's live queries.
+
 ## Deploying on Vercel
 
 The web app runs on Vercel; Postgres and the Ponder indexer stay on Railway. Set the Vercel

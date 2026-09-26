@@ -22,7 +22,7 @@ export type PillTone = NonNullable<VariantProps<typeof pillVariants>["tone"]>;
 
 const LABELS: Record<PillTone, string> = {
   live: "Live",
-  sharded: "Sharded",
+  sharded: "Ended · sold",
   redeemable: "Redeemable",
   released: "Released",
   neutral: "Neutral",

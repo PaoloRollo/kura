@@ -3,7 +3,8 @@
 import { use } from "react";
 import { useSearchParams } from "next/navigation";
 import { usePonderStatus } from "@ponder/react";
-import { CardLoading, CardNotFound, CardPageView } from "@/components/card-page-view";
+import { CardPageView } from "@/components/card-page-view";
+import { CardLoading, CardNotFound } from "@/components/card-page-parts";
 import { parseTab, type CardTab } from "@/lib/card-view";
 import { useCard } from "@/hooks/use-card";
 import { useKuraUser } from "@/hooks/use-kura-user";

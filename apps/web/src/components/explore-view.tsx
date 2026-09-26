@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpDownIcon, ChevronDownIcon, CompassIcon, LayoutGridIcon, ListIcon, SearchXIcon, SlidersHorizontalIcon, TimerIcon } from "lucide-react";
 import { AddressName } from "@/components/address-name";
-import { AuctionCard, Button, CardArt, FilterChip, SearchInput, type PillTone } from "@/components/kura";
+import { AuctionCard, Button, CardArt, FilterChip, SearchInput } from "@/components/kura";
+import { cardStatusOf } from "@/lib/card-status";
 import { MobilePageTitle } from "@/components/page-title";
 import { IndexerLoading } from "@/components/sync-state";
 import {
@@ -44,7 +45,8 @@ import {
   type ExploreFilters,
   type ExploreTab,
 } from "@/lib/explore";
-import { countdown, money } from "@/lib/format";
+import { money } from "@/lib/format";
+import { Countdown } from "@/components/countdown";
 import { cn } from "@/lib/utils";
 
 export type ExploreViewProps = ExploreData & {
@@ -59,23 +61,17 @@ export type ExploreViewProps = ExploreData & {
 // ---------------------------------------------------------------------------------------------------------------------
 // Item display
 
-/** "$1,712", or "$17.50" under $100 (the designs show cents only on small prices). */
-function price(x: bigint | null): string {
-  if (x == null) return "n/a";
-  return x < 100_000_000n ? money(x) : money(x, 0);
-}
+/** "$1,712.00", "$0.22", or "n/a" when there's no price yet. */
+const price = (x: bigint | null): string => (x == null ? "n/a" : money(x));
 
-function timeLeft(it: AuctionItem, block: bigint): string {
+function timeLeft(it: AuctionItem): React.ReactNode {
   if (it.status === "settled") return "settled";
   if (it.status === "awaiting") return "ended";
-  return countdown(it.endBlock - block);
+  return <Countdown endBlock={it.endBlock} />;
 }
 
-const STATUS: Record<AuctionItem["status"], { tone: PillTone; label?: string }> = {
-  live: { tone: "live" },
-  awaiting: { tone: "neutral", label: "Awaiting settle" },
-  settled: { tone: "sharded", label: "Settled" },
-};
+/** The pill (lib/card-status): Live, Ended · awaiting settle, then how the settled auction ended. */
+const statusOf = (it: AuctionItem) => cardStatusOf(it.status === "live" ? "live" : it.status === "awaiting" ? "awaiting" : it.graduated === false ? "reserve-not-met" : "sold");
 
 /** A transparent pixel while the art loads (the card keeps its shape). */
 const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -93,7 +89,7 @@ function Premium({ premium, className }: { premium: number | null; className?: s
 }
 
 function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
-  const s = STATUS[it.status];
+  const s = statusOf(it);
   const pct = Math.round(elapsed(it, block) * 100);
   return (
     <AuctionCard
@@ -103,17 +99,18 @@ function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
       set={setLine(it)}
       clearingPrice={price(it.clearing)}
       premium={it.premium != null ? it.premium * 100 : undefined}
-      timeLeft={timeLeft(it, block)}
+      timeLeft={timeLeft(it)}
       progress={elapsed(it, block)}
       status={s.tone}
+      statusLabel={s.label}
       footnote={`${it.forSale} of ${it.totalShards} shards for sale · ${it.status === "live" ? `${pct}% of time elapsed` : it.status === "awaiting" ? "awaiting settle" : it.graduated === false ? "reserve not met" : "settled"}`}
-      aria-label={s.label ? `${it.name}, ${s.label}` : it.name}
+      aria-label={`${it.name}, ${s.label}`}
     />
   );
 }
 
 /** Z6BlV0's compact row (and the desktop list view). */
-function ItemRow({ it, block }: { it: AuctionItem; block: bigint }) {
+function ItemRow({ it }: { it: AuctionItem }) {
   const live = it.status === "live";
   return (
     <li>
@@ -128,7 +125,7 @@ function ItemRow({ it, block }: { it: AuctionItem; block: bigint }) {
         <div className="flex shrink-0 flex-col items-end justify-end">
           <span className={cn("inline-flex items-center gap-1 rounded-sm bg-surface-2 px-2 py-1 font-mono text-[12px]", live ? "text-shu" : "text-text-2")}>
             {live && <TimerIcon aria-hidden className="size-3" />}
-            {timeLeft(it, block)}
+            {timeLeft(it)}
           </span>
         </div>
       </Link>
@@ -472,7 +469,7 @@ export function ExploreView({ items, newCards, block, isLoading, filters: f, onF
     body = (
       <>
         <ul className={cn("flex flex-col gap-3", f.view === "grid" ? "md:hidden" : "md:grid md:grid-cols-2 xl:grid-cols-3")}>
-          {results.map((it) => <ItemRow key={it.auction} it={it} block={head} />)}
+          {results.map((it) => <ItemRow key={it.auction} it={it} />)}
         </ul>
         {f.view === "grid" && (
           <div className="grid grid-cols-2 gap-5 max-md:hidden lg:grid-cols-3 xl:grid-cols-4">

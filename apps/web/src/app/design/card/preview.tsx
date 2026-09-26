@@ -1,11 +1,13 @@
 "use client";
 
+import { CountdownHead } from "@/components/countdown";
 import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleDollarSignIcon } from "lucide-react";
 import { BarChip, EnsName, TopBar } from "@/components/kura";
-import { CardLoading, CardNotFound, CardPageView } from "@/components/card-page-view";
+import { CardPageView } from "@/components/card-page-view";
+import { CardLoading, CardNotFound } from "@/components/card-page-parts";
 import type { CardTab } from "@/lib/card-view";
 import { NAV } from "@/components/site-header";
 import { usePonderStatus } from "@ponder/react";
@@ -13,7 +15,7 @@ import { useCard } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
 import { useKuraUser } from "@/hooks/use-kura-user";
 import { cn } from "@/lib/utils";
-import { FIXTURE_HEAD, HANDLES, PAOLO, PREVIEW_STATES, cardFixture, type PreviewState } from "./fixtures";
+import { FIXTURE_HEAD, HANDLES, PAOLO, PREVIEW_STATES, cardFixture, marketFixture, type PreviewState } from "./fixtures";
 
 /** `live`: the real page body against the live indexer for card `id`, without the /app sign-in gate. */
 function LiveCard({ id, tab, now }: { id: bigint; tab: CardTab; now: number }) {
@@ -45,6 +47,7 @@ export function CardPreview({ state, tab, now, liveId }: { state: PreviewState |
   const href = (t: CardTab) => `/design/card?state=${state}${t === "overview" ? "" : `&tab=${t}`}`;
   return (
     <HandlesFixture.Provider value={live ? null : HANDLES}>
+      <CountdownHead.Provider value={live ? null : { number: FIXTURE_HEAD, timestamp: now }}>
       <div className="min-h-screen">
         <TopBar
           className="max-md:hidden"
@@ -70,9 +73,10 @@ export function CardPreview({ state, tab, now, liveId }: { state: PreviewState |
           {live ? <LiveCard id={liveId} tab={tab} now={now} />
             : state === "loading" ? <CardLoading />
             : state === "notfound" ? <CardNotFound id="999" />
-            : <CardPageView c={c} me={PAOLO} now={now} block={FIXTURE_HEAD} tab={tab} tabHref={href} />}
+            : <CardPageView c={c} me={PAOLO} now={now} block={FIXTURE_HEAD} tab={tab} tabHref={href} market={marketFixture(now)} />}
         </main>
       </div>
+      </CountdownHead.Provider>
     </HandlesFixture.Provider>
   );
 }
