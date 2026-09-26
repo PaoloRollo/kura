@@ -11,8 +11,13 @@ import { vaultSiteUri } from "@/lib/vault-site-uri";
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!/^\d+$/.test(id)) return jsonError("BAD_REQUEST", "id must be an integer", 400);
-  const rows = (await ponderServer().db.select().from(t(schema.cards)).where(eq(t(schema.cards.id), BigInt(id))).limit(1)) as Row<typeof schema.cards>[];
-  const card = rows[0];
+  let card: Row<typeof schema.cards> | undefined;
+  try {
+    card = ((await ponderServer().db.select().from(t(schema.cards)).where(eq(t(schema.cards.id), BigInt(id))).limit(1)) as Row<typeof schema.cards>[])[0];
+  } catch (e) {
+    console.error("meta: indexer unavailable", e);
+    return jsonError("UNAVAILABLE", "card data is temporarily unavailable", 503);
+  }
   if (!card) return jsonError("NOT_FOUND", "unknown card", 404);
   let info;
   try {

@@ -81,6 +81,9 @@ export function SendShardsSheet({ open, onOpenChange, cardName, shardToken, bala
   function close(open: boolean) {
     onOpenChange(open);
     if (!open) {
+      // A later send starts from a fresh balance read, not this one's.
+      startBalance.current = null;
+      hash.current = null;
       setSent(null);
       setTo("");
       setAmount("1.0");

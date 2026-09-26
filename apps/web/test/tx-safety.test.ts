@@ -96,6 +96,18 @@ describe("sendContractTx", () => {
     expect(err.hash).toBeUndefined();
   });
 
+  it("keeps the cause when the unsponsored fallback fails for another reason than gas", async () => {
+    const fallbackErr = new Error("nonce too low");
+    const send = vi.fn(async (_tx: unknown, o: { sponsor: boolean }) => {
+      throw o.sponsor ? new Error("Unable to sign transaction") : fallbackErr;
+    });
+    const err = await sendContractTx(input, deps({ sendTransaction: send })).catch((e) => e);
+    expect(err).toBeInstanceOf(TxError);
+    expect(err.message).not.toBe(NO_GAS_MESSAGE);
+    expect(err.message).toContain("nonce too low");
+    expect(err.cause).toBe(fallbackErr);
+  });
+
   it("refuses clearly when the identity's wallet is not connected", async () => {
     await expect(sendContractTx(input, deps({ wallet: undefined }))).rejects.toThrow(NOT_CONNECTED_MESSAGE);
   });

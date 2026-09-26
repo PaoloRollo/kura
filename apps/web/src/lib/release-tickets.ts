@@ -18,9 +18,13 @@ export type VaultReader = (cardId: bigint) => Promise<VaultCard>;
 
 const erc721 = parseAbi(["function ownerOf(uint256) view returns (address)"]);
 
+let rpcClient: ReturnType<typeof createPublicClient> | null = null;
+/** One RPC client per server process, created on first use (the env is read at request time, not at import). */
+const rpc = () => (rpcClient ??= createPublicClient({ chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) }));
+
 /** The card's vault state and NFT holder, read on-chain now (the indexer can lag a transfer). */
 const liveReader: VaultReader = async (cardId) => {
-  const client = createPublicClient({ chain: sepolia, transport: http(serverEnv().ALCHEMY_HTTP_URL) });
+  const client = rpc();
   const vault = requireDeployed().cardVault;
   const card = (await client.readContract({ address: vault, abi: abi.cardVault, functionName: "cards", args: [cardId] })) as { state: number };
   const state = Number(card.state);

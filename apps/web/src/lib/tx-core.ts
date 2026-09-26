@@ -233,6 +233,7 @@ export type SenderDeps = {
 
 export const SEPOLIA_ID = 11155111;
 export const NO_GAS_MESSAGE = "Gas sponsorship isn't available right now and this wallet has no Sepolia ETH for gas.";
+export const SELF_SEND_FAILED_MESSAGE = "Gas sponsorship isn't available right now, and sending from your wallet failed:";
 export const EXTERNAL_GAS_MESSAGE = "This wallet needs a little Sepolia ETH for gas.";
 export const WRONG_CHAIN_MESSAGE = "Switch your wallet to Sepolia to continue.";
 export const NOT_CONNECTED_MESSAGE = "Your wallet isn't connected. Reconnect it and try again.";
@@ -299,8 +300,11 @@ async function broadcast(wallet: EmbeddedWallet | ExternalWallet, tx: UnsignedTx
     if (!isSponsorUnavailable(sponsorErr)) throw sponsorErr;
     try {
       return { hash: (await wallet.sendTransaction(tx, { sponsor: false })).hash, gas: "self" };
-    } catch {
-      throw new TxError(NO_GAS_MESSAGE, { cause: sponsorErr });
+    } catch (selfErr) {
+      if (isInsufficientFunds(selfErr)) throw new TxError(NO_GAS_MESSAGE, { cause: sponsorErr });
+      // Not a gas problem: say what actually went wrong instead of blaming gas.
+      const reason = selfErr instanceof BaseError ? selfErr.shortMessage : selfErr instanceof Error ? selfErr.message : String(selfErr);
+      throw new TxError(`${SELF_SEND_FAILED_MESSAGE} ${reason}`, { cause: selfErr });
     }
   }
 }
