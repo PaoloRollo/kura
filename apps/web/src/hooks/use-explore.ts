@@ -36,17 +36,23 @@ async function json<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Card attributes (/api/cards/attributes) for many scryfall ids in one call. */
+/** Most ids one /api/cards/attributes request carries (the route's cap). */
+const ATTRIBUTE_BATCH = 100;
+
+/** Card attributes (/api/cards/attributes) for many scryfall ids, one request per 100 ids. */
 export function useAttributes(scryfallIds: readonly string[]): CardAttributesMap {
-  const key = [...new Set(scryfallIds)].sort().join(",");
-  const q = useQuery<CardAttributesMap>({
-    queryKey: ["card-attributes", key],
-    queryFn: () => json(`/api/cards/attributes?ids=${encodeURIComponent(key)}`),
-    enabled: key.length > 0,
-    staleTime: 5 * 60_000,
-    retry: 1,
+  const sorted = [...new Set(scryfallIds)].sort();
+  const batches: string[][] = [];
+  for (let i = 0; i < sorted.length; i += ATTRIBUTE_BATCH) batches.push(sorted.slice(i, i + ATTRIBUTE_BATCH));
+  return useQueries({
+    queries: batches.map((b) => ({
+      queryKey: ["card-attributes", b.join(",")],
+      queryFn: () => json<CardAttributesMap>(`/api/cards/attributes?ids=${encodeURIComponent(b.join(","))}`),
+      staleTime: 5 * 60_000,
+      retry: 1,
+    })),
+    combine: (results) => Object.assign({}, ...results.map((r) => r.data ?? {})) as CardAttributesMap,
   });
-  return q.data ?? {};
 }
 
 /** Most ids one /api/cards/prices request carries (the route's cap). */

@@ -36,6 +36,7 @@ describe("GET /api/cards/[id]/price", () => {
 
   it("rejects bad ids and unknown cards", async () => {
     expect((await call("x")).status).toBe(400);
+    expect((await call("9223372036854775808")).status).toBe(400);
     state.rows = [];
     expect((await call("2")).status).toBe(404);
   });
