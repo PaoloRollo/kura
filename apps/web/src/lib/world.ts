@@ -58,7 +58,10 @@ function credentialOf(response: IdkitResponseLike): Credential | undefined {
   return item.issuer_schema_id === undefined ? undefined : SCHEMA_TO_CREDENTIAL[item.issuer_schema_id];
 }
 
-type WorldVerifyJson = { success?: boolean; nullifier?: string; environment?: string; action?: string; code?: string; detail?: string };
+type WorldVerifyJson = {
+  success?: boolean; nullifier?: string; environment?: string; action?: string; code?: string; detail?: string;
+  results?: { identifier?: string; success?: boolean; code?: string; detail?: string }[];
+};
 
 /** Checks the signal binding locally, forwards the proof to World, and normalises the result. */
 export async function verifyWorld(params: { rpId: string; action: Action; subject: `0x${string}`; idkitResponse: IdkitResponseLike; expectedEnv: string }): Promise<WorldVerifyResult> {
@@ -97,7 +100,10 @@ export async function verifyWorld(params: { rpId: string; action: Action; subjec
     throw new HttpError("WORLD_REJECTED", `World returned a non-JSON response (${res.status})`, 400);
   }
   if (!res.ok || !json?.success || typeof json.nullifier !== "string") {
-    throw new HttpError("WORLD_REJECTED", json?.detail ?? json?.code ?? "verification failed", 400);
+    // World reports a code per proof in `results`; surface them, since the top-level detail is generic.
+    const per = (json?.results ?? []).filter((r) => !r.success).map((r) => `${r.identifier ?? "proof"}: ${r.code ?? "?"}${r.detail ? ` (${r.detail})` : ""}`);
+    const why = [json?.detail ?? json?.code ?? "verification failed", ...per].join(" · ");
+    throw new HttpError("WORLD_REJECTED", why, 400);
   }
   if (json.action !== params.action) {
     throw new HttpError("WORLD_REJECTED", `World verified action ${json.action}, not ${params.action}`, 400);
