@@ -234,6 +234,8 @@ describe("shardedFromLogs", () => {
 
   it("returns null when there is no CardSharded", () => {
     expect(shardedFromLogs(noise)).toBeNull();
+    expect(shardedFromLogs([cardSharded(addresses.cardVault, 2n, 0), cardSharded(addresses.cardVault, 1n, 5)], 1n)?.id).toBe(1n);
+    expect(shardedFromLogs([cardSharded(addresses.cardVault, 2n, 0)], 1n)).toBeNull();
     expect(shardedFromLogs([])).toBeNull();
   });
 });

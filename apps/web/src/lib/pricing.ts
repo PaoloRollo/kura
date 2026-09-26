@@ -95,7 +95,9 @@ export function priceSourceLabel(q: PriceQuote, condition: string): string {
 
 /** A quote's adjusted price as USDC (6 decimals), or null. */
 export function quoteUsdc(q: PriceQuote | null | undefined): bigint | null {
-  return q?.adjustedUsd ? parseUnits(q.adjustedUsd, 6) : null;
+  if (!q?.adjustedUsd) return null;
+  const v = parseUnits(q.adjustedUsd, 6);
+  return v > 0n ? v : null; // a zero price is "no price", same as the shard wizard
 }
 
 /** The market reference per whole shard (the "Market / 16" line). */

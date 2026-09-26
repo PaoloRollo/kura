@@ -90,7 +90,7 @@ export default function ShardPage({ params }: { params: Promise<{ id: string }> 
             void shardOutcome(hash, {
               getReceipt: async (h: Hex) =>
                 lastReceipt.current?.transactionHash === h ? lastReceipt.current : publicClient.getTransactionReceipt({ hash: h }),
-              readLogs: (logs) => shardedFromLogs(logs),
+              readLogs: (logs) => shardedFromLogs(logs, cardId),
               readCard: async () => {
                 const card = await publicClient.readContract({ address: addresses.cardVault, abi: abi.cardVault, functionName: "cards", args: [cardId] });
                 return { shardToken: card.shardToken, auction: card.auction, endBlock: card.endBlock };
