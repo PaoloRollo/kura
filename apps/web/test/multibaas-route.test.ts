@@ -70,6 +70,7 @@ function arrange() {
 }
 
 const call = (range = "24h") => GET(new Request(`http://x/api/analytics/multibaas?range=${range}`));
+const recent = () => GET(new Request("http://x/api/analytics/multibaas?view=recent"));
 
 describe("GET /api/analytics/multibaas", () => {
   beforeEach(() => {
@@ -136,7 +137,8 @@ describe("GET /api/analytics/multibaas", () => {
       ["an unaliased vault", () => { mb.status = "unaliased"; }, 2, /not linked/],
       ["another chain", () => { mb.chainID = 1; }, 2, /on chain 1/],
       ["a sync in progress", () => { mb.status = { ...linked(), isProcessingPastLogs: true }; }, 2, /still syncing/],
-      ["a link newer than the window", () => { mb.status = { ...linked(), startBlockNumber: HEAD - 95 }; }, 2, /not the whole 24h window/],
+      // the snapshot still loads (6 calls): the recent-events panel shows it; only the 24h figures refuse it
+      ["a link newer than the window", () => { mb.status = { ...linked(), startBlockNumber: HEAD - 95 }; }, 6, /not the whole 24h window/],
       ["a status without its start block", () => { mb.status = { isProcessingPastLogs: false, latestBlockNumber: HEAD } as Status; }, 2, /startBlockNumber/],
       ["a missing saved query", () => { delete mb.rows[MB_QUERIES.mints]; }, 6, /kura_mints is missing/],
     ];
@@ -303,5 +305,71 @@ describe("loadMultibaasFigures's overall budget", () => {
     const n = mb.calls.length;
     await settle(60);
     expect(mb.calls.length).toBe(n);
+  });
+});
+
+describe("GET /api/analytics/multibaas?view=recent", () => {
+  beforeEach(() => {
+    process.env.MULTIBAAS_URL = "https://mb.test";
+    process.env.MULTIBAAS_API_KEY = KEY;
+    invalidateMultibaasFigures();
+    arrange();
+    vi.stubGlobal("fetch", vi.fn(fakeFetch));
+    clock = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete process.env.MULTIBAAS_URL;
+    delete process.env.MULTIBAAS_API_KEY;
+  });
+
+  it("lists the events MultiBaas holds, newest first, with since when, sharing the figures' load", async () => {
+    mb.rows[MB_QUERIES.redeems] = [{ at: iso(now - 60), block: HEAD - 5, tx: "0xAB", card: "2", payout: "900000000", fee: "22500000" }];
+    mb.rows[MB_QUERIES.fees].push({ at: iso(now - 60), block: HEAD - 5, tx: "0xab", card: "2", kind: "1", amount: "22500000" });
+    expect((await call()).status).toBe(200);
+    const res = await recent();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = await res.json();
+    expect(body.events.map((e: { kind: string; block: number }) => [e.kind, e.block])).toEqual([
+      ["fee", HEAD - 5], ["redeem", HEAD - 5], ["fee", HEAD - 300], ["settle", HEAD - 300], ["mint", HEAD - 600],
+    ]);
+    expect(body.events[1]).toMatchObject({ card: "2", amount: "900000000", tx: "0xab", graduated: null });
+    expect(body.events[0]).toMatchObject({ feeKind: "buyout", amount: "22500000" });
+    expect(body.total).toBe(5);
+    expect(body.coverage).toEqual({ startBlock: HEAD - 10_000, since: Math.floor(clock / 1000) - 10_000 * 12, fromDeploy: false });
+    expect(JSON.stringify(body)).not.toContain(KEY);
+    expect(mb.calls).toHaveLength(6); // one load for both views
+  });
+
+  it("answers while the link is too new for the 24h figures, and when MultiBaas holds nothing yet", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mb.status = { ...linked(), startBlockNumber: HEAD - 95 };
+    for (const k of Object.keys(mb.rows)) mb.rows[k] = [];
+    expect((await call()).status).toBe(503);
+    const res = await recent();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.events).toEqual([]);
+    expect(body.coverage.startBlock).toBe(HEAD - 95);
+    expect(mb.calls).toHaveLength(6);
+  });
+
+  it("answers 503 when MultiBaas is unconfigured, unlinked, or answers rows of another shape", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mb.status = null;
+    let res = await recent();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe("UNAVAILABLE");
+    expect(String(warn.mock.calls[0]![0])).toMatch(/recent events are hidden.*not linked/);
+    invalidateMultibaasFigures();
+    arrange();
+    mb.rows[MB_QUERIES.mints] = [{ ...mintRow, tx: 42 }];
+    expect((await recent()).status).toBe(503);
+    delete process.env.MULTIBAAS_URL;
+    res = await recent();
+    expect((await res.json()).error.code).toBe("UNCONFIGURED");
   });
 });
