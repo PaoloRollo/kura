@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { usdcPerShardToQ96 } from "../src/lib/math";
 import { usdcPerShardFromSqrtPrice, executionPrice } from "../src/lib/market-math";
-import { isPoolHolder, marketEnabled, poolOpenedActivity, seededPoolRow, swapActivity, swapFromDeltas, swapPoolPatch, swapSummary } from "../src/lib/market";
+import { isPoolHolder, marketEnabled, traderFromLogs, poolOpenedActivity, seededPoolRow, swapActivity, swapFromDeltas, swapPoolPatch, swapSummary } from "../src/lib/market";
 
 const Q96 = 2n ** 96n;
 const SHARD = 10n ** 18n;
@@ -133,5 +133,28 @@ describe("pool-less cards and holders", () => {
   it("skips the market on a deployment without ShardMarket", () => {
     expect(marketEnabled("0x0000000000000000000000000000000000000000")).toBe(false);
     expect(marketEnabled("0x00000000000000000000000000000000000000c0")).toBe(true);
+  });
+});
+
+describe("traderFromLogs", () => {
+  const TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+  const RELAYER = "0x00000000000000000000000000000000000000e1";
+  const topic = (a: string) => `0x${a.slice(2).toLowerCase().padStart(64, "0")}` as `0x${string}`;
+  const transfer = (token: string, from: string, to: string) => ({ address: token as `0x${string}`, topics: [TRANSFER, topic(from), topic(to)] as `0x${string}`[] });
+
+  it("a buy is attributed to whoever the PoolManager sent the shards to, not the tx sender", () => {
+    const logs = [transfer(SHARD_TOKEN, POOL_MANAGER, ALICE)];
+    expect(traderFromLogs({ logs, side: "buy", shardToken: SHARD_TOKEN, poolManager: POOL_MANAGER, fallback: RELAYER })).toBe(ALICE);
+  });
+
+  it("a sell is attributed to whoever sent the shards to the PoolManager", () => {
+    const logs = [transfer(SHARD_TOKEN, ALICE, POOL_MANAGER)];
+    expect(traderFromLogs({ logs, side: "sell", shardToken: SHARD_TOKEN, poolManager: POOL_MANAGER, fallback: RELAYER })).toBe(ALICE);
+  });
+
+  it("ignores other tokens and falls back to the tx sender when no matching transfer exists", () => {
+    const logs = [transfer("0x00000000000000000000000000000000000000ff", POOL_MANAGER, ALICE)];
+    expect(traderFromLogs({ logs, side: "buy", shardToken: SHARD_TOKEN, poolManager: POOL_MANAGER, fallback: RELAYER })).toBe(RELAYER);
+    expect(traderFromLogs({ logs: undefined, side: "buy", shardToken: undefined, poolManager: POOL_MANAGER, fallback: RELAYER })).toBe(RELAYER);
   });
 });

@@ -4,7 +4,7 @@ import { abi } from "@kura/shared";
 import deployments from "../generated/deployments.json";
 import { recordActivity } from "./lib/activity";
 import { logId } from "./lib/ids";
-import { marketEnabled, poolOpenedActivity, seededPoolRow, swapActivity, swapFromDeltas, swapPoolPatch } from "./lib/market";
+import { marketEnabled, poolOpenedActivity, seededPoolRow, swapActivity, swapFromDeltas, swapPoolPatch, traderFromLogs } from "./lib/market";
 
 // Ponder executes every file under src/, so the handlers are registered only when the deployment has a ShardMarket
 // (ponder.config.ts leaves the contract out otherwise, and a handler for an unknown contract fails the build).
@@ -25,9 +25,16 @@ if (marketEnabled(deployments.shardMarket)) {
 
   ponder.on("ShardMarket:ShardSwap", async ({ event, context }) => {
     const a = event.args;
-    // The hook sees the router, not the trader: the trader is the transaction sender.
-    const trader = event.transaction.from;
     const s = swapFromDeltas(a.shardDelta, a.usdcDelta);
+    const pool = await context.db.find(pools, { cardId: a.cardId });
+    const trader = traderFromLogs({
+      // Ponder caches RPC reads, so re-indexing doesn't refetch; swaps are rare enough for one receipt each.
+      logs: pool ? (await context.client.getTransactionReceipt({ hash: event.transaction.hash })).logs : undefined,
+      side: s.side,
+      shardToken: pool?.shardToken,
+      poolManager: deployments.poolManager,
+      fallback: event.transaction.from,
+    });
     await context.db.insert(swaps).values({
       id: logId(event.transaction.hash, event.log.logIndex),
       cardId: a.cardId,
@@ -38,7 +45,6 @@ if (marketEnabled(deployments.shardMarket)) {
       timestamp: event.block.timestamp,
       txHash: event.transaction.hash,
     }).onConflictDoNothing();
-    const pool = await context.db.find(pools, { cardId: a.cardId });
     if (pool) {
       await context.db.update(pools, { cardId: a.cardId }).set(swapPoolPatch(pool, { sqrtPriceX96: a.sqrtPriceX96, usdcAmount: s.usdcAmount, timestamp: event.block.timestamp }));
     }

@@ -14,6 +14,34 @@ export const isPoolHolder = (holder: string, poolManager: string) =>
 
 export type SwapSide = "buy" | "sell";
 
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const topicAddress = (t: string | undefined) => (t ? (`0x${t.slice(26)}` as Hex).toLowerCase() : undefined);
+
+/**
+ * The trader behind a swap. The hook only sees the router, and with Privy gas sponsorship the tx sender can be a relayer,
+ * so the trader is read off the swap's own shard Transfer: PoolManager -> trader on a buy, trader -> PoolManager on a sell.
+ * Falls back to `fallback` (the tx sender) when the receipt has no such transfer.
+ */
+export function traderFromLogs(p: {
+  logs: readonly { address: string; topics: readonly string[] }[] | undefined;
+  side: SwapSide;
+  shardToken: string | undefined;
+  poolManager: string;
+  fallback: Hex;
+}): Hex {
+  if (!p.logs || !p.shardToken) return p.fallback;
+  const pm = p.poolManager.toLowerCase();
+  const token = p.shardToken.toLowerCase();
+  for (const l of p.logs) {
+    if (l.address.toLowerCase() !== token || l.topics[0] !== TRANSFER_TOPIC) continue;
+    const from = topicAddress(l.topics[1]);
+    const to = topicAddress(l.topics[2]);
+    if (p.side === "buy" && from === pm && to) return to as Hex;
+    if (p.side === "sell" && to === pm && from) return from as Hex;
+  }
+  return p.fallback;
+}
+
 /** ShardSwap deltas are the trader's balance changes: shardDelta > 0 is a buy. */
 export function swapFromDeltas(shardDelta: bigint, usdcDelta: bigint) {
   const shardAmount = abs(shardDelta);
