@@ -1,4 +1,4 @@
-import { type Hex, keccak256, stringToBytes } from "viem";
+import { type Hex, keccak256, stringToBytes, zeroAddress } from "viem";
 
 /**
  * ENSv2 tokenIds carry a version in the low 32 bits, so the same name can surface
@@ -33,3 +33,24 @@ export const acceptCollectorRecord = (
   node: Hex,
 ): boolean =>
   !!collector && collector.resolver.toLowerCase() === logAddress.toLowerCase() && collector.node.toLowerCase() === node.toLowerCase();
+
+const COIN_TYPE_ETH = 60n;
+
+/** ENSIP-11/19 EVM coin types: ETH (60) and 0x80000000 | chainId, where chainId 0 is the default EVM address. */
+const isEvmCoinType = (coinType: bigint): boolean =>
+  coinType === COIN_TYPE_ETH || (coinType >= 0x80000000n && coinType <= 0xffffffffn);
+
+/**
+ * The ens_records key and value for a PermissionedResolver AddressUpdated. The ETH address keeps the `addr` key (the
+ * web and the handlers read it), other coin types go under `addr:<coinType>`. Values are lowercase so they compare
+ * directly with hex columns such as cards.beneficialOwner; a cleared EVM address reads as the zero address, as addr()
+ * returns it.
+ */
+export const addressRecordOf = (coinType: bigint, addressBytes: Hex): { key: string; value: string } => {
+  const key = coinType === COIN_TYPE_ETH ? "addr" : `addr:${coinType}`;
+  const value = addressBytes === "0x" && isEvmCoinType(coinType) ? zeroAddress : addressBytes.toLowerCase();
+  return { key, value };
+};
+
+/** PermissionedResolver.linkToRecord(name, 0) emits Linked(0, node, name): the node no longer has its own record. */
+export const isUnlink = (recordId: bigint): boolean => recordId === 0n;
