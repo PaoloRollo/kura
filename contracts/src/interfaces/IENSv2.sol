@@ -22,6 +22,7 @@ interface IENSRegistryV2 {
         address indexed sender
     );
     event LabelUnregistered(uint256 indexed tokenId, address indexed sender);
+    event ResolverUpdated(uint256 indexed tokenId, address indexed resolver, address indexed sender);
 
     function initialize(EnsGrant[] calldata grants) external;
     function register(

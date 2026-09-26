@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {Vm} from "forge-std/Vm.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -116,6 +117,48 @@ contract CardNamesTest is EnsFork {
         assertEq(_addr(LABEL), alice);
         assertEq(names.cardLabels(1), LABEL);
         assertFalse(names.isAvailable(LABEL));
+    }
+
+    /// @dev The indexer joins CardNamed/CollectorNamed to resolver records through Linked(recordId, node, name), so the
+    /// node CardNames emits must be the namehash the resolver derives from the DNS name it was given.
+    function _linkedNode(Vm.Log[] memory logs, address emitter) internal pure returns (bytes32 node, uint256 n) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == emitter && logs[i].topics[0] == IENSResolverV2.Linked.selector) {
+                node = logs[i].topics[2];
+                n++;
+            }
+        }
+    }
+
+    /// @dev The `node` field of the last CardNamed (string label, bytes32 node) or CollectorNamed (string label,
+    /// address resolver, bytes32 node) log; in both it is the last word of the data.
+    function _emittedNode(Vm.Log[] memory logs, bytes32 topic0) internal view returns (bytes32 node) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(names) && logs[i].topics[0] == topic0) {
+                if (topic0 == CardNames.CardNamed.selector) (, node) = abi.decode(logs[i].data, (string, bytes32));
+                else (,, node) = abi.decode(logs[i].data, (string, address, bytes32));
+            }
+        }
+    }
+
+    function test_emittedNodeMatchesResolverLinkedNode() public {
+        vm.recordLogs();
+        _registerCard();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (bytes32 linked, uint256 n) = _linkedNode(logs, address(resolver));
+        assertEq(n, 1, "one record created for the card name");
+        assertEq(_emittedNode(logs, CardNames.CardNamed.selector), linked, "CardNamed node == Linked node");
+        assertEq(linked, names.nodeOf(LABEL));
+        assertGt(resolver.getRecordId(linked), 0);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        address res = names.registerCollector("alice");
+        logs = vm.getRecordedLogs();
+        (linked, n) = _linkedNode(logs, res);
+        assertEq(n, 1, "one record created on the collector resolver");
+        assertEq(_emittedNode(logs, CardNames.CollectorNamed.selector), linked, "CollectorNamed node == Linked node");
+        assertEq(linked, names.nodeOf("alice"));
     }
 
     function test_vendorMayEditOnlyConditionAndGrade() public {
