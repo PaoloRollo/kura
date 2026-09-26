@@ -90,7 +90,13 @@ export async function verifyWorld(params: { rpId: string; action: Action; subjec
 
   const res = await fetchImpl(`https://developer.world.org/api/v4/verify/${params.rpId}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      // World only accepts staging/sandbox proofs while a staging window is open, and they must carry its token.
+      ...(params.expectedEnv !== "production" && process.env.WORLD_STAGING_VERIFICATION_TOKEN
+        ? { "x-staging-verification-token": process.env.WORLD_STAGING_VERIFICATION_TOKEN }
+        : {}),
+    },
     body: JSON.stringify(params.idkitResponse),
   });
   let json: WorldVerifyJson;
