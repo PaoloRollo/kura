@@ -10,7 +10,7 @@ const ServerSchema = z.object({
   WORLD_ENV: z.enum(["production", "staging", "sandbox"]),
   DATABASE_URL: z.string().min(1),
   ALCHEMY_HTTP_URL: z.string().url(),
-  ALCHEMY_WS_URL: z.string().min(1),
+  ALCHEMY_WS_URL: z.string().optional(),
   PONDER_URL: z.string().url(),
 });
 
@@ -23,6 +23,7 @@ const PublicSchema = z.object({
   NEXT_PUBLIC_CHAIN_ID: z.coerce.number().default(11155111),
   NEXT_PUBLIC_ALCHEMY_HTTP_URL: z.string().url(),
   NEXT_PUBLIC_PONDER_URL: z.string().url().default("http://localhost:42069"),
+  NEXT_PUBLIC_ALCHEMY_WS_URL: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof ServerSchema>;
@@ -49,5 +50,6 @@ export function publicEnv(): PublicEnv {
     NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
     NEXT_PUBLIC_ALCHEMY_HTTP_URL: process.env.NEXT_PUBLIC_ALCHEMY_HTTP_URL,
     NEXT_PUBLIC_PONDER_URL: process.env.NEXT_PUBLIC_PONDER_URL,
+    NEXT_PUBLIC_ALCHEMY_WS_URL: process.env.NEXT_PUBLIC_ALCHEMY_WS_URL,
   });
 }

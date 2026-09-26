@@ -44,7 +44,8 @@ export function AuctionCard({
     <>
       <div className="relative flex h-[260px] items-center justify-center bg-surface-2">
         <CardArt src={image} alt={name} className="h-[223px] w-auto" />
-        <Pill tone={status} className="absolute top-3 left-3" />
+        {/* Capped to the art area so a long label ("Redeemable") truncates instead of running over a narrow card. */}
+        <Pill tone={status} className="absolute top-3 left-3 max-w-[calc(100%-1.5rem)] truncate" />
       </div>
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">

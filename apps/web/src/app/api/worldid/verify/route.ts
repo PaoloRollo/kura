@@ -5,28 +5,30 @@ import { TTL, TicketKind, type Ticket } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { tickets, worldidVerifications } from "@/lib/db/schema";
 import { HttpError, parseBody, withAuth } from "@/lib/http";
-import { requireVendor } from "@/lib/scan";
+import { requireOwnerOfWholeCard, storeReleaseTicket } from "@/lib/release-tickets";
 import { nowSec, serializeTicket, signTicket } from "@/lib/signer";
 import { requireEnv, verifyWorld, type IdkitResponseLike } from "@/lib/world";
 
 const Body = z.object({
   action: z.enum(["bid", "release"]),
-  subject: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  /** Release only: the card the caller wants to collect. The subject is always the caller. */
+  cardId: z.string().regex(/^\d+$/).optional(),
   idkitResponse: z.object({ responses: z.array(z.record(z.unknown())) }).passthrough(),
 });
 
 export const POST = withAuth(async (req, user) => {
-  // The action comes from the body, so the release vendor check below cannot run before parseBody.
   const body = await parseBody(Body, req);
   const db = getDb();
 
-  let subject: `0x${string}`;
-  if (body.action === "bid") {
-    subject = user.wallet;
-  } else {
-    requireVendor(user);
-    if (!body.subject) throw new HttpError("BAD_REQUEST", "subject is required for release", 400);
-    subject = body.subject as `0x${string}`;
+  // The proof is bound to the caller's own wallet for both actions: for release that is the card's owner, collecting in
+  // their own session. A vendor-chosen subject would let any Passport holder scan a ticket into someone else's name.
+  const subject: `0x${string}` = user.wallet;
+  let cardId: bigint | null = null;
+  if (body.action === "release") {
+    if (!body.cardId) throw new HttpError("BAD_REQUEST", "cardId is required for release", 400);
+    cardId = BigInt(body.cardId);
+    // Checked before World is asked, so a refused request never binds a nullifier.
+    await requireOwnerOfWholeCard(cardId, subject);
   }
 
   const result = await verifyWorld({
@@ -46,7 +48,7 @@ export const POST = withAuth(async (req, user) => {
     .onConflictDoNothing({ target: [worldidVerifications.nullifier, worldidVerifications.action] });
   const [bound] = await db.select().from(worldidVerifications).where(and(eq(worldidVerifications.nullifier, nullifier), eq(worldidVerifications.action, body.action))).limit(1);
   if (!bound || bound.subject.toLowerCase() !== subject.toLowerCase()) {
-    throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409);
+    throw new HttpError("ALREADY_BOUND", "this World ID is already linked to another wallet", 409, bound ? { boundTo: bound.subject } : undefined);
   }
 
   const kind = body.action === "bid" ? TicketKind.HUMAN : TicketKind.PASSPORT;
@@ -56,5 +58,10 @@ export const POST = withAuth(async (req, user) => {
   const signature = await signTicket(ticket, domain);
   await db.insert(tickets).values({ id: crypto.randomUUID(), kind, subject, nullifier, expiresAt: ticket.expiresAt, signature, domain });
 
+  if (cardId != null) {
+    // The holder only learns it is ready; the vendor station collects the ticket by card id.
+    const ticketId = await storeReleaseTicket({ cardId, subject, nullifier: result.nullifier, expiresAt: ticket.expiresAt, signature });
+    return NextResponse.json({ ok: true, ticketId, cardId: cardId.toString(), expiresAt: ticket.expiresAt.toString(), credential: result.credential });
+  }
   return NextResponse.json({ ticket: serializeTicket(ticket), signature, credential: result.credential });
 });

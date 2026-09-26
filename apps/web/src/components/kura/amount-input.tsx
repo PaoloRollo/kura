@@ -5,10 +5,18 @@ export type AmountInputProps = Omit<React.ComponentProps<"input">, "size"> & {
   label?: React.ReactNode;
   unit?: React.ReactNode;
   hint?: React.ReactNode;
+  /** Classes for the unit (e.g. a mono suffix that sits right after the value). */
+  unitClassName?: string;
+  /** Pushed to the end of the field (a status icon). */
+  trailing?: React.ReactNode;
+  /** Border colour for a validated value: good, or shu for an error. */
+  tone?: "default" | "good" | "shu";
+  /** Classes for the hint line. */
+  hintClassName?: string;
 };
 
 /** Input/Amount: label, mono value with a unit, and a hint underneath. */
-export function AmountInput({ label, unit = "USDC", hint, className, id, ...props }: AmountInputProps) {
+export function AmountInput({ label, unit = "USDC", hint, unitClassName, trailing, tone = "default", hintClassName, className, id, ...props }: AmountInputProps) {
   const autoId = React.useId();
   const inputId = id ?? autoId;
   return (
@@ -18,7 +26,12 @@ export function AmountInput({ label, unit = "USDC", hint, className, id, ...prop
           {label}
         </label>
       )}
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-bg px-3.5 py-[13px] transition-colors focus-within:border-shu">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3 rounded-lg border bg-bg px-3.5 py-[13px] transition-colors",
+          tone === "good" ? "border-good" : tone === "shu" ? "border-shu" : "border-border focus-within:border-shu",
+        )}
+      >
         <input
           id={inputId}
           inputMode="decimal"
@@ -26,9 +39,10 @@ export function AmountInput({ label, unit = "USDC", hint, className, id, ...prop
           className="w-full min-w-0 bg-transparent font-mono text-[18px] text-text outline-none placeholder:text-muted-foreground"
           {...props}
         />
-        {unit && <span className="shrink-0 text-[12px] text-muted-foreground">{unit}</span>}
+        {unit && <span className={cn("shrink-0 text-[12px] text-muted-foreground", unitClassName)}>{unit}</span>}
+        {trailing && <span className="ml-auto flex shrink-0 items-center">{trailing}</span>}
       </div>
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className={cn("text-[11px] text-muted-foreground", hintClassName)}>{hint}</p>}
     </div>
   );
 }

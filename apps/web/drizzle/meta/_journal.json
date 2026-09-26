@@ -15,6 +15,27 @@
       "when": 1790344289854,
       "tag": "0001_scan_draft_method",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790387336333,
+      "tag": "0002_appraisal_price_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790390213341,
+      "tag": "0003_release_tickets",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790395056933,
+      "tag": "0004_market_price_etched",
+      "breakpoints": true
     }
   ]
 }

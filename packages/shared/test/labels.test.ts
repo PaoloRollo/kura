@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardLabel, isCondition, isLanguage, isValidHandle, setCode, slugify } from "../src/labels";
+import { cardLabel, HANDLE_PATTERN, isCondition, isLanguage, isValidHandle, ON_CHAIN_RESERVED_COUNT, RESERVED_HANDLES, setCode, slugify } from "../src/labels";
 
 describe("slugify", () => {
   it("lowercases and dashes", () => {
@@ -87,6 +87,18 @@ describe("handles", () => {
     for (const r of ["appraiser", "vault", "vendor", "admin", "www", "app", "api", "ens", "eth"]) {
       expect(isValidHandle(r)).toBe(false);
     }
+  });
+  it("also blocks names that pass for Kura staff, client-side only", () => {
+    for (const r of ["kura", "kuravault", "kuraeth", "official", "support", "help", "team", "staff", "mod"]) {
+      expect(isValidHandle(r)).toBe(false);
+    }
+    // The on-chain set comes first and keeps its order; the app reads RESERVED_HANDLES[1] as "vault".
+    expect(RESERVED_HANDLES.slice(0, ON_CHAIN_RESERVED_COUNT)).toEqual(["appraiser", "vault", "vendor", "admin", "www", "app", "api", "ens", "eth"]);
+  });
+  it("exposes the handle shape", () => {
+    expect(HANDLE_PATTERN.test("abc")).toBe(true);
+    expect(HANDLE_PATTERN.test("ab")).toBe(false);
+    expect(HANDLE_PATTERN.test("kura")).toBe(true);
   });
 });
 

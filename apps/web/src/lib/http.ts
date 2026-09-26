@@ -3,13 +3,19 @@ import type { ZodSchema } from "zod";
 import { AuthError, requireUser, type KuraUser } from "@/lib/auth";
 
 export class HttpError extends Error {
-  constructor(public readonly code: string, message: string, public readonly status: number) {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status: number,
+    /** Extra machine-readable fields for the client (ALREADY_BOUND's `boundTo`). */
+    public readonly details?: Record<string, unknown>,
+  ) {
     super(message);
   }
 }
 
-export function jsonError(code: string, message: string, status: number) {
-  return NextResponse.json({ error: { code, message } }, { status });
+export function jsonError(code: string, message: string, status: number, details?: Record<string, unknown>) {
+  return NextResponse.json({ error: details ? { code, message, details } : { code, message } }, { status });
 }
 
 export async function parseBody<T>(schema: ZodSchema<T>, req: Request): Promise<T> {
@@ -34,7 +40,11 @@ export function withAuth(handler: Handler) {
       return await handler(req, user);
     } catch (e) {
       if (e instanceof AuthError) return jsonError(e.code, e.message, e.status);
-      if (e instanceof HttpError) return jsonError(e.code, e.message, e.status);
+      if (e instanceof HttpError) {
+        // Log refusals (code + message only, never request bodies) so 4xx failures are diagnosable.
+        if (e.status >= 400) console.warn(`[api] ${new URL(req.url).pathname} → ${e.status} ${e.code}: ${e.message}`);
+        return jsonError(e.code, e.message, e.status, e.details);
+      }
       console.error(e);
       return jsonError("INTERNAL", "unexpected error", 500);
     }

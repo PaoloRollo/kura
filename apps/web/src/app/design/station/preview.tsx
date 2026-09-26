@@ -38,11 +38,16 @@ const match: MatchCandidate = { ...PRINTINGS[0], score: 0.97, illustrationId: "m
 
 const SEEDS: Record<string, StationSeed> = {
   empty: { step: "capture" },
-  details: { step: "review", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0], owner: "0x4f2cA0b3aE1f3d7a0b6d2f0C1e4B5a6D7c8Ea81e" },
+  owner: { step: "owner", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0] },
+  details: { step: "review", capture: "/cards/mox-sapphire.webp", matches: [match], confident: true, chosen: PRINTINGS[0], owner: "0x4f2cA0b3aE1f3d7a0b6d2f0C1e4B5a6D7c8Ea81e", ownerName: "kenji.kura.eth" },
   search: { step: "search", capture: "/cards/mox-sapphire.webp", matches: [{ ...match, score: 0.41 }], confident: false, manual: "mox sapph", results: PRINTINGS },
+  "minted-unavailable": {
+    step: "minted",
+    mintUnavailable: { hash: "0x3a1f9c2e7b0d4a6f8e1c5b9d2a7f0e3c6b8d1a4f7e0c3b6d9a2f5e8c1b4d9f2", reason: "The receipt has no CardMinted event from the vault." },
+  },
   minted: {
     step: "minted",
-    minted: { image: "/cards/mox-sapphire.webp", name: "Mox Sapphire", tokenId: "2", ensName: "mox-sapphire-lea-2.kura.eth", owner: "kenji.kura.eth", condition: "NM", language: "en", block: "7,412,901", slot: "B-07" },
+    minted: { image: "/cards/mox-sapphire.webp", name: "Mox Sapphire", tokenId: "2", ensName: "mox-sapphire-lea-2.kura.eth", owner: "kenji.kura.eth", condition: "NM", language: "en", block: "7,412,901", set: "LEA · Limited Edition Alpha", url: "https://kuravault.xyz/app/cards/2" },
   },
 };
 

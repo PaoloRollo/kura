@@ -39,7 +39,7 @@ export function QrScanner({ onAddress }: { onAddress: (address: `0x${string}`) =
       stream = s;
       if (videoRef.current) videoRef.current.srcObject = s;
       raf = requestAnimationFrame(tick);
-    }).catch(() => setStatus("Camera unavailable, paste the address instead"));
+    }).catch(() => setStatus("Camera unavailable, type their Kura handle instead"));
 
     return () => {
       cancelAnimationFrame(raf);

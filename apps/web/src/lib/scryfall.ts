@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { setCode as normaliseSet, slugify } from "@kura/shared";
 import { getDb } from "@/lib/db/client";
 import { scryfallCache, type CandidateJson } from "@/lib/db/schema";
@@ -48,14 +48,26 @@ const MIN_SPACING_MS = 100;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const HEADERS = { "User-Agent": "Kura/0.1 (hackathon)", Accept: "application/json" };
 
+const reportedCacheFailures = new Set<string>();
+
+/** Logs a Scryfall cache failure once per operation and cause, so an outage doesn't log on every request. */
+export function reportCacheFailure(op: "read" | "write", e: unknown) {
+  const cause = (e as { cause?: { code?: string } })?.cause?.code ?? (e instanceof Error ? e.message.split("\n")[0] : String(e));
+  const key = `${op}:${cause}`;
+  if (reportedCacheFailures.has(key)) return;
+  reportedCacheFailures.add(key);
+  console.error(`scryfall cache ${op} failed (logged once per cause)`, e);
+}
+
 export class Scryfall {
-  private readonly fetchImpl: typeof fetch;
+  /** Null: the global fetch, looked up per request (a long-lived shared client must not pin one fetch). */
+  private readonly fetchImpl: typeof fetch | null;
   private readonly now: () => number;
   private queue: Promise<void> = Promise.resolve();
   private lastAt = 0;
 
   constructor(opts: { fetchImpl?: typeof fetch; now?: () => number } = {}) {
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.fetchImpl = opts.fetchImpl ?? null;
     this.now = opts.now ?? Date.now;
   }
 
@@ -67,7 +79,7 @@ export class Scryfall {
       this.lastAt = this.now();
       let res: Response;
       try {
-        res = await this.fetchImpl(`${BASE}${path}`, { headers: HEADERS });
+        res = await (this.fetchImpl ?? fetch)(`${BASE}${path}`, { headers: HEADERS });
       } catch (e) {
         throw new ScryfallUnavailableError(String(e));
       }
@@ -186,13 +198,45 @@ export class Scryfall {
     return row.raw as ScryfallCard;
   }
 
+  private async cacheGetPrinting(setCode: string, collectorNumber: string, lang: string): Promise<ScryfallCard | null> {
+    const rows = await getDb().select().from(scryfallCache)
+      .where(and(eq(scryfallCache.setCode, setCode), eq(scryfallCache.collectorNumber, collectorNumber), eq(scryfallCache.lang, lang))).limit(1);
+    const row = rows[0];
+    if (!row || this.now() - row.fetchedAt.getTime() > CACHE_TTL_MS) return null;
+    return row.raw as ScryfallCard;
+  }
+
+  // The cache is best-effort here: a database outage must not take card lookups (and token metadata) down with it.
   async getById(id: string): Promise<Candidate | null> {
-    const cached = await this.cacheGet(id);
-    if (cached) return this.toCandidate(cached);
+    const card = await this.getCard(id);
+    return card ? this.toCandidate(card) : null;
+  }
+
+  /** The raw Scryfall card for an id (all prices, including usd_etched), cache first. */
+  async getCard(id: string): Promise<ScryfallCard | null> {
+    const cached = await this.cacheGet(id).catch((e) => {
+      reportCacheFailure("read", e);
+      return null;
+    });
+    if (cached) return cached;
     const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(id)}`);
     if (!card) return null;
-    await this.cachePut(card);
-    return this.toCandidate(card);
+    await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
+    return card;
+  }
+
+  /** One printing by set code and collector number in a language (Scryfall's /cards/:set/:number/:lang), cache first. */
+  async getPrinting(set: string, collectorNumber: string, lang = "en"): Promise<ScryfallCard | null> {
+    const code = normaliseSet(set);
+    const cached = await this.cacheGetPrinting(code, collectorNumber, lang).catch((e) => {
+      reportCacheFailure("read", e);
+      return null;
+    });
+    if (cached) return cached;
+    const card = await this.request<ScryfallCard>(`/cards/${encodeURIComponent(code)}/${encodeURIComponent(collectorNumber)}/${encodeURIComponent(lang)}`);
+    if (!card) return null;
+    await this.cachePut(card).catch((e) => reportCacheFailure("write", e));
+    return card;
   }
 
   async named(q: { name: string; set?: string; lang?: string }): Promise<Candidate | null> {
@@ -238,4 +282,11 @@ export class Scryfall {
     await this.cachePutMany(cards);
     return cards;
   }
+}
+
+let shared: Scryfall | null = null;
+/** One client per server process, so Scryfall's request spacing holds across concurrent requests. */
+export function scryfall(): Scryfall {
+  if (!shared) shared = new Scryfall();
+  return shared;
 }

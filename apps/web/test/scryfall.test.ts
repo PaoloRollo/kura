@@ -156,4 +156,35 @@ describe("Scryfall", () => {
     expect(c?.name).toBe("Black Lotus");
     expect(calls).toHaveLength(1);
   });
+  it("still resolves an id when the cache database is unavailable", async () => {
+    const db = getDb();
+    const select = vi.spyOn(db, "select").mockImplementation(() => { throw new Error("relation does not exist"); });
+    const insert = vi.spyOn(db, "insert").mockImplementation(() => { throw new Error("relation does not exist"); });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fn } = fakeFetch(() => ({ status: 200, body: lotus }));
+    const s = new Scryfall({ fetchImpl: fn });
+    for (let i = 0; i < 2; i++) {
+      const p = s.getById(lotus.id);
+      await vi.runAllTimersAsync();
+      expect((await p)?.name).toBe("Black Lotus");
+    }
+    // One error per failure type (read, write), not one per request.
+    expect(error).toHaveBeenCalledTimes(2);
+    select.mockRestore();
+    insert.mockRestore();
+    error.mockRestore();
+  });
+
+  it("looks a printing up by set, number and language, then serves it from the cache", async () => {
+    const { fn, calls } = fakeFetch(() => ({ status: 200, body: lotus }));
+    const s = new Scryfall({ fetchImpl: fn });
+    const p1 = s.getPrinting("LEA", "232", "en");
+    await vi.runAllTimersAsync();
+    expect((await p1)?.id).toBe(lotus.id);
+    expect(calls[0]).toContain("/cards/lea/232/en");
+    const p2 = s.getPrinting("lea", "232", "en");
+    await vi.runAllTimersAsync();
+    expect((await p2)?.id).toBe(lotus.id);
+    expect(calls).toHaveLength(1);
+  });
 });

@@ -12,6 +12,7 @@ import {
   SearchInput,
   StatTile,
 } from "@/components/kura";
+import { StepperDemo } from "./stepper-demo";
 import { ToastDemo } from "./toast-demo";
 
 export const metadata: Metadata = { title: "Kura · Components" };
@@ -98,6 +99,10 @@ export default function DesignPage() {
         <div className="flex flex-col gap-4">
           <ToastDemo />
         </div>
+      </Section>
+
+      <Section title="Transactions and sync states">
+        <StepperDemo />
       </Section>
     </main>
   );
