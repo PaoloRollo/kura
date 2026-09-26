@@ -87,6 +87,9 @@ describe("explore items", () => {
     expect(matchesSearch(vault, "LIM-DÛL")).toBe(true);
     expect(matchesSearch({ ...lotus!, name: "Jötun Grunt" }, "jotun")).toBe(true);
     expect(fold("Éowyn")).toBe("eowyn");
+    // Kana voicing marks are letters' identity, not accents.
+    expect(fold("ガ")).not.toBe(fold("カ"));
+    expect(fold("ガ")).toBe("ガ");
   });
 
   it("writes short ages", () => {

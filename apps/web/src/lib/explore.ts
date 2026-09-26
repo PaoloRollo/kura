@@ -261,8 +261,11 @@ export function activeFilterCount(f: ExploreFilters): number {
 
 export const clearFilters = (f: ExploreFilters): ExploreFilters => ({ ...DEFAULT_FILTERS, tab: f.tab, sort: f.sort, view: f.view });
 
-/** Lower case without diacritics, for matching ("Lim-Dûl" → "lim-dul"). */
-export const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+/**
+ * Lower case without Latin diacritics, for matching ("Lim-Dûl" → "lim-dul"). Only the combining diacritical marks block
+ * (U+0300–U+036F) is dropped, and the result recomposed, so kana voicing marks survive ("ガ" stays distinct from "カ").
+ */
+export const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase();
 
 /** Every query word matches the name, set, ENS name, condition or language (code or name); accents are ignored. */
 export function matchesSearch(it: AuctionItem, q: string): boolean {
