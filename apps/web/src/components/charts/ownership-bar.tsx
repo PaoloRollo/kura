@@ -9,6 +9,8 @@ export type OwnershipSlice = {
   /** Plain text for the table and tooltips. */
   name: string;
   value: number;
+  /** A fixed colour (the muted "Unclaimed in auction"): the slice is kept out of the ranking and drawn last. */
+  color?: string;
 };
 
 const LISTED = 4;
@@ -16,13 +18,19 @@ const OTHER = "var(--kura-muted)";
 
 const pct = (share: number) => `${(share * 100).toFixed(1)}%`;
 
-/** Holders in the order given (balance desc): the top four, then "Other" for the rest when it holds anything. */
+/**
+ * Holders in the order given (balance desc): the top four, then "Other" for the rest when it holds anything, then any
+ * slices with a fixed colour.
+ */
 export function ownershipRows(slices: OwnershipSlice[]) {
   const total = slices.reduce((s, x) => s + x.value, 0);
   const share = (v: number) => (total > 0 ? v / total : 0);
-  const top = slices.slice(0, LISTED).map((s, i) => ({ ...s, share: share(s.value), color: holderColor(i) }));
-  const rest = slices.slice(LISTED).reduce((s, x) => s + x.value, 0);
-  return rest > 0 ? [...top, { id: "other", label: "Other", name: "Other", value: rest, share: share(rest), color: OTHER }] : top;
+  const ranked = slices.filter((s) => !s.color);
+  const fixed = slices.filter((s) => s.color).map((s) => ({ ...s, share: share(s.value), color: s.color! }));
+  const top = ranked.slice(0, LISTED).map((s, i) => ({ ...s, share: share(s.value), color: holderColor(i) }));
+  const rest = ranked.slice(LISTED).reduce((s, x) => s + x.value, 0);
+  const other = rest > 0 ? [{ id: "other", label: "Other" as React.ReactNode, name: "Other", value: rest, share: share(rest), color: OTHER }] : [];
+  return [...top, ...other, ...fixed];
 }
 
 /**

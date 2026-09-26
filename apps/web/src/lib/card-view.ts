@@ -1,5 +1,6 @@
 // Pure card-page derivations (holders, ENS profile, header lines): no React, so node tests can cover them.
 import { q96ToUsdcPerShard } from "@kura/shared";
+import { hhi, shares } from "@/lib/metrics";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const SHARD = 10n ** 18n;
@@ -84,7 +85,7 @@ export type HoldersView = {
   supply: bigint;
   /** Shards still held by the card's auction(s): bought but not claimed yet. */
   unclaimed: bigint;
-  /** Σ share² over the displayed holders. */
+  /** lib/metrics `hhi` over the non-custodian holders (the Analytics tab's Concentration). */
   hhi: number;
   top: HolderRow | null;
   /** USDC per whole shard at clearing; null when not graduated or unknown. */
@@ -125,8 +126,7 @@ export function holdersView(p: {
     since: holderSince(b.holder, token, p.transfers, auctions),
   }));
   const unclaimed = live.filter((b) => auctions.has(lc(b.holder))).reduce((a, b) => a + b.balance, 0n);
-  const hhi = rows.reduce((a, r) => a + r.share * r.share, 0);
-  return { rows, supply, unclaimed, hhi, top: rows[0] ?? null, clearingPerShard: price };
+  return { rows, supply, unclaimed, hhi: hhi(shares(live, excluded)), top: rows[0] ?? null, clearingPerShard: price };
 }
 
 /** A share 0..1 with 1e-6 precision (bigint-safe for 18-decimal balances). */

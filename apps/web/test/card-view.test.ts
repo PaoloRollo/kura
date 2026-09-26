@@ -56,7 +56,8 @@ describe("holdersView", () => {
     expect(v.rows[0]!.value).toBe(13n * 1_712_000_000n);
     expect(v.rows[0]!.canRedeem).toBe(true);
     expect(v.rows[1]!.canRedeem).toBe(false);
-    expect(v.hhi).toBeCloseTo(0.8125 ** 2 + 0.09375 ** 2, 5);
+    // Concentration is over the non-custodian holders (14.5 shards), as lib/metrics defines it.
+    expect(v.hhi).toBeCloseTo((13 / 14.5) ** 2 + (1.5 / 14.5) ** 2, 5);
   });
 
   it("finds where each holder's shards came from (earliest inbound transfer)", () => {

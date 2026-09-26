@@ -1,7 +1,7 @@
 // Dev-only fixtures for /design/card, shaped exactly like the indexer rows (apps/indexer/ponder.schema.ts): 18-decimal
 // shard units, 6-decimal USDC, activities by (blockNumber, logIndex), shard transfers keyed "<txHash>-<logIndex>".
 import { usdcPerShardToQ96 } from "@kura/shared";
-import type { ActivityRow, BalanceRow, BidRow, CardData, CheckpointRow, EnsRecordRow, ShardingRow, TickRow, TransferRow } from "@/hooks/use-card";
+import type { ActivityRow, BalanceRow, BidRow, CardData, CheckpointRow, EnsRecordRow, FeeRow, ShardingRow, TickRow, TransferRow } from "@/hooks/use-card";
 import { addresses } from "@/lib/chain";
 import type { Handles } from "@/lib/handles";
 
@@ -22,7 +22,7 @@ const NODE: Hex = "0x0589af38c4cac3fc62158359a92d9722514d83c7e1afe9aeb0a84b9df1f
 const S = 10n ** 18n;
 const usd = (dollars: number) => BigInt(Math.round(dollars * 100)) * 10_000n;
 
-export const PREVIEW_STATES = ["whole-owner", "collect-ready", "collect-expired", "whole", "whole-after-buyout", "auctioning", "sharded", "released", "released-no-buyout", "empty", "loading", "notfound"] as const;
+export const PREVIEW_STATES = ["whole-owner", "collect-ready", "collect-expired", "whole", "whole-after-buyout", "auctioning", "sharded", "reserve-not-met", "released", "released-no-buyout", "empty", "loading", "notfound"] as const;
 export type PreviewState = (typeof PREVIEW_STATES)[number];
 
 /** Blocks at 12 s: the fixture's "now" is block HEAD at `now` seconds. */
@@ -36,6 +36,8 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   // collect-*: the owner's card page after (or long after) their Passport check at the counter.
   const whole = state === "whole" || state === "whole-owner" || state === "collect-ready" || state === "collect-expired" || state === "empty" || buyout;
   const auctioning = state === "auctioning";
+  // Settled without graduating: every shard went back to the owner, every bid was refunded.
+  const failed = state === "reserve-not-met";
   // Released straight from Whole: never sharded, so there is no buyout to show.
   const plain = state === "released-no-buyout";
   const released = state === "released" || plain;
@@ -78,11 +80,11 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     startBlock,
     endBlock,
     settled: !auctioning,
-    graduated: auctioning ? null : true,
-    clearingPriceQ96: usdcPerShardToQ96(usd(1712)),
-    clearingUsdcPerShard: auctioning ? null : usd(1712),
-    raisedUsdc: auctioning ? null : usd(5136),
-    feeUsdc: auctioning ? null : usd(128.4),
+    graduated: auctioning ? null : !failed,
+    clearingPriceQ96: usdcPerShardToQ96(usd(failed ? 1580 : 1712)),
+    clearingUsdcPerShard: auctioning || failed ? null : usd(1712),
+    raisedUsdc: auctioning ? null : failed ? 0n : usd(5136),
+    feeUsdc: auctioning ? null : failed ? 0n : usd(128.4),
     buyoutPerShard: redeemed ? usd(1712) : null,
     payoutUsdc: redeemed ? usd(5136) : null,
     redeemer: redeemed ? PAOLO : null,
@@ -121,7 +123,12 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     activities.push(act("shard", PAOLO, auctioning ? 14 * 60 : 7 * 86_400, 3n * S, { totalShards: 16, forSale: 3, auction: AUCTION, shardToken: TOKEN }, SHARD_AT.b));
     tr(ZERO, PAOLO, 13n * S, auctioning ? 14 * 60 : 7 * 86_400);
     tr(ZERO, AUCTION, 3n * S, auctioning ? 14 * 60 : 7 * 86_400);
-    if (auctioning) {
+    if (failed) {
+      bid(AIKO, 816, 1600, 3 * 3600, "exited", 0n);
+      bid(KENJI, 424, 1580, 2 * 3600, "exited", 0n);
+      activities.push(act("settle", KENJI, 22 * 60, 0n, { graduated: false, shardToken: TOKEN, clearingUsdcPerShard: null }));
+      tr(AUCTION, PAOLO, 3n * S, 22 * 60);
+    } else if (auctioning) {
       bid(AIKO, 816, 1640, 9 * 60, "open", null);
       bid(X7A3, 1712, 1712, 4 * 60, "open", null);
       bid(KENJI, 2550, 1700, 2 * 60, "open", null);
@@ -150,6 +157,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   const bal = (holder: Hex, units: bigint): BalanceRow => ({ id: `${TOKEN}-${holder}`.toLowerCase(), shardToken: TOKEN, holder, balance: units, updatedBlock: HEAD, updatedAt: at(60) });
   const holders: BalanceRow[] = whole || released ? []
     : auctioning ? [bal(PAOLO, 13n * S), bal(AUCTION, 3n * S)]
+    : failed ? [bal(PAOLO, 16n * S)]
     : [bal(PAOLO, 13n * S), bal(KENJI, 3n * S / 2n), bal(X7A3, 1n * S), bal(AIKO, S / 2n), bal(AUCTION, 0n)].filter((h) => h.balance > 0n);
   const supply = holders.reduce((a, h) => a + h.balance, 0n);
 
@@ -161,7 +169,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     rec("condition", "NM", 3 * 3600),
     rec("language", "en", 7 * 86_400 + 600),
     rec("vault.state", vaultState, 60),
-    ...(!sharded || auctioning ? [] : [rec("vault.clearing_usdc", "1712000000", 22 * 60)]),
+    ...(!sharded || auctioning || failed ? [] : [rec("vault.clearing_usdc", "1712000000", 22 * 60)]),
     rec("appraisal.usd", "25000.00", 2 * 86_400),
     rec("avatar", "https://cards.scryfall.io/normal/front/b/0/b0faa7f2-b547-42c4-a810-839da50dadfe.jpg", 7 * 86_400 + 600),
     rec("description", "Black Lotus, Limited Edition Alpha", 7 * 86_400 + 600),
@@ -169,9 +177,27 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     rec("url", "https://kuravault.xyz/app/cards/1", 7 * 86_400 + 600),
   ];
 
+  // Settled: a week of checkpoints climbing from the floor to the clearing (flat at the floor when it didn't graduate).
+  const settledPrices = failed
+    ? [1560, 1560, 1560, 1560, 1580, 1580, 1580, 1580, 1580, 1580, 1580, 1580, 1580]
+    : [1560, 1560, 1580, 1600, 1620, 1640, 1640, 1660, 1680, 1700, 1700, 1712, 1712];
+  const cp = (p: number, block: bigint, ts: number, i: number): CheckpointRow => ({ id: `${AUCTION}-${block}`, auction: AUCTION, blockNumber: block, clearingPriceQ96: usdcPerShardToQ96(usd(p)), cumulativeMps: BigInt(i) * 1000n, timestamp: ts });
   const checkpoints: CheckpointRow[] = auctioning
-    ? [1560, 1600, 1640, 1712].map((p, i) => ({ id: `${AUCTION}-${startBlock + BigInt(i)}`, auction: AUCTION, blockNumber: startBlock + BigInt(i * 10), clearingPriceQ96: usdcPerShardToQ96(usd(p)), cumulativeMps: BigInt(i) * 1000n, timestamp: at(14 * 60 - i * 120) }))
-    : [];
+    ? [1560, 1600, 1640, 1712].map((p, i) => cp(p, startBlock + BigInt(i * 10), at(14 * 60 - i * 120), i))
+    : sharded
+      ? settledPrices.map((p, i) => {
+        const last = blockAgo(23 * 60); // the auction ended 23 min ago, before the settle
+        const block = startBlock + (BigInt(i) * (last - startBlock)) / BigInt(settledPrices.length - 1);
+        return cp(p, block, SHARD_AT.ts + Number(block - SHARD_AT.b) * 12, i);
+      })
+      : [];
+
+  // Fees the vault took: 2.5% of the sale at settle, and of the buyout.
+  const fee = (kind: FeeRow["kind"], amount: bigint, secondsAgo: number, n: number): FeeRow => ({ id: `${hash(0xfee0 + n)}-${n}`, cardId: 1n, kind, amountUsdc: amount, blockNumber: blockAgo(secondsAgo), timestamp: at(secondsAgo) });
+  const fees: FeeRow[] = [
+    ...(sharded && !auctioning && !failed ? [fee("sale", usd(128.4), 22 * 60, 1)] : []),
+    ...(redeemed ? [fee("buyout", usd(128.4), 15 * 60, 2)] : []),
+  ];
 
   // Auction ticks: the clearing price and USDC raised so far, one per block with activity.
   const ticks: TickRow[] = auctioning
@@ -202,6 +228,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
     bids,
     ticks,
     checkpoints,
+    fees,
     ensNode: NODE,
     ensName: {
       label: card.label, labelHash: hash(0x1abe1), kind: "card", node: NODE, tokenId: 1n, owner: addresses.cardNames as Hex,

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ActivityFeed, ActivityList } from "@/components/activity-feed";
 import { CardArtColumn, CardHeader, CompactHeader, Credit, ShardedBy, type Identity } from "@/components/card-header";
 import { AuctionPanel, hasBidActions } from "@/components/auction-panel";
+import { CardAnalytics } from "@/components/card-analytics";
 import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
@@ -152,7 +153,7 @@ export function CardPageView({ c, me, now, block, tab, tabHref }: CardPageViewPr
             <Empty title="No auction yet" body="This card is whole. An auction starts when its owner shards it." />
           )
         )}
-        {tab === "analytics" && <Empty title="Analytics" body="Price history and holder analytics for this card arrive with the analytics dashboard." />}
+        {tab === "analytics" && <CardAnalytics data={c} now={now} />}
       </div>
     );
   }
