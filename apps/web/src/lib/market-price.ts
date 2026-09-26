@@ -6,7 +6,7 @@ import { t, type Row } from "@/lib/ponder-bridge";
 import { scryfall as sharedScryfall, type Scryfall } from "@/lib/scryfall";
 
 /** The card's mint description (its ENS `description` record), which carries ", foil" for foils. */
-async function mintDescription(cardId: bigint): Promise<string | null> {
+export async function mintDescription(cardId: bigint): Promise<string | null> {
   const db = ponderServer().db;
   const names = (await db.select().from(t(schema.ensNames)).where(eq(t(schema.ensNames.cardId), cardId)).limit(1)) as Row<typeof schema.ensNames>[];
   const node = names[0]?.node;
