@@ -42,6 +42,26 @@ output too instead of stubbing it out there.
   zero-address placeholder, and refuses to sign when `SIGNER_PRIVATE_KEY` is not the
   deployment's `signer`.
 
+## Prices, cron and live toasts
+
+- **Price routes** (public, all priced by the one rule in `src/lib/pricing.ts`: the card's finish, the
+  condition multiplier, and the English printing when the card's own printing has no USD price):
+  - `GET /api/cards/[id]/price`: the current quote for one card.
+  - `GET /api/cards/prices?ids=1,2,3`: the same quote for up to 100 cards in one request (Explore, the
+    analytics dashboard); answers are memoised for 45 s (`src/lib/price-memo.ts`).
+  - `GET /api/cards/[id]/market`: the card's daily market price history from `market_prices`, empty until
+    the first cron run.
+- **Daily cron.** `vercel.json` schedules `GET /api/cron/prices` at 03:00 UTC. It writes one `market_prices`
+  row per vault card printing and UTC day. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, so set
+  `CRON_SECRET` in the Vercel project; without it the route answers 401 to everyone.
+- **Migration.** `drizzle/0004_market_price_etched.sql` adds `market_prices.usd_etched`. Apply it with
+  `pnpm --filter web db:migrate` against the production `DATABASE_URL` before the cron runs; until then
+  every snapshot insert fails.
+- **Live toasts.** `NEXT_PUBLIC_ALCHEMY_WS_URL` (an Alchemy Sepolia `wss://` URL) lets signed-in pages
+  watch `BidSubmitted`, `AuctionSettled` and `CardRedeemed` and toast them (`src/hooks/use-live-events.ts`).
+  Like the HTTP URL it is baked in at build time and ships to the browser. Without it the toasts are off
+  and everything else still updates through the indexer's live queries.
+
 ## Deploying on Vercel
 
 The web app runs on Vercel; Postgres and the Ponder indexer stay on Railway. Set the Vercel
