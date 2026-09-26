@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { decodeAbiParameters, decodeFunctionData, encodeFunctionData, maxUint160, parseAbiParameters, type Address } from "viem";
+import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, maxUint160, parseAbiParameters as pap, type Log, parseAbiParameters, type Address } from "viem";
 import { abi, universalRouterAbi } from "@kura/shared";
 import {
   buildSwapSteps,
+  feesFromReceipt,
   impliedCardValue,
   livePrice,
   loadPool,
@@ -10,6 +11,7 @@ import {
   marketPrice,
   pctDelta,
   poolKeyOf,
+  swapFromReceipt,
   swapSeries,
   type MarketChain,
   type PoolRow,
@@ -243,3 +245,23 @@ function sqrt(n: bigint): bigint {
   }
   return x;
 }
+
+describe("receipts", () => {
+  const log = (address: Address, eventName: "ShardSwap" | "FeesCollected", args: Record<string, unknown>, data: `0x${string}`): Log =>
+    ({ address, topics: encodeEventTopics({ abi: abi.shardMarket, eventName, args } as never), data, blockNumber: 1n, logIndex: 0, transactionHash: "0x", transactionIndex: 0, blockHash: "0x", removed: false }) as unknown as Log;
+  const swap = (cardId: bigint, shardDelta: bigint, usdcDelta: bigint, from = HOOK) =>
+    log(from, "ShardSwap", { cardId, poolId: `0x${"11".repeat(32)}` }, encodeAbiParameters(pap("int256,int256,uint160"), [shardDelta, usdcDelta, 1n]));
+
+  it("reads the trade from ShardSwap, only from the market and for this card", () => {
+    expect(swapFromReceipt([swap(1n, 3n * SHARD, -30_000_000n)], 1n, HOOK)).toEqual({ side: "buy", shards: 3n * SHARD, usdc: 30_000_000n });
+    expect(swapFromReceipt([swap(1n, -SHARD, 9_000_000n)], 1n, HOOK)).toEqual({ side: "sell", shards: SHARD, usdc: 9_000_000n });
+    expect(swapFromReceipt([swap(2n, SHARD, -1n)], 1n, HOOK)).toBeNull();
+    expect(swapFromReceipt([swap(1n, SHARD, -1n, USDC)], 1n, HOOK)).toBeNull();
+  });
+
+  it("reads the fees an LP owner collected", () => {
+    const l = log(HOOK, "FeesCollected", { cardId: 1n, lpOwner: ME.toLowerCase() }, encodeAbiParameters(pap("uint256,uint256"), [SHARD / 10n, 420_000n]));
+    expect(feesFromReceipt([l], 1n, HOOK)).toEqual({ shards: SHARD / 10n, usdc: 420_000n });
+    expect(feesFromReceipt([], 1n, HOOK)).toBeNull();
+  });
+});

@@ -20,6 +20,7 @@ import { addresses } from "@/lib/chain";
 import { PREMIUM_NEUTRAL, SERIES, premiumLabel } from "@/lib/chart-colors";
 import { clearingPerShard, custodians, holdersView, pct, shareOf, toClaimColor } from "@/lib/card-view";
 import { money, shardsFixed, shortAddress } from "@/lib/format";
+import { swapSeries } from "@/lib/market";
 import { distanceToRedemption, feesByKind, fillRate, impliedValueUsdc, participation, premium, tokensSold } from "@/lib/metrics";
 import { marketPerShard, priceSourceLabel, quoteUsdc } from "@/lib/pricing";
 import { clearingLevel, demandCurve, holderSeries } from "@/lib/series";
@@ -32,6 +33,8 @@ const AUCTION_BARS = 13;
 const LIVE_BARS = 20;
 const FLAT_BARS = 6;
 const HOLDER_BARS = 12;
+/** Pool price samples after the settle, at most. */
+const POOL_BARS = 12;
 const UNCLAIMED_COLOR = "color-mix(in srgb, var(--kura-muted) 45%, transparent)";
 
 /** USDC (6 decimals) as a plain number of dollars, for the charts. */
@@ -90,7 +93,19 @@ export function cardAnalyticsView({ data, now, market, feeBps }: AnalyticsInput)
     if (points.at(-1)!.t < settle.timestamp) points.push({ t: settle.timestamp, clearing: dollars(final) });
     const end = redeem ? redeem.timestamp : now;
     const step = (end - settle.timestamp) / FLAT_BARS;
-    if (step > 0) for (let k = 1; k <= FLAT_BARS; k++) points.push({ t: Math.round(settle.timestamp + k * step), clearing: dollars(final) });
+    const times: number[] = [];
+    if (step > 0) for (let k = 1; k <= FLAT_BARS; k++) times.push(Math.round(settle.timestamp + k * step));
+    // The pool opened at the settle: its price after each swap, held between swaps (a step), until now or the buyout.
+    const opened = ofToken(data.activities, "pool_opened", s.shardToken);
+    const pool = data.pool && lc(data.pool.shardToken) === lc(s.shardToken) ? data.pool : null;
+    const series = swapSeries(data.swaps ?? [], pool, opened?.amount ?? final);
+    if (series.length > 0) {
+      for (const p of lastPerBucket(series.slice(1).filter((x) => x.t > settle.timestamp && x.t <= end), POOL_BARS)) times.push(p.t);
+      times.sort((a, b) => a - b);
+      points.at(-1)!.pool = series[0]!.usd;
+    }
+    const poolAt = (t: number) => series.filter((x) => x.t <= t).at(-1)?.usd ?? series[0]?.usd;
+    for (const t of [...new Set(times)]) points.push({ t, clearing: dollars(final), ...(series.length > 0 ? { pool: poolAt(t) } : {}) });
     marks.push({ t: settle.timestamp, label: "S" });
     if (redeem) marks.push({ t: redeem.timestamp, label: "B" });
   }

@@ -1,12 +1,13 @@
 "use client";
 
 import type * as React from "react";
-import { Bar, BarChart, Cell, LabelList, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, Cell, ComposedChart, LabelList, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ALPHA, SERIES, hhmm, usd } from "@/lib/chart-colors";
 import { ChartFrame, SwatchNote } from "./chart-frame";
 import { ChartTip } from "./chart-tip";
 
-export type PricePoint = { t: number; clearing: number };
+/** `pool`: the Uniswap pool price at `t`, once the pool opened at settle. */
+export type PricePoint = { t: number; clearing: number; pool?: number };
 /** A chip over the bar nearest `t`: "S" settle, "A" appraisal, "B" buyout. */
 export type PriceMark = { t: number; label: string };
 
@@ -79,20 +80,23 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
     byIndex.set(i, prev ? `${prev}·${m.label}` : m.label);
   }
   const rows: Row[] = points.map((p, i) => ({ ...p, after: settledAt != null && p.t > settledAt, mark: byIndex.get(i) ?? null }));
-  const { domain, ticks } = priceScale(points.map((p) => p.clearing));
+  const hasPool = points.some((p) => p.pool != null);
+  const { domain, ticks } = priceScale(points.flatMap((p) => (p.pool != null ? [p.clearing, p.pool] : [p.clearing])));
   const [lo, hi] = domain;
   const marketInRange = market != null && market >= lo && market <= hi;
   return (
     <ChartFrame
       title="Price per shard"
-      subtitle="Auction clearing against market, appraisal and buyout marked"
-      legend={[{ label: "Clearing", color: SERIES.s1 }, ...(market != null ? [{ label: "Market", color: SERIES.s2 }] : [])]}
-      table={{ columns: ["Time (UTC)", "Clearing $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2)]) }}
+      subtitle={hasPool ? "Auction clearing, then the pool price, against market; appraisal and buyout marked" : "Auction clearing against market, appraisal and buyout marked"}
+      legend={[{ label: "Clearing", color: SERIES.s1 }, ...(hasPool ? [{ label: "Pool price", color: SERIES.s3 }] : []), ...(market != null ? [{ label: "Market", color: SERIES.s2 }] : [])]}
+      table={hasPool
+        ? { columns: ["Time (UTC)", "Clearing $ / shard", "Pool $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2), p.pool != null ? usd(p.pool, 2) : "n/a"]) }
+        : { columns: ["Time (UTC)", "Clearing $ / shard"], rows: points.map((p) => [hhmm(p.t), usd(p.clearing, 2)]) }}
       footer={footer ?? (market != null && <SwatchNote color={SERIES.s2}>Market {usd(market, 2)} / shard, flat over the window</SwatchNote>)}
     >
       <div style={{ height }} role="img" aria-label={`Clearing price per shard over ${points.length} samples`}>
         <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height }}>
-          <BarChart data={rows} margin={{ top: 26, right: 0, bottom: 8, left: 0 }} barCategoryGap={2}>
+          <ComposedChart data={rows} margin={{ top: 26, right: 0, bottom: 8, left: 0 }} barCategoryGap={2}>
             <XAxis dataKey="t" hide />
             <YAxis
               domain={[lo, hi]}
@@ -110,7 +114,7 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
               isAnimationActive={false}
               content={({ active, payload }) => {
                 const row = active ? (payload?.[0]?.payload as Row | undefined) : undefined;
-                return row ? <ChartTip label={`${hhmm(row.t)} UTC`} value={`${usd(row.clearing, 2)} / shard`} /> : null;
+                return row ? <ChartTip label={`${hhmm(row.t)} UTC`} value={row.pool != null ? `pool ${usd(row.pool, 2)} / shard` : `${usd(row.clearing, 2)} / shard`} /> : null;
               }}
             />
             {marketInRange && <ReferenceLine y={market} stroke={SERIES.s2} strokeWidth={1.5} strokeDasharray="4 3" />}
@@ -118,7 +122,8 @@ export function PriceBars({ points, marks = [], settledAt, market = null, footer
               {rows.map((r, i) => <Cell key={i} fill={r.after ? ALPHA.s1_25 : ALPHA.s1_67} />)}
               <LabelList dataKey="mark" content={Chip} />
             </Bar>
-          </BarChart>
+            {hasPool && <Line dataKey="pool" type="stepAfter" stroke={SERIES.s3} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />}
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </ChartFrame>

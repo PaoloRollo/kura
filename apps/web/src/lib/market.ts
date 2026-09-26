@@ -2,7 +2,7 @@
 // live price from StateView, quotes from the V4 Quoter and the swap steps through Permit2 and the Universal Router.
 // Chain access is injected (`MarketChain`), so node tests cover all of it.
 import { desc, eq } from "@ponder/client";
-import { maxUint160, maxUint256, type Abi, type Address, type Hex } from "viem";
+import { isAddressEqual, maxUint160, maxUint256, parseEventLogs, type Abi, type Address, type Hex, type Log } from "viem";
 import {
   KURA_POOL_FEE,
   KURA_TICK_SPACING,
@@ -233,4 +233,24 @@ export function swapRevertMessage(name: string | null | undefined): { title: str
     default:
       return null;
   }
+}
+
+const abs = (x: bigint) => (x < 0n ? -x : x);
+
+/**
+ * The trade a swap receipt made on this card's pool, from ShardMarket's ShardSwap (only logs ShardMarket emitted).
+ * Null when the receipt has none; the success state then falls back to the quote.
+ */
+export function swapFromReceipt(logs: readonly Log[], cardId: bigint, market: Address): { side: SwapSide; shards: bigint; usdc: bigint } | null {
+  const own = logs.filter((l) => isAddressEqual(l.address, market));
+  const ev = parseEventLogs({ abi: abi.shardMarket, eventName: "ShardSwap", logs: own }).find((l) => l.args.cardId === cardId);
+  if (!ev) return null;
+  return { side: ev.args.shardDelta > 0n ? "buy" : "sell", shards: abs(ev.args.shardDelta), usdc: abs(ev.args.usdcDelta) };
+}
+
+/** What a `collectFees` receipt paid the LP owner, from FeesCollected. Null when the receipt has none. */
+export function feesFromReceipt(logs: readonly Log[], cardId: bigint, market: Address): { shards: bigint; usdc: bigint } | null {
+  const own = logs.filter((l) => isAddressEqual(l.address, market));
+  const ev = parseEventLogs({ abi: abi.shardMarket, eventName: "FeesCollected", logs: own }).find((l) => l.args.cardId === cardId);
+  return ev ? { shards: ev.args.shardAmount, usdc: ev.args.usdcAmount } : null;
 }
