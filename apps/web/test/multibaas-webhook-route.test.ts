@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const pub = vi.hoisted(() => ({ calls: [] as bigint[], fail: false, invalidations: 0 }));
+const pub = vi.hoisted(() => ({ calls: [] as bigint[], fail: false, invalidations: 0, onPublish: null as null | (() => void) }));
 vi.mock("@/lib/settled-appraisal", () => ({
   publishSettledAppraisal: vi.fn(async (id: bigint) => {
     if (pub.fail) throw new Error("indexer down");
+    pub.onPublish?.();
     pub.calls.push(id);
     return "written";
   }),
@@ -14,7 +15,7 @@ import { createTestDb } from "@/lib/db/migrate";
 import { getDb } from "@/lib/db/client";
 import { multibaasDeliveries } from "@/lib/db/schema";
 import { deployments } from "@/lib/deployments";
-import { signMultibaas } from "@/lib/multibaas/webhook";
+import { MAX_WEBHOOK_BODY_BYTES, WEBHOOK_DEADLINE_MS, signMultibaas } from "@/lib/multibaas/webhook";
 import { POST } from "@/app/api/webhooks/multibaas/route";
 import { settledDelivery } from "./fixtures/multibaas";
 
@@ -41,12 +42,14 @@ describe("POST /api/webhooks/multibaas", () => {
     pub.calls = [];
     pub.fail = false;
     pub.invalidations = 0;
+    pub.onPublish = null;
     // Only the console spies are restored: the mocked publishSettledAppraisal must keep its implementation.
     quiet = [vi.spyOn(console, "warn").mockImplementation(() => {}), vi.spyOn(console, "error").mockImplementation(() => {})];
   });
   afterEach(() => {
     delete process.env.MULTIBAAS_WEBHOOK_SECRET;
     for (const s of quiet) s.mockRestore();
+    vi.useRealTimers();
   });
 
   it("refuses unsigned, forged, tampered and replayed-old deliveries, touching nothing", async () => {
@@ -77,6 +80,44 @@ describe("POST /api/webhooks/multibaas", () => {
     expect((await post("{not json")).status).toBe(400);
     expect((await post('{"id":"x"}')).status).toBe(400);
     expect((await post("[]")).status).toBe(400);
+  });
+
+  it("answers 413 for a body over MAX_WEBHOOK_BODY_BYTES, by Content-Length or as it streams, before checking anything", async () => {
+    const big = JSON.stringify([settledDelivery(vault(), { card: 4, id: "x".repeat(150) })]).padEnd(MAX_WEBHOOK_BODY_BYTES + 1, " ");
+    const ts = String(nowSec());
+    const headers = { "x-multibaas-timestamp": ts, "x-multibaas-signature": signMultibaas(enc(big), ts, SECRET) };
+    const unread = new ReadableStream<Uint8Array>();
+    const declared = { headers: new Headers({ ...headers, "content-length": String(MAX_WEBHOOK_BODY_BYTES + 1) }), body: unread } as unknown as Request;
+    const res = await POST(declared);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error.code).toBe("TOO_LARGE");
+    expect(unread.locked).toBe(false);
+    const bytes = enc(big);
+    const streamed = new Request("http://x/api/webhooks/multibaas", {
+      method: "POST",
+      headers,
+      body: new ReadableStream({ start(c) { c.enqueue(bytes.slice(0, 600_000)); c.enqueue(bytes.slice(600_000)); c.close(); } }),
+      duplex: "half",
+    } as RequestInit);
+    expect((await POST(streamed)).status).toBe(413);
+    expect(await getDb().select().from(multibaasDeliveries)).toEqual([]);
+    expect(pub.calls).toEqual([]);
+  });
+
+  it("ignores the odd items of a signed batch instead of refusing it", async () => {
+    const res = await post(JSON.stringify([{ nope: true }, settledDelivery(vault(), { card: 4 })]));
+    expect(res.status).toBe(200);
+    expect((await res.json()).results).toEqual([{ id: "#0", outcome: "ignored" }, { id: "delivery-4-3", outcome: "written" }]);
+    expect(pub.calls).toEqual([4n]);
+  });
+
+  it("defers the appraisals left once WEBHOOK_DEADLINE_MS has passed, still 200", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    pub.onPublish = () => vi.setSystemTime(Date.now() + WEBHOOK_DEADLINE_MS);
+    const res = await post(JSON.stringify([7, 8].map((card) => settledDelivery(vault(), { card }))));
+    expect(res.status).toBe(200);
+    expect((await res.json()).results.map((r: { outcome: string }) => r.outcome)).toEqual(["written", "deferred"]);
+    expect(pub.calls).toEqual([7n]);
   });
 
   it("publishes a settled card's appraisal once, a redelivery under a new id included, and drops the dashboard memo", async () => {

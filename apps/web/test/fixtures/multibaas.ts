@@ -3,10 +3,11 @@ import type { WebhookDelivery } from "@/lib/multibaas/webhook";
 /** A MultiBaas event.emitted delivery of CardVault's AuctionSettled, shaped like https://docs.curvegrid.com/multibaas/webhooks. */
 export function settledDelivery(
   vault: string,
-  o: { card: number; graduated?: unknown; tx?: string; logIndex?: number; id?: string; removed?: boolean; name?: string },
+  o: { card: number; graduated?: unknown; tx?: string; logIndex?: number | null; id?: string; removed?: boolean; name?: string },
 ): WebhookDelivery {
   const tx = o.tx ?? `0x${o.card.toString(16).padStart(64, "0")}`;
-  const logIndex = o.logIndex ?? 3;
+  // null: a rawFields without logIndex.
+  const logIndex = o.logIndex === undefined ? 3 : o.logIndex;
   const input = (name: string, value: unknown, type: string) => ({ name, value, hashed: false, type });
   return {
     id: o.id ?? `delivery-${o.card}-${logIndex}`,
@@ -24,7 +25,7 @@ export function settledDelivery(
           input("feeUsdc", "128400000", "uint256"),
           input("graduated", o.graduated ?? true, "bool"),
         ],
-        rawFields: JSON.stringify({ address: vault.toLowerCase(), transactionHash: tx.toLowerCase(), logIndex: `0x${logIndex.toString(16)}`, removed: o.removed ?? false }),
+        rawFields: JSON.stringify({ address: vault.toLowerCase(), transactionHash: tx.toLowerCase(), ...(logIndex === null ? {} : { logIndex: `0x${logIndex.toString(16)}` }), removed: o.removed ?? false }),
         contract: { address: vault, addressLabel: "kura_vault", name: "CardVault", label: "kura_cardvault" },
         indexInLog: 0,
       },

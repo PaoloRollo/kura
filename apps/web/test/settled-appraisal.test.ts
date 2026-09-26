@@ -4,7 +4,8 @@ import { createTestDb } from "@/lib/db/migrate";
 import { getDb } from "@/lib/db/client";
 import { ensAppraisalWrites } from "@/lib/db/schema";
 import { resetAppraisalWritesForTests, type DbTx, type Deps } from "@/lib/appraise";
-import { publishSettledAppraisal } from "@/lib/settled-appraisal";
+import { PRICE_LOOKUP_TIMEOUT_MS, fetchWithTimeout, publishSettledAppraisal, settledAppraisalDeps } from "@/lib/settled-appraisal";
+import { Scryfall, ScryfallUnavailableError } from "@/lib/scryfall";
 import { MIN_SIGNER_BALANCE_WEI } from "@/lib/signer-floor";
 
 const NODE = `0x${"11".repeat(32)}` as Hex;
@@ -64,6 +65,20 @@ describe("publishSettledAppraisal", () => {
     expect(await publishSettledAppraisal(7n, deps({ loadCard: vi.fn(async () => ({ ...card, state: "whole" })) }))).toBe("not-sharded");
     expect(await publishSettledAppraisal(7n, deps({ loadEnsNode: vi.fn(async () => null) }))).toBe("no-name");
     expect(await publishSettledAppraisal(7n, deps({ price: vi.fn(async () => ({ quote: null, source: null, pricedAt: null })) }))).toBe("no-price");
+  });
+
+  it("gives up on a hanging price request, which the Scryfall client reports as unavailable", async () => {
+    const seen: RequestInit[] = [];
+    const hang: typeof fetch = (_input, init) => {
+      seen.push(init ?? {});
+      return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+    };
+    const client = new Scryfall({ fetchImpl: fetchWithTimeout(30, hang) });
+    await expect(client.getCard("00000000-0000-0000-0000-000000000000")).rejects.toBeInstanceOf(ScryfallUnavailableError);
+    expect(seen[0]!.headers).toBeDefined();
+    expect(PRICE_LOOKUP_TIMEOUT_MS).toBeLessThan(15_000);
+    // The route's default deps are lib/appraise's, with only the price lookup swapped.
+    expect(settledAppraisalDeps.price).not.toBe(deps().price);
   });
 
   it("throws when the indexer is unreachable, so the webhook asks for a retry", async () => {

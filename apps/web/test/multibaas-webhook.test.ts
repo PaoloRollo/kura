@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db/client";
 import { multibaasDeliveries } from "@/lib/db/schema";
 import { DELIVERY_STALE_SEC, claimDelivery, finishDelivery } from "@/lib/multibaas/deliveries";
 import {
-  MAX_APPRAISALS_PER_REQUEST, WEBHOOK_TOLERANCE_SEC, parseEmitted, processDeliveries, signMultibaas, verifyMultibaasSignature, type WebhookDeps,
+  MAX_APPRAISALS_PER_REQUEST, MAX_WEBHOOK_BODY_BYTES, WEBHOOK_TOLERANCE_SEC, parseEmitted, processDeliveries, readCappedBody, signMultibaas, verifyMultibaasSignature, type WebhookDeps,
 } from "@/lib/multibaas/webhook";
 import { settledDelivery } from "./fixtures/multibaas";
 
@@ -47,6 +47,53 @@ describe("parseEmitted", () => {
     expect(parseEmitted(settledDelivery(VAULT, { card: 3, removed: true }))!.removed).toBe(true);
     expect(parseEmitted({ id: "x", event: "transaction.included", data: {} })).toBeNull();
     expect(parseEmitted({ id: "x", event: "event.emitted", data: { nope: 1 } })).toBeNull();
+  });
+
+  it("has no key without rawFields.logIndex (indexInLog is no stand-in), and takes a numeric one", () => {
+    expect(parseEmitted(settledDelivery(VAULT, { card: 3, logIndex: null }))!.key).toBeNull();
+    const d = settledDelivery(VAULT, { card: 3, tx: `0x${"ab".repeat(32)}` });
+    const data = d.data as { event: { rawFields: string } };
+    data.event.rawFields = JSON.stringify({ ...JSON.parse(data.event.rawFields), logIndex: 7 });
+    expect(parseEmitted(d)!.key).toBe(`0x${"ab".repeat(32)}:7`);
+    data.event.rawFields = "not json";
+    expect(parseEmitted(d)!.key).toBeNull();
+  });
+});
+
+describe("readCappedBody", () => {
+  const stream = (chunks: number[], pulled: { n: number; cancelled: boolean }) =>
+    new ReadableStream<Uint8Array>({
+      pull(c) {
+        const size = chunks[pulled.n++];
+        if (size === undefined) c.close();
+        else c.enqueue(new Uint8Array(size).fill(65));
+      },
+      cancel() { pulled.cancelled = true; },
+    });
+  const req = (body: ReadableStream<Uint8Array> | null, contentLength?: string) =>
+    ({ headers: new Headers(contentLength === undefined ? {} : { "content-length": contentLength }), body }) as unknown as Request;
+
+  it("reads a body up to the cap", async () => {
+    const pulled = { n: 0, cancelled: false };
+    expect((await readCappedBody(req(stream([10, 20], pulled))))!.byteLength).toBe(30);
+    expect((await readCappedBody(req(null)))!.byteLength).toBe(0);
+    expect((await readCappedBody(req(stream([MAX_WEBHOOK_BODY_BYTES], { n: 0, cancelled: false }), String(MAX_WEBHOOK_BODY_BYTES))))!.byteLength).toBe(MAX_WEBHOOK_BODY_BYTES);
+  });
+
+  it("refuses a declared oversize body without reading it", async () => {
+    const body = stream([10], { n: 0, cancelled: false });
+    expect(await readCappedBody(req(body, String(MAX_WEBHOOK_BODY_BYTES + 1)))).toBeNull();
+    expect(await readCappedBody(req(body, "lots"))).toBeNull();
+    // Never locked: nothing was read from it.
+    expect(body.locked).toBe(false);
+  });
+
+  it("stops reading an undeclared (or understated) body at the first chunk past the cap", async () => {
+    const half = MAX_WEBHOOK_BODY_BYTES / 2;
+    const pulled = { n: 0, cancelled: false };
+    expect(await readCappedBody(req(stream([half, half, 1, half, half], pulled)))).toBeNull();
+    expect(pulled).toEqual({ n: 3, cancelled: true });
+    expect(await readCappedBody(req(stream([half, half, 1], { n: 0, cancelled: false }), "10"))).toBeNull();
   });
 });
 
@@ -111,6 +158,40 @@ describe("processDeliveries", () => {
     // A throwing invalidate never fails the delivery.
     const out = await processDeliveries([settledDelivery(VAULT, { card: 3 })], deps({ invalidate: () => { throw new Error("boom"); } }));
     expect(out).toEqual({ retry: false, results: [{ id: "delivery-3-3", outcome: "written" }] });
+  });
+
+  it("ignores items of a batch that are not deliveries and handles the rest", async () => {
+    const good = settledDelivery(VAULT, { card: 1 });
+    const out = await processDeliveries([42, null, { id: "no-event" }, { id: 7, event: "event.emitted" }, { id: "x".repeat(300), event: "event.emitted" }, good], deps());
+    expect(out).toEqual({
+      retry: false,
+      results: [
+        { id: "#0", outcome: "ignored" },
+        { id: "#1", outcome: "ignored" },
+        { id: "no-event", outcome: "ignored" },
+        { id: "#3", outcome: "ignored" },
+        { id: "x".repeat(200), outcome: "ignored" },
+        { id: good.id, outcome: "written" },
+      ],
+    });
+    expect(published).toEqual([1n]);
+  });
+
+  it("skips a settle without rawFields.logIndex as malformed, claiming nothing", async () => {
+    const d = settledDelivery(VAULT, { card: 2, logIndex: null });
+    expect((await processDeliveries([d], deps())).results).toEqual([{ id: d.id, outcome: "malformed" }]);
+    expect(await rows()).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  it("starts no appraisal past the deadline and records the rest deferred", async () => {
+    let clock = 1_000;
+    const slow = deps({ now: () => clock, deadline: 1_000 + 15_000, publish: async (id) => { published.push(id); clock += 10_000; return "written"; } });
+    const out = await processDeliveries([1, 2, 3, 4].map((card) => settledDelivery(VAULT, { card })), slow);
+    expect(out).toMatchObject({ retry: false });
+    expect(out.results.map((r) => r.outcome)).toEqual(["written", "written", "deferred", "deferred"]);
+    expect(published).toEqual([1n, 2n]);
+    expect((await rows()).filter((r) => r.outcome === "deferred").map((r) => r.status)).toEqual(["done", "done"]);
   });
 
   it("marks a failed publish for redelivery and publishes on the retry", async () => {
