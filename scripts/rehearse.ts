@@ -1,13 +1,17 @@
-// Demo rehearsal and seeding. Drives five real cards through every path of the vault (buyout, graduated auction,
-// reserve not met, physical release, whole) with synthetic `seed…` wallets, printing each tx and asserting the result.
+// Demo rehearsal and seeding. Drives five real cards through every path of the vault and its shard market (a buyout
+// through the card's Uniswap v4 pool, a graduated auction whose pool is traded, reserve not met, physical release,
+// whole) with synthetic `seed…` wallets, printing each tx and asserting the result.
 //
 //   pnpm rehearse                 print the plan (wallets, cards, amounts, USDC and ETH budget) and exit
 //   pnpm rehearse --dry-run       run the whole scenario on a local anvil fork of Sepolia; nothing is broadcast
 //   pnpm rehearse --broadcast     run it on Sepolia (asks you to type BROADCAST; refuses without a TTY or in CI)
 //   --live-blocks N               duration of the re-sharded live auction (default 7200 blocks, about a day)
+//   --fork-url URL                dry run only: fork this RPC instead (e.g. a local anvil with a fresh Deploy.s.sol)
+//   --deployments PATH            dry run only: read the addresses from PATH instead of contracts/deployments/sepolia.json
 //
-// Broadcast runs are resumable: scripts/.rehearse-state.sepolia.json records every step and its tx hash. A rerun skips
-// finished steps, and a step with a hash but no receipt is waited for, never sent again.
+// Broadcast runs are resumable: scripts/.rehearse-state.sepolia.<cardVault>.json records every step and its tx hash. A
+// rerun skips finished steps, and a step with a hash but no receipt is waited for, never sent again. The file is keyed by
+// the vault, so a redeploy starts afresh (the old file is simply ignored; delete it when done).
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -26,8 +30,12 @@ import {
   formatUnits,
   http,
   keccak256,
+  maxUint160,
+  maxUint256,
+  maxUint48,
   parseEther,
   parseEventLogs,
+  toFunctionSelector,
   toHex,
   type Abi,
   type Account,
@@ -47,11 +55,23 @@ import {
   abi,
   bidGateDomain,
   cardVaultDomain,
+  encodeExactInSingleSwap,
+  isZeroForOne,
+  poolIdOf,
+  sortCurrencies,
+  universalRouterAbi,
+  usdcPerShardFromSqrtPrice,
+  KURA_POOL_FEE,
+  KURA_TICK_SPACING,
+  v4QuoterAbi,
+  permit2AllowanceAbi,
+  stateViewAbi,
   q96ToUsdcPerShard,
   setCode,
   slugify,
   usdcPerShardToQ96,
   type Deployments,
+  type PoolKey,
   type Ticket,
 } from "@kura/shared";
 import { exitRoute, type ExitCheckpoint } from "../apps/web/src/lib/bid-math";
@@ -76,14 +96,16 @@ export const HANDLES: Record<Role, string> = {
 
 /** Cheap real printings (Scryfall USD in the $0.25–$3 band when chosen); every price is re-read and re-quoted live. */
 export const CARDS: Record<CardKey, { scryfallId: string; owner: Role; role: string }> = {
-  A: { scryfallId: "9521375e-0bc1-45ef-b513-6d332a25f9d2", owner: "owner0", role: "buyout, then re-sharded as the live auction" }, // Lightning Bolt, 4ED
-  B: { scryfallId: "cca8eb95-d071-46a4-885c-3da25b401806", owner: "owner1", role: "graduated auction, stays sharded" }, // Counterspell, A25
+  A: { scryfallId: "9521375e-0bc1-45ef-b513-6d332a25f9d2", owner: "owner0", role: "bought out through its pool, then re-sharded as the live auction" }, // Lightning Bolt, 4ED
+  B: { scryfallId: "cca8eb95-d071-46a4-885c-3da25b401806", owner: "owner1", role: "graduated auction, stays sharded, traded on its pool" }, // Counterspell, A25
   C: { scryfallId: "5fa7af70-08d0-453f-a0b6-a408642bf03e", owner: "owner0", role: "reserve not met, all bids refunded" }, // Llanowar Elves, BTD
   D: { scryfallId: "6739a5bb-5ed7-4f15-affb-4170239d997a", owner: "owner1", role: "released at the counter (Passport ticket)" }, // Dark Ritual, SUM
   E: { scryfallId: "b635680a-12ae-49f8-a3d7-7254cb0962ec", owner: "owner0", role: "stays whole: station and owner fallback" }, // Swords to Plowshares, MB2
 };
 
 export const TOTAL_SHARDS = 16;
+/** CardVault auctions half the shards; the other half and the proceeds seed the card's pool. */
+export const FOR_SALE = TOTAL_SHARDS / 2;
 export const TICK_USDC = 10_000n; // 0.01 USDC per shard
 export const MIN_FLOOR_USDC = 50_000n; // 0.05 USDC per shard
 export const BID_TTL_SEC = 3600n; // HUMAN tickets: short-lived on purpose
@@ -95,7 +117,6 @@ export const DEFAULT_LIVE_BLOCKS = 7200;
 /** A bid: `ticks` above the floor, budget = `shardsX10 / 10` shards at that max. */
 export type BidPlan = { bidder: Role; ticks: number; shardsX10: number };
 export type AuctionPlan = {
-  forSale: number;
   floorUsdc: bigint;
   reserveUsdc: bigint;
   durationBlocks: number;
@@ -104,14 +125,15 @@ export type AuctionPlan = {
 };
 
 export const AUCTION_SHAPES: Record<"A" | "B" | "C" | "A2", Omit<AuctionPlan, "floorUsdc" | "durationBlocks">> = {
-  // 3 of 16 for sale: the owner keeps 13/16 = 81.25%, above the 80% redemption rule.
-  A: { forSale: 3, reserveUsdc: 0n, bids: [{ bidder: "bidder2", ticks: 1, shardsX10: 10 }, { bidder: "bidder1", ticks: 2, shardsX10: 10 }, { bidder: "bidder0", ticks: 3, shardsX10: 12 }] },
-  // 8 of 16, four bidders at different maxes: demand above supply, so the clearing climbs and the lowest bid is outbid.
-  B: { forSale: 8, reserveUsdc: 0n, bids: [{ bidder: "bidder3", ticks: 1, shardsX10: 10 }, { bidder: "bidder2", ticks: 2, shardsX10: 15 }, { bidder: "bidder1", ticks: 3, shardsX10: 20 }, { bidder: "bidder0", ticks: 4, shardsX10: 30 }] },
-  // Reserve far above the bids: the auction does not graduate and both bids are refunded in full.
-  C: { forSale: 4, reserveUsdc: 5n * USDC, bids: [{ bidder: "bidder3", ticks: 1, shardsX10: 10 }, { bidder: "bidder2", ticks: 2, shardsX10: 10 }] },
+  // The buyer takes the whole sale half (8.5 shards of demand for 8: partly filled at its max, the rest refunded). That
+  // is 50%; it buys the other 30% from the pool and redeems.
+  A: { reserveUsdc: 0n, bids: [{ bidder: "bidder0", ticks: 1, shardsX10: 85 }] },
+  // Four bidders at different maxes: demand above supply, so the clearing climbs and the lowest bid is outbid.
+  B: { reserveUsdc: 0n, bids: [{ bidder: "bidder3", ticks: 1, shardsX10: 10 }, { bidder: "bidder2", ticks: 2, shardsX10: 15 }, { bidder: "bidder1", ticks: 3, shardsX10: 20 }, { bidder: "bidder0", ticks: 4, shardsX10: 30 }] },
+  // Reserve far above the bids: the auction does not graduate, both bids are refunded in full and there is no pool.
+  C: { reserveUsdc: 5n * USDC, bids: [{ bidder: "bidder3", ticks: 1, shardsX10: 10 }, { bidder: "bidder2", ticks: 2, shardsX10: 10 }] },
   // The live auction for the demo, with one pre-seeded bid (the fallback if World ID fails on stage).
-  A2: { forSale: 4, reserveUsdc: 0n, bids: [{ bidder: "bidder3", ticks: 2, shardsX10: 10 }] },
+  A2: { reserveUsdc: 0n, bids: [{ bidder: "bidder3", ticks: 2, shardsX10: 10 }] },
 };
 
 export const floorToTick = (usdc: bigint, tick: bigint) => (usdc / tick) * tick;
@@ -121,6 +143,9 @@ export const floorQ96 = (floorUsdc: bigint, tickUsdc: bigint) => tickQ96(tickUsd
 export const bidMaxQ96 = (floorUsdc: bigint, tickUsdc: bigint, ticks: number) => floorQ96(floorUsdc, tickUsdc) + BigInt(ticks) * tickQ96(tickUsdc);
 /** USDC a bid spends at most: its shards at its max price. */
 export const bidBudget = (floorUsdc: bigint, tickUsdc: bigint, b: BidPlan) => (q96ToUsdcPerShard(bidMaxQ96(floorUsdc, tickUsdc, b.ticks)) * BigInt(b.shardsX10)) / 10n;
+
+/** CardVault.shardAndAuction's ShardParams (no forSale: the vault always auctions half). */
+export const shardParams = (a: AuctionPlan) => ({ totalShards: TOTAL_SHARDS, floorUsdcPerShard: a.floorUsdc, tickUsdcPerShard: TICK_USDC, reserveUsdc: a.reserveUsdc, durationBlocks: a.durationBlocks });
 
 /** Floor per shard: the market price per shard rounded down to a tick, at least MIN_FLOOR_USDC. */
 export const floorFor = (marketUsdc: bigint) => {
@@ -143,29 +168,91 @@ export function planScenario(markets: Record<CardKey, bigint>, liveBlocks: numbe
   };
 }
 
-export type Budget = { perRole: Record<Role, bigint>; totalUsdc: bigint; buyoutUsdc: bigint; ethTarget: Record<Role | "vendor", bigint> };
+// --- pool trades ---------------------------------------------------------------------------------------------------
+
+/** Card A's buyer: wins the auction, buys the rest of its 80% from the pool, redeems and re-shards the card. */
+export const BUYER: Role = "bidder0";
+export const SWAP_SLIPPAGE_BPS = 100n;
+export const POOL_FEE_BPS = 100n; // Kura pools: fee 10000 (1%)
+/** The pool-buy estimate is a constant-product bound at the clearing price; the margin covers a smaller auction fill. */
+export const BUYOUT_MARGIN_BPS = 15_000n;
+/** The buyer buys at most this many shards per swap, re-quoting and re-checking its balance between chunks. */
+export const BUYOUT_CHUNK = 2n * SHARD;
+
+/** Swaps on card B's pool after it settles, for price history: `amount` is USDC in (buy) or at most that many shards (sell). */
+export type TradePlan = { id: string; role: Role; side: "buy" | "sell"; amount: bigint };
+export const TRADES_B: readonly TradePlan[] = [
+  { id: "swap-B-1", role: "bidder3", side: "buy", amount: 100_000n },
+  { id: "swap-B-2", role: "bidder2", side: "buy", amount: 50_000n },
+  { id: "swap-B-3", role: "bidder1", side: "sell", amount: SHARD / 4n },
+];
+
+/** The smallest balance CardVault.redeem accepts: bal * 5 >= supply * 4. */
+export const redeemTarget = (supply: bigint) => (supply * 4n + 4n) / 5n;
+export const minOut = (quote: bigint, slippageBps = SWAP_SLIPPAGE_BPS) => (quote * (10_000n - slippageBps)) / 10_000n;
+
+/** Universal Router `execute` args for an exact-in swap on a Kura pool. */
+export function swapExecuteArgs(key: PoolKey, shardIsCurrency0: boolean, side: "buy" | "sell", amountIn: bigint, amountOutMin: bigint, deadline: bigint): readonly [Hex, Hex[], bigint] {
+  const { commands, inputs } = encodeExactInSingleSwap({ key, zeroForOne: isZeroForOne(side, shardIsCurrency0), amountIn, amountOutMin });
+  return [commands, inputs, deadline] as const;
+}
+
+/** ShardSwap deltas are the trader's: a buy pays exactly `amountIn` USDC for shards, a sell pays exactly `amountIn` shards. */
+export function swapSignsOk(side: "buy" | "sell", amountIn: bigint, shardDelta: bigint, usdcDelta: bigint): boolean {
+  return side === "buy" ? shardDelta > 0n && usdcDelta === -amountIn : shardDelta === -amountIn && usdcDelta > 0n;
+}
+
+export type BuyoutEstimate = { clearingUsdc: bigint; fillShards: bigint; poolShards: bigint; needShards: bigint; poolBuyUsdc: bigint; redeemUsdc: bigint };
+
+/**
+ * An upper-bound estimate of card A's buyout for the budget. The buyer's bid sets the clearing (it takes the whole sale
+ * half at its max), so the pool opens at that price with the fee-reduced proceeds, funding a full-range position of
+ * FOR_SALE × (1 − fee) shards. Buying the rest of 80% from it costs y·Δ/(x − Δ) plus the 1% pool fee, with a margin.
+ * The redeem pays max(clearing, appraisal) for the shards the buyer doesn't hold, plus the vault fee.
+ */
+export function buyoutEstimate(plan: ScenarioPlan, feeBps: bigint): BuyoutEstimate {
+  const A = plan.auctions.A;
+  const bid = A.bids.find((b) => b.bidder === BUYER);
+  if (!bid) throw new Error(`card A has no bid from the buyer ${BUYER}`);
+  const clearingUsdc = q96ToUsdcPerShard(bidMaxQ96(A.floorUsdc, TICK_USDC, bid.ticks));
+  const supply = BigInt(TOTAL_SHARDS) * SHARD;
+  const bidShards = (BigInt(bid.shardsX10) * SHARD) / 10n;
+  const fillShards = bidShards < BigInt(FOR_SALE) * SHARD ? bidShards : BigInt(FOR_SALE) * SHARD;
+  const poolShards = (BigInt(FOR_SALE) * SHARD * (10_000n - feeBps)) / 10_000n;
+  const target = redeemTarget(supply);
+  const needShards = target > fillShards ? target - fillShards : 0n;
+  if (needShards * 10n >= poolShards * 9n) throw new Error(`card A's pool (${formatUnits(poolShards, 18)} shards) can't supply the ${formatUnits(needShards, 18)} the buyer needs; raise its bid`);
+  const poolUsdc = (clearingUsdc * poolShards) / SHARD;
+  const raw = (poolUsdc * needShards) / (poolShards - needShards);
+  const poolBuyUsdc = (((raw * 10_000n) / (10_000n - POOL_FEE_BPS)) * BUYOUT_MARGIN_BPS) / 10_000n;
+  const appraisal = BigInt(plan.markets.A) / BigInt(TOTAL_SHARDS);
+  const price = clearingUsdc > appraisal ? clearingUsdc : appraisal;
+  const payout = (price * (supply - target)) / SHARD;
+  return { clearingUsdc, fillShards, poolShards, needShards, poolBuyUsdc, redeemUsdc: payout + (payout * feeBps) / 10_000n + 1n };
+}
+
+export type Budget = { perRole: Record<Role, bigint>; totalUsdc: bigint; buyoutUsdc: bigint; tradesUsdc: bigint; ethTarget: Record<Role | "vendor", bigint> };
 
 /**
  * USDC each seed wallet must hold before the run. Bids count at their full budget (refunds and payouts come back only
- * later); the buyout is bounded by the card A shards for sale at max(highest A bid, appraisal) plus the vault fee.
+ * later); the pool buys on B at their USDC in; card A's buyer also needs the pool buy and the redeem (buyoutEstimate).
  */
 export function budget(plan: ScenarioPlan, feeBps: bigint): Budget {
   const perRole = Object.fromEntries(ROLES.map((r) => [r, 0n])) as Record<Role, bigint>;
   for (const a of Object.values(plan.auctions)) for (const b of a.bids) perRole[b.bidder] += bidBudget(a.floorUsdc, TICK_USDC, b);
-  const A = plan.auctions.A;
-  const topBid = A.bids.reduce((m, b) => (b.ticks > m ? b.ticks : m), 0);
-  const topBidUsdc = q96ToUsdcPerShard(bidMaxQ96(A.floorUsdc, TICK_USDC, topBid));
-  const appraisal = BigInt(plan.markets.A) / BigInt(TOTAL_SHARDS);
-  const price = topBidUsdc > appraisal ? topBidUsdc : appraisal;
-  const payout = price * BigInt(A.forSale);
-  const buyoutUsdc = payout + (payout * feeBps) / 10_000n + 1n;
-  perRole[CARDS.A.owner] += buyoutUsdc;
+  let tradesUsdc = 0n;
+  for (const t of TRADES_B) if (t.side === "buy") { perRole[t.role] += t.amount; tradesUsdc += t.amount; }
+  const est = buyoutEstimate(plan, feeBps);
+  const buyoutUsdc = est.poolBuyUsdc + est.redeemUsdc;
+  perRole[BUYER] += buyoutUsdc;
   const totalUsdc = Object.values(perRole).reduce((a, b) => a + b, 0n);
   return {
     perRole,
     totalUsdc,
     buyoutUsdc,
-    ethTarget: { owner0: parseEther("0.03"), owner1: parseEther("0.02"), bidder0: parseEther("0.01"), bidder1: parseEther("0.01"), bidder2: parseEther("0.01"), bidder3: parseEther("0.01"), vendor: parseEther("0.02") },
+    tradesUsdc,
+    // The buyer bids twice, buys from the pool in chunks, redeems (which unwinds the pool) and re-shards card A.
+    ethTarget: { owner0: parseEther("0.02"), owner1: parseEther("0.02"), bidder0: parseEther("0.04"), bidder1: parseEther("0.015"), bidder2: parseEther("0.015"), bidder3: parseEther("0.015"), vendor: parseEther("0.02") },
   };
 }
 
@@ -197,14 +284,29 @@ export function passportTicket(holder: Address, nowSec: bigint, ttl = PASSPORT_T
 // Modes and the broadcast guard (pure)
 
 export type Mode = "plan" | "dry-run" | "broadcast";
-export function parseArgs(argv: readonly string[]): { mode: Mode; liveBlocks: number } {
+export type Args = { mode: Mode; liveBlocks: number; forkUrl?: string; deployments?: string };
+
+export function parseArgs(argv: readonly string[]): Args {
   const dry = argv.includes("--dry-run");
   const live = argv.includes("--broadcast");
   if (dry && live) throw new Error("pick one of --dry-run and --broadcast");
   const i = argv.indexOf("--live-blocks");
   const liveBlocks = i >= 0 ? Number(argv[i + 1]) : DEFAULT_LIVE_BLOCKS;
   if (!Number.isInteger(liveBlocks) || liveBlocks < 2 || liveBlocks > 1_000_000) throw new Error("--live-blocks must be an integer in 2..1000000");
-  return { mode: dry ? "dry-run" : live ? "broadcast" : "plan", liveBlocks };
+  const value = (flag: string) => {
+    const j = argv.indexOf(flag);
+    if (j < 0) return undefined;
+    const v = argv[j + 1];
+    if (!v || v.startsWith("--")) throw new Error(`${flag} needs a value`);
+    if (!dry) throw new Error(`${flag} is only for --dry-run (a broadcast uses contracts/deployments/sepolia.json and the configured RPC)`);
+    return v;
+  };
+  const forkUrl = value("--fork-url");
+  const deployments = value("--deployments");
+  const args: Args = { mode: dry ? "dry-run" : live ? "broadcast" : "plan", liveBlocks };
+  if (forkUrl) args.forkUrl = forkUrl;
+  if (deployments) args.deployments = deployments;
+  return args;
 }
 
 /** Why a broadcast must not start here, or null. Only an interactive terminal outside CI may broadcast. */
@@ -225,9 +327,17 @@ export type Json = string | number | boolean | null | Json[] | { [k: string]: Js
  * record) and the step runs afresh next time.
  */
 export type StepRecord = { status: "sent" | "done" | "skipped" | "failed"; hash?: Hex; raw?: Hex; out?: Json; failed?: Hex[] };
-export type RehearseState = { version: 1; network: string; fromBlock?: string; wallets?: Record<string, Address>; plan?: ScenarioPlan; steps: Record<string, StepRecord> };
+export type RehearseState = { version: 1; network: string; vault?: Address; fromBlock?: string; wallets?: Record<string, Address>; plan?: ScenarioPlan; steps: Record<string, StepRecord> };
 
 export const newState = (network: string): RehearseState => ({ version: 1, network, steps: {} });
+
+/** One state file per network and vault: a redeploy (new vault, new deploy block) never resumes an old run. */
+export const statePathFor = (root: string, network: string, vault: Address) => join(root, `scripts/.rehearse-state.${network}.${vault.toLowerCase()}.json`);
+
+export function stateVaultError(state: RehearseState, vault: Address): string | null {
+  if (!state.vault || state.vault.toLowerCase() === vault.toLowerCase()) return null;
+  return `the state file was written for another vault (${state.vault}, now ${vault}); it belongs to an older deployment`;
+}
 
 export type ReceiptLike = { status: "success" | "reverted"; blockNumber: bigint; transactionHash: Hex };
 export type StepIO<R extends ReceiptLike> = {
@@ -437,8 +547,8 @@ function need(name: string): string {
   return v;
 }
 
-function loadDeployments(): Deployments {
-  return DeploymentsSchema.parse(JSON.parse(readFileSync(join(ROOT, "contracts/deployments/sepolia.json"), "utf8")));
+function loadDeployments(path = "contracts/deployments/sepolia.json"): Deployments {
+  return DeploymentsSchema.parse(JSON.parse(readFileSync(resolve(ROOT, path), "utf8")));
 }
 
 const txUrl = (network: string, hash: Hex) => (network === "sepolia" ? `https://sepolia.etherscan.io/tx/${hash}` : `${hash} (fork)`);
@@ -493,9 +603,13 @@ function printPlan(cards: Record<CardKey, CardInfo>, plan: ScenarioPlan, b: Budg
   console.log("\nAuctions (16 shards, tick $0.01)");
   for (const [k, a] of Object.entries(plan.auctions)) {
     const bids = a.bids.map((x) => `${x.bidder} ${x.shardsX10 / 10} @ ${usd(q96ToUsdcPerShard(bidMaxQ96(a.floorUsdc, TICK_USDC, x.ticks)))} = ${usd(bidBudget(a.floorUsdc, TICK_USDC, x))}`).join("; ");
-    console.log(`  ${k.padEnd(2)} forSale ${a.forSale}, floor ${usd(a.floorUsdc)}, reserve ${usd(a.reserveUsdc)}, ${a.durationBlocks} blocks. Bids: ${bids}`);
+    console.log(`  ${k.padEnd(2)} forSale ${FOR_SALE} (the other ${TOTAL_SHARDS - FOR_SALE} seed the pool if it graduates), floor ${usd(a.floorUsdc)}, reserve ${usd(a.reserveUsdc)}, ${a.durationBlocks} blocks. Bids: ${bids}`);
   }
-  console.log(`\nBudget: ${usd(b.totalUsdc)} USDC in total from the deployer (buyout of A ≤ ${usd(b.buyoutUsdc)} incl. the ${Number(feeBps) / 100}% fee).`);
+  console.log("\nPool trades (Universal Router, 1% slippage)");
+  for (const t of TRADES_B) console.log(`  ${t.id}  ${t.role.padEnd(8)} ${t.side === "buy" ? `buys B shards with ${usd(t.amount)}` : `sells up to ${formatUnits(t.amount, 18)} B shards`}`);
+  const est = buyoutEstimate(plan, feeBps);
+  console.log(`  A buyout: ${BUYER} fills ≤ ${formatUnits(est.fillShards, 18)} shards at ≤ ${usd(est.clearingUsdc)}, buys ${formatUnits(est.needShards, 18)} from the pool (≤ ${usd(est.poolBuyUsdc)} with a ×${Number(BUYOUT_MARGIN_BPS) / 10_000} margin), redeems (≤ ${usd(est.redeemUsdc)})`);
+  console.log(`\nBudget: ${usd(b.totalUsdc)} USDC in total from the deployer (buyout of A ≤ ${usd(b.buyoutUsdc)} incl. the ${Number(feeBps) / 100}% fee, B buys ${usd(b.tradesUsdc)}).`);
   const eth = Object.values(b.ethTarget).reduce((x, y) => x + y, 0n);
   console.log(`ETH: at most ${formatEther(eth)} Sepolia ETH of top-ups (seed wallets and the vendor, each only when below half its target).`);
 }
@@ -595,6 +709,37 @@ const cardOf = (ctx: Ctx, id: bigint) => read<CardOnChain>(ctx, ctx.d.cardVault,
 type ShardingOnChain = { graduated: boolean; settled: boolean; clearingPriceQ96: bigint; buyoutPerShard: bigint; redeemer: Address };
 const shardingOf = (ctx: Ctx, token: Address) => read<ShardingOnChain>(ctx, ctx.d.cardVault, abi.cardVault, "shardings", [token]);
 const STATE = ["None", "Whole", "Auctioning", "Sharded", "Released"];
+const ZERO32 = `0x${"0".repeat(64)}` as Hex;
+const shards = (v: bigint) => formatUnits(v, 18);
+
+type Pool = { cardId: bigint; key: PoolKey; poolId: Hex; shardIsCurrency0: boolean };
+
+/** The card's pool as ShardMarket records it, cross-checked against the shared v4 helpers (sorting, pool id, fee). */
+async function poolOf(ctx: Ctx, cardId: bigint, shardToken: Address): Promise<Pool> {
+  const [currency0, currency1, fee, tickSpacing, hooks] = await read<readonly [Address, Address, number, number, Address]>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolKeyOf", [cardId]);
+  const poolId = await read<Hex>(ctx, ctx.d.shardMarket, abi.shardMarket, "poolIdOf", [cardId]);
+  if (poolId === ZERO32) throw new Error(`card #${cardId} has no pool`);
+  const key: PoolKey = { currency0, currency1, fee: Number(fee), tickSpacing: Number(tickSpacing), hooks };
+  const sorted = sortCurrencies(shardToken, ctx.d.usdc);
+  const same = (a: Address, b: Address) => a.toLowerCase() === b.toLowerCase();
+  if (!same(key.currency0, sorted.currency0) || !same(key.currency1, sorted.currency1)) throw new Error(`card #${cardId}: pool currencies ${currency0}/${currency1} are not the sorted shard token and USDC`);
+  if (key.fee !== KURA_POOL_FEE || key.tickSpacing !== KURA_TICK_SPACING || !same(hooks, ctx.d.shardMarket)) throw new Error(`card #${cardId}: unexpected pool key (fee ${fee}, spacing ${tickSpacing}, hooks ${hooks})`);
+  if (poolIdOf(key) !== poolId) throw new Error(`card #${cardId}: poolIdOf(key) ${poolIdOf(key)} != ShardMarket.poolIdOf ${poolId}`);
+  return { cardId, key, poolId, shardIsCurrency0: sorted.shardIsCurrency0 };
+}
+
+const quoteParams = (pool: Pool, zeroForOne: boolean, exactAmount: bigint) => [{ poolKey: pool.key, zeroForOne, exactAmount, hookData: "0x" as Hex }] as const;
+/** V4 Quoter, exact in: what `amountIn` buys. */
+const quoteIn = async (ctx: Ctx, pool: Pool, zeroForOne: boolean, amountIn: bigint) =>
+  (await ctx.pub.simulateContract({ address: ctx.d.v4Quoter, abi: v4QuoterAbi, functionName: "quoteExactInputSingle", args: quoteParams(pool, zeroForOne, amountIn) })).result[0];
+/** V4 Quoter, exact out: what `amountOut` costs. */
+const quoteOut = async (ctx: Ctx, pool: Pool, zeroForOne: boolean, amountOut: bigint) =>
+  (await ctx.pub.simulateContract({ address: ctx.d.v4Quoter, abi: v4QuoterAbi, functionName: "quoteExactOutputSingle", args: quoteParams(pool, zeroForOne, amountOut) })).result[0];
+
+async function poolPrice(ctx: Ctx, pool: Pool): Promise<bigint> {
+  const [sqrtPriceX96] = await ctx.pub.readContract({ address: ctx.d.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [pool.poolId] });
+  return usdcPerShardFromSqrtPrice(sqrtPriceX96, pool.shardIsCurrency0);
+}
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
@@ -702,9 +847,9 @@ async function shard(ctx: Ctx, key: string, cardId: bigint, owner: Wallet, a: Au
   const outOf = (e: Record<string, unknown>) => ({ token: e.shardToken as string, auction: e.auction as string, startBlock: String(e.startBlock), endBlock: String(e.endBlock) });
   const res = await step(ctx, `shard-${key}`, owner, {
     address: ctx.d.cardVault, abi: abi.cardVault, functionName: "shardAndAuction",
-    args: [cardId, { totalShards: TOTAL_SHARDS, forSale: a.forSale, floorUsdcPerShard: a.floorUsdc, tickUsdcPerShard: TICK_USDC, reserveUsdc: a.reserveUsdc, durationBlocks: a.durationBlocks }],
+    args: [cardId, shardParams(a)],
   }, {
-    note: `${a.forSale}/16 for sale, ${a.durationBlocks} blocks`,
+    note: `${FOR_SALE}/${TOTAL_SHARDS} for sale, ${a.durationBlocks} blocks`,
     parse: (r) => outOf(events(r, abi.cardVault, "CardSharded")[0].args),
     skip: async () => {
       const e = (await findLogs(ctx, ctx.d.cardVault, abi.cardVault, "CardSharded", { id: cardId }))[nth];
@@ -780,7 +925,7 @@ async function waitForBlock(ctx: Ctx, target: bigint) {
   }
 }
 
-type Settled = { graduated: boolean; clearingQ96: bigint; raised: bigint; fee: bigint };
+type Settled = { graduated: boolean; clearingQ96: bigint; raised: bigint; fee: bigint; fresh: boolean };
 
 async function settle(ctx: Ctx, key: string, cardId: bigint, token: Address, from: Wallet): Promise<Settled> {
   const outOf = (e: Record<string, unknown>) => ({ graduated: e.graduated as boolean, clearingQ96: String(e.clearingPriceQ96), raised: String(e.raisedUsdc), fee: String(e.feeUsdc) });
@@ -793,9 +938,164 @@ async function settle(ctx: Ctx, key: string, cardId: bigint, token: Address, fro
     },
   });
   const o = res.out as Record<string, string | boolean>;
-  const s = { graduated: o.graduated as boolean, clearingQ96: BigInt(o.clearingQ96 as string), raised: BigInt(o.raised as string), fee: BigInt(o.fee as string) };
+  const s = { graduated: o.graduated as boolean, clearingQ96: BigInt(o.clearingQ96 as string), raised: BigInt(o.raised as string), fee: BigInt(o.fee as string), fresh: res.fresh };
   console.log(`    ${key}: ${s.graduated ? "graduated" : "not graduated"}, clearing ${usd(q96ToUsdcPerShard(s.clearingQ96))}/shard, raised ${usd(s.raised)}, fee ${usd(s.fee)}`);
   return s;
+}
+
+/**
+ * A graduated settle seeds the card's pool: exactly one PoolSeeded for this sharding, and (right after a fresh settle)
+ * the owner holds no shards, since the held half and the unsold shards went to the pool. Not graduated: no pool.
+ */
+async function checkSeeding(ctx: Ctx, key: string, cardId: bigint, s: Sharded, set: Settled, owner: Wallet): Promise<Pool | null> {
+  const seeded = (await findLogs(ctx, ctx.d.shardMarket, abi.shardMarket, "PoolSeeded", { cardId })).filter((l) => (l.args.shardToken as string).toLowerCase() === s.token.toLowerCase());
+  if (!set.graduated) {
+    assert(seeded.length === 0, `card ${key}: not graduated, so no pool was seeded`);
+    return null;
+  }
+  assert(seeded.length === 1, `card ${key}: settle seeded its Uniswap v4 pool (PoolSeeded)`);
+  if (set.fresh) assert((await shardsOf(ctx, s.token, owner.address)) === 0n, `card ${key}: the owner holds no shards (the held half went to the pool)`);
+  const pool = await poolOf(ctx, cardId, s.token);
+  const e = seeded[0].args;
+  const opened = usdcPerShardFromSqrtPrice(e.sqrtPriceX96 as bigint, pool.shardIsCurrency0);
+  assert((e.shardIsCurrency0 as boolean) === pool.shardIsCurrency0, `card ${key}: PoolSeeded.shardIsCurrency0 matches the address sort (shard is currency${pool.shardIsCurrency0 ? 0 : 1})`);
+  console.log(`    pool ${pool.poolId}: opened at ${usd(opened)}/shard (clearing ${usd(q96ToUsdcPerShard(set.clearingQ96))}) with ${shards(e.shardAmount as bigint)} shards and ${usd(e.usdcAmount as bigint)}`);
+  return pool;
+}
+
+/** ERC20 approve(Permit2) once, then Permit2 approve(token, Universal Router, max, far future). */
+async function approveRouter(ctx: Ctx, w: Wallet, token: Address, label: string) {
+  await step(ctx, `erc20-p2-${label}-${w.role}`, w, { address: token, abi: abi.erc20, functionName: "approve", args: [ctx.d.permit2, maxUint256] }, {
+    skip: async () => ((await read<bigint>(ctx, token, abi.erc20, "allowance", [w.address, ctx.d.permit2])) >= 10n ** 30n ? "approved" : undefined),
+  });
+  await step(ctx, `p2-ur-${label}-${w.role}`, w, { address: ctx.d.permit2, abi: permit2AllowanceAbi, functionName: "approve", args: [token, ctx.d.universalRouter, maxUint160, Number(maxUint48)] }, {
+    skip: async () => {
+      const [amount, expiration] = await read<readonly [bigint, number, number]>(ctx, ctx.d.permit2, permit2AllowanceAbi, "allowance", [w.address, token, ctx.d.universalRouter]);
+      return amount >= 2n ** 150n && BigInt(expiration) > (await chainNow(ctx)) + 86_400n ? "approved" : undefined;
+    },
+  });
+}
+
+type SwapOut = { shardDelta: bigint; usdcDelta: bigint } | null;
+
+/** An exact-in swap through the Universal Router, quoted at sign time with 1% slippage. Returns the hook's ShardSwap deltas. */
+async function swap(ctx: Ctx, id: string, w: Wallet, pool: Pool, side: "buy" | "sell", amountIn: bigint, note: string): Promise<{ out: SwapOut; fresh: boolean; checked: boolean }> {
+  const started = isStarted(ctx.state.steps[id]);
+  // A sent or finished step is never re-signed, so its args are not rebuilt (nor quoted).
+  const quote = started ? 0n : await quoteIn(ctx, pool, isZeroForOne(side, pool.shardIsCurrency0), amountIn);
+  const args = swapExecuteArgs(pool.key, pool.shardIsCurrency0, side, amountIn, minOut(quote), (await chainNow(ctx)) + 1800n);
+  const res = await step(ctx, id, w, { address: ctx.d.universalRouter, abi: universalRouterAbi, functionName: "execute", args }, {
+    note,
+    parse: (r) => {
+      const e = events(r, abi.shardMarket, "ShardSwap").find((x) => x.address.toLowerCase() === ctx.d.shardMarket.toLowerCase() && x.args.poolId === pool.poolId);
+      return e ? { shardDelta: String(e.args.shardDelta), usdcDelta: String(e.args.usdcDelta) } : null;
+    },
+  });
+  const o = res.out as Record<string, string> | null;
+  const out = o ? { shardDelta: BigInt(o.shardDelta), usdcDelta: BigInt(o.usdcDelta) } : null;
+  if (res.fresh) {
+    assert(out, `${id}: the hook emitted ShardSwap`);
+    console.log(`    ${side === "buy" ? `+${shards(out.shardDelta)} shards for ${usd(-out.usdcDelta)}` : `${shards(out.shardDelta)} shards for +${usd(out.usdcDelta)}`}; pool price now ${usd(await poolPrice(ctx, pool))}/shard`);
+  }
+  // Only a swap signed in this run has a known amountIn to check the signs against.
+  if (res.fresh && !started && out) assert(swapSignsOk(side, amountIn, out.shardDelta, out.usdcDelta), `${id}: ShardSwap deltas have the trader's signs (${side})`);
+  return { out, fresh: res.fresh, checked: !started };
+}
+
+/** Card B stays sharded: two buys and a sell give its chart some history, then the owner collects the fees. */
+async function tradeB(ctx: Ctx, cardId: bigint, s: Sharded, pool: Pool) {
+  console.log("\nCard B: trades on the pool (Universal Router, Permit2)");
+  for (const t of TRADES_B) {
+    const w = ctx.seeds[t.role];
+    await approveRouter(ctx, w, t.side === "buy" ? ctx.d.usdc : s.token, t.side === "buy" ? "usdc" : "B");
+    let amount = t.amount;
+    if (t.side === "sell" && !isStarted(ctx.state.steps[t.id])) {
+      const bal = await shardsOf(ctx, s.token, w.address);
+      if (bal === 0n) throw new Error(`${HANDLES[t.role]} holds no card B shards to sell`);
+      if (amount > bal / 2n) amount = bal / 2n;
+    }
+    await swap(ctx, t.id, w, pool, t.side, amount, t.side === "buy" ? `${HANDLES[t.role]} buys with ${usd(amount)}` : `${HANDLES[t.role]} sells ${shards(amount)} shards`);
+  }
+  const owner = ctx.seeds[CARDS.B.owner];
+  const res = await step(ctx, "fees-B", owner, { address: ctx.d.shardMarket, abi: abi.shardMarket, functionName: "collectFees", args: [cardId] }, {
+    note: `${HANDLES[CARDS.B.owner]} collects the pool fees`,
+    parse: (r) => {
+      const e = events(r, abi.shardMarket, "FeesCollected")[0]?.args;
+      return e ? { lpOwner: e.lpOwner as string, shards: String(e.shardAmount), usdc: String(e.usdcAmount) } : null;
+    },
+  });
+  const o = res.out as Record<string, string> | null;
+  if (res.fresh) {
+    assert(o && o.lpOwner.toLowerCase() === owner.address.toLowerCase(), `FeesCollected names ${HANDLES[CARDS.B.owner]} as the LP owner`);
+    assert(BigInt(o.usdc) > 0n && BigInt(o.shards) > 0n, `the owner earned fees on both sides: ${usd(BigInt(o.usdc))} (buys) and ${shards(BigInt(o.shards))} shards (the sell)`);
+  }
+}
+
+/** The redeem bound for a buyer holding `bal`: max(clearing, appraisal) for the shards it lacks, plus the vault fee. */
+async function redeemQuote(ctx: Ctx, s: Sharded, plan: ScenarioPlan, bal: bigint) {
+  const [supply, feeBps, sh] = await Promise.all([
+    read<bigint>(ctx, s.token, abi.shardToken, "totalSupply"),
+    read<number>(ctx, ctx.d.cardVault, abi.cardVault, "feeBps").then(BigInt),
+    shardingOf(ctx, s.token),
+  ]);
+  // The redeem rule (apps/web/src/lib/buyout.ts): price = max(clearing, appraisal); payout for supply − balance; fee on top.
+  const appraisal = marketPerShard(BigInt(plan.markets.A), TOTAL_SHARDS) ?? 0n;
+  const clearing = q96ToUsdcPerShard(sh.clearingPriceQ96);
+  const price = appraisal > clearing ? appraisal : clearing;
+  const payout = (price * (supply - bal)) / SHARD;
+  return { supply, appraisal, clearing, price, payout, fee: (payout * feeBps) / 10_000n };
+}
+
+/**
+ * Card A's buyer took about half the shards in the auction; it buys from the pool, in chunks re-quoted with the V4 Quoter
+ * (exact out) and re-checking its balance, until it holds the 80% redeem needs. The deployer first tops it up to the live
+ * quote plus the redeem, so an estimate that was off doesn't strand the run.
+ */
+async function buyFromPool(ctx: Ctx, s: Sharded, pool: Pool, plan: ScenarioPlan) {
+  console.log("\nCard A: the buyer buys from the pool up to 80%");
+  const buyer = ctx.seeds[BUYER];
+  if (isStarted(ctx.state.steps["redeem-A"])) return console.log("    (redeem already sent: nothing to buy)");
+  await approveRouter(ctx, buyer, ctx.d.usdc, "usdc");
+  const supply = await read<bigint>(ctx, s.token, abi.shardToken, "totalSupply");
+  const target = redeemTarget(supply);
+  const buy = isZeroForOne("buy", pool.shardIsCurrency0);
+  let bal = await shardsOf(ctx, s.token, buyer.address);
+  console.log(`    ${HANDLES[BUYER]} holds ${shards(bal)} of ${shards(supply)} from the auction; redeem needs ${shards(target)}`);
+
+  const cost = bal < target ? await quoteOut(ctx, pool, buy, target - bal) : 0n;
+  const r = await redeemQuote(ctx, s, plan, target);
+  const want = (cost * 102n) / 100n + r.payout + r.fee + 1n;
+  let topUp = 0n;
+  const res = await runStep<TransactionReceipt>(ctx.state, "usdc-buyout-A", {
+    skip: async () => {
+      topUp = usdcTopUp(await usdcOf(ctx, buyer.address), want);
+      if (topUp === 0n) return "enough";
+      const have = await usdcOf(ctx, ctx.deployer.address);
+      const short = faucetMessage(ctx.deployer.address, topUp, have);
+      if (short && ctx.mode === "broadcast") throw new Error(short);
+      if (short) await forkDealUsdc(ctx, ctx.deployer.address, topUp);
+      return undefined;
+    },
+    ...txIO(ctx, ctx.deployer, async () => {
+      const call = { address: ctx.d.usdc, abi: abi.erc20 as Abi, functionName: "transfer", args: [buyer.address, topUp] as const };
+      return { to: ctx.d.usdc, data: encodeFunctionData(call as never), simulate: call };
+    }),
+    save: () => saveState(ctx),
+  });
+  ctx.log.push({ id: "usdc-buyout-A", hash: res.hash });
+  console.log(`  ${res.fresh ? "✓" : "·"} ${"usdc-buyout-A".padEnd(26)} ${res.hash ? txUrl(ctx.network, res.hash) : "skipped: enough USDC"}  pool quote ${usd(cost)} + redeem ${usd(r.payout + r.fee)}${res.fresh ? `, +${usd(topUp)}` : ""}`);
+
+  for (let i = 1; i <= 6; i++) {
+    bal = await shardsOf(ctx, s.token, buyer.address);
+    if (bal >= target) break;
+    const id = `pool-buy-A-${i}`;
+    const chunk = target - bal < BUYOUT_CHUNK ? target - bal : BUYOUT_CHUNK;
+    // Exact-out quote for the chunk, spent exact in (+1 unit against rounding); the swap re-quotes it for its minimum.
+    const amountIn = isStarted(ctx.state.steps[id]) ? 0n : (await quoteOut(ctx, pool, buy, chunk)) + 1n;
+    await swap(ctx, id, buyer, pool, "buy", amountIn, `${HANDLES[BUYER]} buys ${shards(chunk)} shards`);
+  }
+  bal = await shardsOf(ctx, s.token, buyer.address);
+  assert(bal * 5n >= supply * 4n, `${HANDLES[BUYER]} holds ${shards(bal)} of ${shards(supply)} card A shards (≥ 80%) after buying from the pool`);
 }
 
 async function checkpoints(ctx: Ctx, s: Sharded): Promise<ExitCheckpoint[]> {
@@ -836,23 +1136,13 @@ async function exitAndClaim(ctx: Ctx, key: string, s: Sharded, settled: Settled,
   return exits;
 }
 
-async function redeemA(ctx: Ctx, cardId: bigint, s: Sharded, owner: Wallet, plan: ScenarioPlan) {
+async function redeemA(ctx: Ctx, cardId: bigint, s: Sharded, buyer: Wallet, plan: ScenarioPlan, pool: Pool) {
   console.log("\nCard A: buyout");
-  const [supply, bal, feeBps, sh] = await Promise.all([
-    read<bigint>(ctx, s.token, abi.shardToken, "totalSupply"),
-    shardsOf(ctx, s.token, owner.address),
-    read<number>(ctx, ctx.d.cardVault, abi.cardVault, "feeBps").then(BigInt),
-    shardingOf(ctx, s.token),
-  ]);
-  // The redeem rule (apps/web/src/lib/buyout.ts): price = max(clearing, appraisal); payout for supply − balance; fee on top.
-  const appraisal = marketPerShard(BigInt(plan.markets.A), TOTAL_SHARDS) ?? 0n;
-  const clearing = q96ToUsdcPerShard(sh.clearingPriceQ96);
-  const price = appraisal > clearing ? appraisal : clearing;
-  const missing = supply - bal;
-  const payout = (price * missing) / SHARD;
-  const fee = (payout * feeBps) / 10_000n;
-  console.log(`    owner holds ${formatUnits(bal, 18)}/${formatUnits(supply, 18)}; price max(${usd(clearing)}, appraisal ${usd(appraisal)}) = ${usd(price)}; payout ${usd(payout)} + fee ${usd(fee)}`);
-  if (!ctx.state.steps["redeem-A"]) assert(bal * 5n >= supply * 4n, "the owner of A holds at least 80% of the shards");
+  const bal = await shardsOf(ctx, s.token, buyer.address);
+  const { supply, appraisal, clearing, price, payout, fee } = await redeemQuote(ctx, s, plan, bal);
+  console.log(`    ${HANDLES[BUYER]} holds ${shards(bal)}/${shards(supply)}; price max(${usd(clearing)}, appraisal ${usd(appraisal)}) = ${usd(price)}; payout ${usd(payout)} + fee ${usd(fee)}`);
+  if (!ctx.state.steps["redeem-A"]) assert(bal * 5n >= supply * 4n, "the buyer of A holds at least 80% of the shards");
+  const owner = buyer;
   await step(ctx, "approve-redeem-A", owner, { address: ctx.d.usdc, abi: abi.erc20, functionName: "approve", args: [ctx.d.cardVault, payout + fee] }, {
     skip: async () => ((await read<bigint>(ctx, ctx.d.usdc, abi.erc20, "allowance", [owner.address, ctx.d.cardVault])) >= payout + fee || ctx.state.steps["redeem-A"] ? "approved" : undefined),
   });
@@ -876,7 +1166,31 @@ async function redeemA(ctx: Ctx, cardId: bigint, s: Sharded, owner: Wallet, plan
     assert(holder.toLowerCase() === owner.address.toLowerCase() && card.state === 1, "after the buyout the redeemer holds card A's NFT and it is Whole");
     assert((await read<bigint>(ctx, ctx.d.usdc, abi.erc20, "allowance", [owner.address, ctx.d.cardVault])) === 0n, "the buyout used the exact USDC approval");
   }
+
+  // The redeem unwound the pool: frozen, its positions (principal, fees, dust) went to the card's original owner.
+  const lp = ctx.seeds[CARDS.A.owner];
+  const [unwound] = await findLogs(ctx, ctx.d.shardMarket, abi.shardMarket, "Unwound", { cardId });
+  assert(unwound && (unwound.args.lpOwner as string).toLowerCase() === lp.address.toLowerCase(), `redeem unwound card A's pool to ${HANDLES[CARDS.A.owner]} (${unwound ? `${shards(unwound.args.shardAmount as bigint)} shards, ${usd(unwound.args.usdcAmount as bigint)}` : "no Unwound event"})`);
+  assert(await read<boolean>(ctx, ctx.d.shardMarket, abi.shardMarket, "isFrozen", [cardId]), "card A's pool is frozen");
+  await assertSwapReverts(ctx, pool, buyer);
   return { price: BigInt(o.price) };
+}
+
+/** After the buyout the hook rejects swaps: the quoter's simulated swap and a real Universal Router swap both revert. */
+async function assertSwapReverts(ctx: Ctx, pool: Pool, w: Wallet) {
+  const frozen = toFunctionSelector("Frozen()").slice(2);
+  const why = (e: unknown) => {
+    const text = `${String(e)} ${JSON.stringify(e, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}`;
+    return text.toLowerCase().includes(frozen) || /Frozen/.test(text) ? "Frozen" : "reverted";
+  };
+  const buy = isZeroForOne("buy", pool.shardIsCurrency0);
+  let quoted: string | null = null;
+  await quoteIn(ctx, pool, buy, 10_000n).then(() => (quoted = null), (e) => (quoted = why(e)));
+  assert(quoted, `quoting a buy on card A's pool reverts after the buyout (${quoted ?? "it did not"})`);
+  let swapped: string | null = null;
+  const args = swapExecuteArgs(pool.key, pool.shardIsCurrency0, "buy", 1n, 0n, (await chainNow(ctx)) + 1800n);
+  await ctx.pub.simulateContract({ account: w.account, address: ctx.d.universalRouter, abi: universalRouterAbi, functionName: "execute", args }).then(() => (swapped = null), (e) => (swapped = why(e)));
+  assert(swapped, `a Universal Router swap on card A's pool reverts after the buyout (${swapped ?? "it did not"})`);
 }
 
 async function claimPayouts(ctx: Ctx, s: Sharded, price: bigint, holders: Role[]) {
@@ -919,7 +1233,7 @@ async function indexerChecks(ctx: Ctx, ids: Record<CardKey, bigint>, tokenC: Add
   throw new Error("indexer did not reach the expected card states within 150 s");
 }
 
-function writeManifest(ctx: Ctx, cards: Record<CardKey, CardInfo>, ids: Record<CardKey, bigint>, sh: Record<string, Sharded>) {
+function writeManifest(ctx: Ctx, cards: Record<CardKey, CardInfo>, ids: Record<CardKey, bigint>, sh: Record<string, Sharded>, pools: Record<string, Pool>) {
   const dir = join(ROOT, "scripts/seed");
   mkdirSync(dir, { recursive: true });
   const manifest = {
@@ -930,6 +1244,7 @@ function writeManifest(ctx: Ctx, cards: Record<CardKey, CardInfo>, ids: Record<C
     wallets: Object.fromEntries(ROLES.map((r) => [r, { address: ctx.seeds[r].address, handle: `${HANDLES[r]}.kura.eth` }])),
     cards: Object.fromEntries((Object.keys(ids) as CardKey[]).map((k) => [k, { id: ids[k].toString(), scryfallId: cards[k].scryfallId, name: cards[k].name, label: `${cards[k].slug}-${cards[k].setCode}-${ids[k]}`, owner: CARDS[k].owner, role: CARDS[k].role }])),
     shardings: Object.fromEntries(Object.entries(sh).map(([k, s]) => [k, { shardToken: s.token, auction: s.auction, startBlock: s.startBlock.toString(), endBlock: s.endBlock.toString() }])),
+    pools: Object.fromEntries(Object.entries(pools).map(([k, p]) => [k, { poolId: p.poolId, shardIsCurrency0: p.shardIsCurrency0, frozen: k === "A" }])),
     txs: Object.fromEntries(Object.entries(ctx.state.steps).filter(([, s]) => s.hash).map(([id, s]) => [id, s.hash])),
   };
   writeFileSync(join(dir, "sepolia.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -976,8 +1291,9 @@ async function startAnvil(forkUrl: string, port: number): Promise<ChildProcess> 
 
 async function main() {
   loadDotEnv();
-  const { mode, liveBlocks } = parseArgs(process.argv.slice(2));
-  const d = loadDeployments();
+  const args = parseArgs(process.argv.slice(2));
+  const { mode, liveBlocks } = args;
+  const d = loadDeployments(args.deployments);
   const rpc = process.env.ALCHEMY_HTTP_URL ?? process.env.SEPOLIA_RPC_URL;
 
   if (mode === "broadcast") {
@@ -992,7 +1308,7 @@ async function main() {
   const cards = await loadCards();
   const markets = Object.fromEntries((Object.keys(cards) as CardKey[]).map((k) => [k, cards[k].marketUsdc])) as Record<CardKey, bigint>;
   const network = mode === "broadcast" ? "sepolia" : "fork";
-  const statePath = join(ROOT, `scripts/.rehearse-state.${network}.json`);
+  const statePath = statePathFor(ROOT, network, d.cardVault);
 
   if (mode === "plan") {
     const feeBps = rpc ? BigInt(await createPublicClient({ chain: sepolia, transport: http(rpc) }).readContract({ address: d.cardVault, abi: abi.cardVault, functionName: "feeBps" })) : 250n;
@@ -1013,6 +1329,7 @@ async function main() {
   }
 
   if (!rpc) throw new Error("ALCHEMY_HTTP_URL (or SEPOLIA_RPC_URL) is not set");
+  if (d.shardMarket === ZERO) throw new Error("the deployment has no ShardMarket (shardMarket is the zero address): run Deploy.s.sol first");
   const signer = privateKeyToAccount(need("SIGNER_PRIVATE_KEY") as Hex);
   if (signer.address.toLowerCase() !== d.signer.toLowerCase()) throw new Error(`SIGNER_PRIVATE_KEY is for ${signer.address}, but the contracts trust ${d.signer}`);
   console.log(`✓ signer ${signer.address} is the deployment's signer`);
@@ -1039,8 +1356,8 @@ async function main() {
 
   let rpcUrl = rpc;
   if (mode === "dry-run") {
-    console.log("Starting anvil (nice -n 10) on :8546, forking Sepolia…");
-    anvil = await startAnvil(rpc, 8546);
+    console.log(`Starting anvil (nice -n 10) on :8546, forking ${args.forkUrl ? redact(args.forkUrl, [rpc]) : "Sepolia"}…`);
+    anvil = await startAnvil(args.forkUrl ?? rpc, 8546);
     rpcUrl = "http://127.0.0.1:8546";
     rmSync(statePath, { force: true }); // a fork is fresh every run, so its state is too
   }
@@ -1051,7 +1368,12 @@ async function main() {
   const seeds = seedWallets(mnemonic);
   const wallets = Object.fromEntries(ROLES.map((r) => [r, seeds[r].address]));
   if (state.wallets && JSON.stringify(state.wallets) !== JSON.stringify(wallets)) throw new Error(`${statePath} was written for other seed wallets (a different SEED_MNEMONIC)`);
+  const vaultErr = stateVaultError(state, d.cardVault);
+  if (vaultErr) throw new Error(`${statePath}: ${vaultErr}`);
+  state.vault = d.cardVault;
   state.wallets = wallets;
+  const marketVault = await pub.readContract({ address: d.shardMarket, abi: abi.shardMarket, functionName: "vault" });
+  if (marketVault.toLowerCase() !== d.cardVault.toLowerCase()) throw new Error(`ShardMarket ${d.shardMarket} serves vault ${marketVault}, not ${d.cardVault}`);
   const feeBps = BigInt(await pub.readContract({ address: d.cardVault, abi: abi.cardVault, functionName: "feeBps" }));
   state.plan ??= planScenario(markets, liveBlocks); // a resumed run keeps the prices and bids it started with
   state.fromBlock ??= String(await pub.getBlockNumber());
@@ -1119,21 +1441,35 @@ async function main() {
   await waitForBlock(ctx, sC.endBlock);
   const setC = await settle(ctx, "C", ids.C, sC.token, seeds[CARDS.C.owner]);
   for (const s of [setA, setB, setC]) ctx.fees += s.fee;
+  const poolA = await checkSeeding(ctx, "A", ids.A, sA, setA, seeds[CARDS.A.owner]);
+  const poolB = await checkSeeding(ctx, "B", ids.B, sB, setB, seeds[CARDS.B.owner]);
+  await checkSeeding(ctx, "C", ids.C, sC, setC, seeds[CARDS.C.owner]);
+  if (!poolA || !poolB) throw new Error("cards A and B must graduate (and open pools) for the rest of the scenario");
 
   console.log("\nExit and claim");
   await exitAndClaim(ctx, "A", sA, setA, bidsA);
   await exitAndClaim(ctx, "B", sB, setB, bidsB);
   const exitsC = await exitAndClaim(ctx, "C", sC, setC, bidsC);
 
-  const { price } = await redeemA(ctx, ids.A, sA, seeds[CARDS.A.owner], plan);
-  await claimPayouts(ctx, sA, price, [...new Set(bidsA.map((x) => x.bidder))]);
+  await tradeB(ctx, ids.B, sB, poolB);
+
+  await buyFromPool(ctx, sA, poolA, plan);
+  const { price } = await redeemA(ctx, ids.A, sA, seeds[BUYER], plan, poolA);
+  // The card's owner holds the shards the pool returned at unwind; any other auction winner holds its fill.
+  const holdersA = [CARDS.A.owner, ...new Set(bidsA.map((x) => x.bidder).filter((r) => r !== BUYER))];
+  if (!isStarted(ctx.state.steps[`payout-A-${CARDS.A.owner}`])) {
+    const back = await shardsOf(ctx, sA.token, seeds[CARDS.A.owner].address);
+    assert(back > 0n, `${HANDLES[CARDS.A.owner]} holds the ${shards(back)} shards returned from the pool`);
+  }
+  await claimPayouts(ctx, sA, price, holdersA);
 
   console.log("\nCard B: a holder sends 0.5 shards");
-  await step(ctx, "send-B", seeds[CARDS.B.owner], { address: sB.token, abi: abi.shardToken, functionName: "transfer", args: [seeds.bidder0.address, SHARD / 2n] }, {
-    note: `${HANDLES[CARDS.B.owner]} → ${HANDLES.bidder0}`,
-    // bidder0 also holds B shards from its own bid, so look for this exact transfer rather than at the balance.
+  const [fromB, toB] = [seeds.bidder0, seeds.bidder3];
+  await step(ctx, "send-B", fromB, { address: sB.token, abi: abi.shardToken, functionName: "transfer", args: [toB.address, SHARD / 2n] }, {
+    note: `${HANDLES.bidder0} → ${HANDLES.bidder3}`,
+    // bidder3 also holds B shards (its bid, its pool buy), so look for this exact transfer rather than at the balance.
     skip: async () => {
-      const sent = await findLogs(ctx, sB.token, abi.shardToken, "Transfer", { from: seeds[CARDS.B.owner].address, to: seeds.bidder0.address });
+      const sent = await findLogs(ctx, sB.token, abi.shardToken, "Transfer", { from: fromB.address, to: toB.address });
       return sent.some((l) => l.args.value === SHARD / 2n) ? "sent" : undefined;
     },
   });
@@ -1148,13 +1484,16 @@ async function main() {
   });
 
   console.log(`\nCard A: re-shard as the live auction (${plan.liveBlocks} blocks)`);
-  const sA2 = await shard(ctx, "A2", ids.A, seeds[CARDS.A.owner], plan.auctions.A2, 1);
+  // The buyer redeemed card A, so it holds the NFT and shards it again.
+  const sA2 = await shard(ctx, "A2", ids.A, seeds[BUYER], plan.auctions.A2, 1);
   await placeBids(ctx, "A2", sA2, plan.auctions.A2);
 
   console.log("\nAssertions (on chain)");
   const st = async (k: CardKey) => (await cardOf(ctx, ids[k])).state;
   assert((await st("A")) === 2, "card A is Auctioning (re-sharded, live)");
   assert((await st("B")) === 3 && setB.graduated, "card B is Sharded after a graduated auction");
+  assert(!(await read<boolean>(ctx, d.shardMarket, abi.shardMarket, "isFrozen", [ids.B])), "card B's pool is open for trading");
+  assert((await read<Hex>(ctx, d.shardMarket, abi.shardMarket, "poolIdOf", [ids.C])) === ZERO32, "card C has no pool");
   const shC = await shardingOf(ctx, sC.token);
   assert((await st("C")) === 3 && shC.settled && shC.graduated === false, "card C is Sharded and its auction did not graduate");
   assert((await shardsOf(ctx, sC.token, seeds[CARDS.C.owner].address)) === BigInt(TOTAL_SHARDS) * SHARD, "card C's owner holds all 16 shards again");
@@ -1163,15 +1502,25 @@ async function main() {
   }
   assert((await st("D")) === 4, "card D is Released");
   assert((await st("E")) === 1, "card E is Whole");
-  assert((await shardsOf(ctx, sB.token, seeds.bidder0.address)) >= SHARD / 2n, `${HANDLES.bidder0} holds the 0.5 shards sent on card B`);
+  assert((await shardsOf(ctx, sB.token, seeds.bidder3.address)) >= SHARD / 2n, `${HANDLES.bidder3} holds the 0.5 shards sent on card B`);
   // The chain is in its final state: record it before any check that could still fail.
-  if (mode === "broadcast") writeManifest(ctx, cards, ids, { A: sA, B: sB, C: sC, A2: sA2 });
+  if (mode === "broadcast") writeManifest(ctx, cards, ids, { A: sA, B: sB, C: sC, A2: sA2 }, { A: poolA, B: poolB });
   const feesPaid = (await usdcOf(ctx, payoutAddr)) - payoutBefore;
   const feeMsg = `vault fees ${usd(ctx.fees)} (settle + buyout events) reached the payout address`;
   if (ctx.resumed) console.log("  (resumed run: the fee total is checked on a fresh run only)");
   else if (mode === "dry-run") assert(feesPaid === ctx.fees, feeMsg);
   else if (feesPaid === ctx.fees) console.log(`  ✓ ${feeMsg}`);
   else console.warn(`  ! WARNING: fee mismatch: the payout address gained ${usd(feesPaid)}, the events sum to ${usd(ctx.fees)} (did it receive USDC from elsewhere during the run?)`);
+
+  if (mode === "dry-run") {
+    // The demo settles the live auction on stage: on the fork, jump to its end and check that settle (which seeds card
+    // A's second pool, after the first was unwound) would go through.
+    console.log("\nDry run: the live auction can settle");
+    await waitForBlock(ctx, sA2.endBlock);
+    let err: string | null = null;
+    await pub.simulateContract({ account: seeds[BUYER].account, address: d.cardVault, abi: abi.cardVault, functionName: "settle", args: [ids.A] }).catch((e) => (err = shortError(e)));
+    assert(err === null, `settle(A) for the live auction simulates at block ${sA2.endBlock}${err ? `: ${err}` : ""}`);
+  }
 
   if (mode === "broadcast") {
     console.log("\nAssertions (indexer)");

@@ -1,9 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { keccak256, recoverTypedDataAddress, type Hex } from "viem";
+import { decodeAbiParameters, keccak256, parseAbiParameters, recoverTypedDataAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { TICKET_TYPES, bidGateDomain, q96ToUsdcPerShard } from "@kura/shared";
+import { TICKET_TYPES, bidGateDomain, q96ToUsdcPerShard, type PoolKey } from "@kura/shared";
 import {
   AUCTION_SHAPES,
+  BUYER,
+  FOR_SALE,
+  TRADES_B,
+  buyoutEstimate,
+  minOut,
+  redeemTarget,
+  shardParams,
+  stateVaultError,
+  statePathFor,
+  swapExecuteArgs,
+  swapSignsOk,
   MAX_TOTAL_ETH,
   MAX_TOTAL_USDC,
   budgetCapError,
@@ -37,6 +48,7 @@ import {
 } from "./rehearse";
 
 const U = 10n ** 6n;
+const SHARD = 10n ** 18n;
 const markets = { A: 2_620_000n, B: 2_850_000n, C: 1_930_000n, D: 440_000n, E: 2_480_000n };
 
 describe("budget", () => {
@@ -48,27 +60,73 @@ describe("budget", () => {
   it("prices every bid at its max tick and sums the seed wallets' needs", () => {
     const plan = planScenario(markets, 7200);
     const b = budget(plan, 250n);
-    const A = plan.auctions.A;
-    // bidder0 bids on A (3 ticks, 1.2 shards) and B (4 ticks, 3 shards).
-    const b0 = bidBudget(A.floorUsdc, TICK_USDC, A.bids[2]) + bidBudget(plan.auctions.B.floorUsdc, TICK_USDC, plan.auctions.B.bids[3]);
-    expect(b.perRole.bidder0).toBe(b0);
+    const B = plan.auctions.B;
+    // bidder1 bids on B (3 ticks, 2 shards) and sells shards on the B pool (no USDC).
+    expect(b.perRole.bidder1).toBe(bidBudget(B.floorUsdc, TICK_USDC, B.bids[2]));
+    // bidder3 bids on B, C and A2 and buys on the B pool with 0.10 USDC.
+    const b3 = [plan.auctions.B.bids[0], plan.auctions.C.bids[0], plan.auctions.A2.bids[0]];
+    const auctions3 = [plan.auctions.B, plan.auctions.C, plan.auctions.A2];
+    const bids3 = b3.reduce((a, x, i) => a + bidBudget(auctions3[i].floorUsdc, TICK_USDC, x), 0n);
+    expect(b.perRole.bidder3).toBe(bids3 + TRADES_B.find((t) => t.role === "bidder3")!.amount);
+    // The owners only pay gas: their shards and the proceeds seed the pools.
+    expect(b.perRole.owner0).toBe(0n);
     expect(b.perRole.owner1).toBe(0n);
-    // The buyout bound: 3 shards at max(top A bid, appraisal) plus the 2.5% fee, rounded up by one unit.
-    const top = q96ToUsdcPerShard(bidMaxQ96(A.floorUsdc, TICK_USDC, 3));
-    const payout = top * 3n;
-    expect(b.buyoutUsdc).toBe(payout + (payout * 250n) / 10_000n + 1n);
-    expect(b.perRole.owner0).toBe(b.buyoutUsdc);
     expect(b.totalUsdc).toBe(Object.values(b.perRole).reduce((x, y) => x + y, 0n));
     // Cheap cards keep the whole run inside one faucet request.
     expect(b.totalUsdc).toBeLessThan(10n * U);
   });
 
-  it("keeps the card A owner above the 80% rule and the card C reserve above every bid", () => {
-    expect((16 - AUCTION_SHAPES.A.forSale) * 5).toBeGreaterThanOrEqual(16 * 4);
+  it("the buyer bids on A, then buys from the pool and redeems; its budget covers all three", () => {
+    const plan = planScenario(markets, 7200);
+    const b = budget(plan, 250n);
+    const A = plan.auctions.A;
+    const buyerBid = A.bids.find((x) => x.bidder === BUYER)!;
+    const est = buyoutEstimate(plan, 250n);
+    const bidsElsewhere = plan.auctions.B.bids.filter((x) => x.bidder === BUYER).reduce((a, x) => a + bidBudget(plan.auctions.B.floorUsdc, TICK_USDC, x), 0n);
+    expect(b.perRole[BUYER]).toBe(bidBudget(A.floorUsdc, TICK_USDC, buyerBid) + bidsElsewhere + est.poolBuyUsdc + est.redeemUsdc);
+    expect(b.buyoutUsdc).toBe(est.poolBuyUsdc + est.redeemUsdc);
+  });
+
+  it("estimates the pool buy with the constant-product formula, the pool fee and a margin", () => {
+    const plan = planScenario(markets, 7200);
+    const est = buyoutEstimate(plan, 250n);
+    const M = q96ToUsdcPerShard(bidMaxQ96(plan.auctions.A.floorUsdc, TICK_USDC, plan.auctions.A.bids[0].ticks));
+    expect(est.clearingUsdc).toBe(M);
+    // The buyer fills the whole sale half at best; 80% of 16 is 12.8, so 4.8 more come from the pool.
+    expect(est.fillShards).toBe(8n * SHARD);
+    expect(est.needShards).toBe(4_800_000_000_000_000_000n);
+    // Full range: the fee-reduced USDC at price M funds 8 × 0.975 = 7.8 shards.
+    expect(est.poolShards).toBe(7_800_000_000_000_000_000n);
+    const raw = (M * 78n * 48n) / (10n * 30n); // M · 7.8 · 4.8 / (7.8 − 4.8)
+    expect(est.poolBuyUsdc).toBeGreaterThanOrEqual((raw * 150n) / 100n);
+    expect(est.poolBuyUsdc).toBeLessThan((raw * 153n) / 100n);
+    // Redeem: 3.2 shards not held, at max(clearing, appraisal), plus the 2.5% fee.
+    const appraisal = markets.A / 16n;
+    const price = M > appraisal ? M : appraisal;
+    const payout = (price * 32n) / 10n;
+    expect(est.redeemUsdc).toBe(payout + (payout * 250n) / 10_000n + 1n);
+  });
+
+  it("refuses a plan whose pool couldn't supply the buyout", () => {
+    const plan = planScenario(markets, 7200);
+    plan.auctions.A = { ...plan.auctions.A, bids: [{ bidder: BUYER, ticks: 1, shardsX10: 20 }] };
+    expect(() => buyoutEstimate(plan, 250n)).toThrow(/pool/);
+  });
+
+  it("keeps the card C reserve above every bid, and the live auction's duration", () => {
     const plan = planScenario(markets, 7200);
     const bidsC = plan.auctions.C.bids.reduce((a, x) => a + bidBudget(plan.auctions.C.floorUsdc, TICK_USDC, x), 0n);
     expect(plan.auctions.C.reserveUsdc).toBeGreaterThan(bidsC);
     expect(plan.auctions.A2.durationBlocks).toBe(7200);
+  });
+
+  it("sends the new ShardParams tuple: no forSale, half the shards are always auctioned", () => {
+    const plan = planScenario(markets, 7200);
+    const p = shardParams(plan.auctions.B);
+    expect(p).toEqual({ totalShards: 16, floorUsdcPerShard: plan.auctions.B.floorUsdc, tickUsdcPerShard: TICK_USDC, reserveUsdc: 0n, durationBlocks: 30 });
+    expect("forSale" in p).toBe(false);
+    expect(FOR_SALE).toBe(8);
+    for (const a of Object.values(AUCTION_SHAPES)) expect("forSale" in a).toBe(false);
   });
 
   it("tops up only below half the target, and says where to get USDC when the deployer is short", () => {
@@ -301,6 +359,86 @@ describe("resumable steps", () => {
   });
 });
 
+describe("pool trades", () => {
+  const USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address;
+  const LOW = "0x0000000000000000000000000000000000001234" as Address;
+  const HIGH = "0xfFFfFfFffFFfFFFffFFffffFfFFfFfFfffff0001" as Address;
+  const HOOK = "0x00000000000000000000000000000000000020C0" as Address;
+  const keyOf = (shard: Address): PoolKey => {
+    const s0 = BigInt(shard) < BigInt(USDC);
+    return { currency0: s0 ? shard : USDC, currency1: s0 ? USDC : shard, fee: 10000, tickSpacing: 200, hooks: HOOK };
+  };
+  const decodeSwap = (inputs: Hex[]) => {
+    const [, params] = decodeAbiParameters(parseAbiParameters("bytes,bytes[]"), inputs[0]!);
+    const [swap] = decodeAbiParameters(parseAbiParameters("((address,address,uint24,int24,address) poolKey,bool zeroForOne,uint128 amountIn,uint128 amountOutMinimum,bytes hookData)"), params[0]!);
+    const [currencyIn] = decodeAbiParameters(parseAbiParameters("address,uint256"), params[1]!);
+    return { ...swap, currencyIn };
+  };
+
+  it.each([
+    ["shard below USDC", LOW, true],
+    ["shard above USDC", HIGH, false],
+  ] as const)("buying spends USDC and selling spends shards (%s)", (_label, shard, shardIsCurrency0) => {
+    const key = keyOf(shard);
+    const [cmds, buyInputs, deadline] = swapExecuteArgs(key, shardIsCurrency0, "buy", 100_000n, 5n, 99n);
+    expect(cmds).toBe("0x10");
+    expect(deadline).toBe(99n);
+    const buy = decodeSwap(buyInputs);
+    expect(buy.currencyIn).toBe(USDC);
+    expect(buy.zeroForOne).toBe(!shardIsCurrency0);
+    expect(buy.amountIn).toBe(100_000n);
+    expect(buy.amountOutMinimum).toBe(5n);
+    const sell = decodeSwap(swapExecuteArgs(key, shardIsCurrency0, "sell", SHARD, 1n, 99n)[1]);
+    expect(sell.currencyIn).toBe(shard);
+    expect(sell.zeroForOne).toBe(shardIsCurrency0);
+  });
+
+  it("applies 1% slippage to the quote by default", () => {
+    expect(minOut(1_000_000n)).toBe(990_000n);
+    expect(minOut(1_000_000n, 0n)).toBe(1_000_000n);
+    expect(minOut(0n)).toBe(0n);
+  });
+
+  it("checks the ShardSwap signs from the trader's side", () => {
+    expect(swapSignsOk("buy", 100n, 5n, -100n)).toBe(true);
+    expect(swapSignsOk("buy", 100n, -5n, 100n)).toBe(false);
+    expect(swapSignsOk("buy", 100n, 5n, -99n)).toBe(false);
+    expect(swapSignsOk("sell", 100n, -100n, 7n)).toBe(true);
+    expect(swapSignsOk("sell", 100n, 100n, -7n)).toBe(false);
+    expect(swapSignsOk("sell", 100n, -100n, 0n)).toBe(false);
+  });
+
+  it("the redeem target is the smallest balance the vault's 80% rule accepts", () => {
+    for (const supply of [16n * SHARD, 16n * SHARD + 3n, 7n, 5n, 1n]) {
+      const t = redeemTarget(supply);
+      expect(t * 5n >= supply * 4n).toBe(true);
+      expect((t - 1n) * 5n >= supply * 4n).toBe(false);
+    }
+  });
+
+  it("B's trades: two buys and one sell by different seed wallets", () => {
+    expect(TRADES_B.filter((t) => t.side === "buy")).toHaveLength(2);
+    expect(TRADES_B.filter((t) => t.side === "sell")).toHaveLength(1);
+    expect(new Set(TRADES_B.map((t) => t.role)).size).toBe(3);
+    expect(TRADES_B.every((t) => t.role !== BUYER)).toBe(true);
+  });
+});
+
+describe("state file", () => {
+  const vault = "0xEC598d41513A15Bb17D4FAeF5e127aB47A54f1B4" as Address;
+  it("is keyed by network and vault, so a redeploy starts a fresh file", () => {
+    expect(statePathFor("/r", "sepolia", vault)).toBe("/r/scripts/.rehearse-state.sepolia.0xec598d41513a15bb17d4faef5e127ab47a54f1b4.json");
+    expect(statePathFor("/r", "fork", vault)).toMatch(/\.rehearse-state\.fork\./);
+  });
+  it("refuses to resume a state recorded for another vault", () => {
+    const s = newState("sepolia");
+    expect(stateVaultError(s, vault)).toBeNull();
+    s.vault = vault;
+    expect(stateVaultError(s, vault.toLowerCase() as Address)).toBeNull();
+    expect(stateVaultError(s, "0x0000000000000000000000000000000000000001")).toMatch(/other vault/);
+  });
+});
+
 describe("caps and redaction", () => {
   it("refuses a plan above 10 USDC or the ETH cap", () => {
     const b = budget(planScenario(markets, 7200), 250n);
@@ -362,6 +500,13 @@ describe("broadcast guard", () => {
     expect(parseArgs([]).mode).toBe("plan");
     expect(parseArgs(["--dry-run"]).mode).toBe("dry-run");
     expect(parseArgs(["--broadcast", "--live-blocks", "300"])).toEqual({ mode: "broadcast", liveBlocks: 300 });
+    expect(parseArgs(["--dry-run", "--fork-url", "http://127.0.0.1:8547", "--deployments", "contracts/deployments/tmp/sepolia.json"])).toEqual({
+      mode: "dry-run", liveBlocks: 7200, forkUrl: "http://127.0.0.1:8547", deployments: "contracts/deployments/tmp/sepolia.json",
+    });
+    // A broadcast always uses the committed deployments and the configured RPC.
+    expect(() => parseArgs(["--broadcast", "--deployments", "x.json"])).toThrow(/--dry-run/);
+    expect(() => parseArgs(["--broadcast", "--fork-url", "http://127.0.0.1:8547"])).toThrow(/--dry-run/);
+    expect(() => parseArgs(["--dry-run", "--fork-url"])).toThrow();
     expect(() => parseArgs(["--dry-run", "--broadcast"])).toThrow();
     expect(() => parseArgs(["--live-blocks", "1"])).toThrow();
   });
