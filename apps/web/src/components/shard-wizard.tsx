@@ -165,9 +165,13 @@ const FieldError = ({ children }: { children?: string }) => (children ? <p role=
 
 /** The CTA row: pinned to the bottom of the screen on mobile (bWyqz), inline from `md` up. */
 const Pinned = ({ children }: { children: React.ReactNode }) => (
-  <div className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:border-t max-md:border-border max-md:bg-bg/95 max-md:px-4 max-md:pt-4 max-md:pb-[calc(1rem+env(safe-area-inset-bottom))] max-md:backdrop-blur md:pt-2">
-    {children}
-  </div>
+  <>
+    <div className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:border-t max-md:border-border max-md:bg-bg/95 max-md:px-4 max-md:pt-4 max-md:pb-[calc(1rem+env(safe-area-inset-bottom))] max-md:backdrop-blur md:pt-2">
+      {children}
+    </div>
+    {/* Room under the content for the pinned row, so it never covers the last field. */}
+    <div aria-hidden className="h-28 md:hidden" />
+  </>
 );
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

@@ -67,6 +67,8 @@ export function OwnerPanel({ c, name }: { c: CardData; name?: string }) {
         </Button>
         <CollectButton cardId={card.id} me={me} onReady={collect.onReady} className="sm:flex-1" />
       </div>
+      {/* Room under the content for the two pinned CTAs, so they never cover it. */}
+      <div aria-hidden className="h-36 md:hidden" />
     </Panel>
   );
 }
