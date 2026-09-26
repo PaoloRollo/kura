@@ -12,6 +12,8 @@ export type AuctionCardProps = Omit<React.ComponentProps<"article">, "children">
   set: string;
   /** Formatted clearing price per shard, e.g. "$1,712". */
   clearingPrice: string;
+  /** The price's label; "Clearing / shard" by default ("Pool / shard" once the card's shards trade on its pool). */
+  priceLabel?: string;
   /** Clearing vs market, in percent; positive is a premium. */
   premium?: number;
   /** Time left, e.g. "04:12" (a string or a ticking <Countdown>). */
@@ -32,6 +34,7 @@ export function AuctionCard({
   name,
   set,
   clearingPrice,
+  priceLabel = "Clearing / shard",
   premium,
   timeLeft,
   progress,
@@ -63,7 +66,7 @@ export function AuctionCard({
         </div>
         <div className="mt-1 flex items-end justify-between gap-3">
           <div>
-            <div className="text-[11px] text-muted-foreground">Clearing / shard</div>
+            <div className="text-[11px] text-muted-foreground">{priceLabel}</div>
             <div className="font-mono text-[20px] text-text">{clearingPrice}</div>
           </div>
           {premium != null && (

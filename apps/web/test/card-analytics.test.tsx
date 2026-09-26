@@ -146,6 +146,22 @@ describe("CardAnalytics", () => {
     expect(document.querySelector("[data-slot=kpi-strip]")).toBeNull();
   });
 
+  it("charts the pool price after the settle from the swaps, and none without a pool", () => {
+    const base = cardFixture("sharded", NOW);
+    const s = base.sharding!;
+    const settle = base.activities.find((x) => x.kind === "settle")!;
+    const pool = { cardId: 1n, poolId: "0x01", shardToken: s.shardToken, shardIsCurrency0: true, sqrtPriceX96: 0n, priceUsdcPerShard: 1_900_000_000n, seededAt: BigInt(settle.timestamp),
+      seedShards: 8n * S, seedUsdc: 1n, lastSwapAt: null, swapCount: 2, volumeUsdc: 0n, frozen: false, lpOwner: PAOLO, feesShards: 0n, feesUsdc: 0n } as NonNullable<CardData["pool"]>;
+    const swap = (id: string, dt: number, price: bigint) => ({ id, cardId: 1n, trader: KENJI, side: "buy", shardAmount: S, usdcAmount: price, priceUsdcPerShard: price, sqrtPriceX96: 0n,
+      blockNumber: BigInt(settle.timestamp + dt), timestamp: BigInt(settle.timestamp + dt), txHash: "0x" }) as NonNullable<CardData["swaps"]>[number];
+    const v = view("sharded", { pool, swaps: [swap("b", 120, 1_900_000_000n), swap("a", 60, 1_800_000_000n)] });
+    const after = v.price.points.filter((p) => p.t >= settle.timestamp);
+    expect(after[0]!.pool).toBe(1712); // opened at the clearing
+    expect(after.map((p) => p.pool)).toContain(1800);
+    expect(after.at(-1)!.pool).toBe(1900);
+    expect(view("sharded").price.points.every((p) => p.pool === undefined)).toBe(true);
+  });
+
   it("buckets long series to the last value of each bucket", () => {
     expect(lastPerBucket([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5)).toEqual([2, 4, 6, 8, 10]);
     expect(lastPerBucket([1, 2], 5)).toEqual([1, 2]);

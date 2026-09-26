@@ -78,6 +78,16 @@ describe("displayName", () => {
     expect(displayName("0x4F2CA0B3AE1F3D7A0B6D2F0C1E4B5A6D7C8EA81E", handles, parties)).toBe("kenji.kura.eth");
   });
 
+  it("names the Uniswap pool and the shard market when they are deployed", () => {
+    const pm = "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543";
+    const market = "0x5555555555555555555555555555555555550ac0";
+    const withMarket = { ...parties, poolManager: pm, shardMarket: market };
+    expect(displayName(pm.toLowerCase(), handles, withMarket)).toBe("Uniswap pool");
+    expect(displayName(market, handles, withMarket)).toBe("Kura market");
+    // Not deployed: the zero address is never a name.
+    expect(displayName("0x0000000000000000000000000000000000000000", handles, { ...parties, shardMarket: "0x0000000000000000000000000000000000000000" })).toBe("0x0000…0000");
+  });
+
   it("falls back to the short address", () => {
     expect(displayName("0x00000000000000000000000000000000000000aa", handles, parties)).toBe("0x0000…00aa");
   });

@@ -4,11 +4,12 @@ import type * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BotIcon, CheckIcon, CloudOffIcon, KeyRoundIcon, PackageOpenIcon, SendIcon } from "lucide-react";
+import { ArrowLeftRightIcon, BotIcon, CheckIcon, CloudOffIcon, KeyRoundIcon, PackageOpenIcon, SendIcon } from "lucide-react";
 import { parseUnits, type Address, type Hex, type TransactionReceipt } from "viem";
 import { abi } from "@kura/shared";
 import { Button, RedemptionMeter } from "@/components/kura";
 import { Panel } from "@/components/card-state-panel";
+import { prefillMarket, useMarketIo } from "@/components/market-panel";
 import { SendShardsSheet } from "@/components/send-shards";
 import { TxStepper } from "@/components/tx-stepper";
 import { AppraiseError, useVaultIo, type VaultIo } from "@/components/vault-io";
@@ -24,6 +25,8 @@ import { buyoutQuote, payoutFor, shardsShort, type BuyoutQuote } from "@/lib/buy
 import { addresses } from "@/lib/chain";
 import { holdersView, shareOf } from "@/lib/card-view";
 import { money, shardsFixed } from "@/lib/format";
+import { isTradable, poolKeyOf, quoteBuyExactShards, shortfallBudget } from "@/lib/market";
+import { formatUsdcInput } from "@/lib/shard-math";
 import { metaCardName } from "@/lib/meta";
 import { TxError, type Revert, type Step, type StepResult } from "@/lib/tx";
 import { cn } from "@/lib/utils";
@@ -352,8 +355,46 @@ function RedeemAction({ s, c, me, compactSteps }: { s: RedeemState; c: CardData;
   );
 }
 
+/**
+ * The shortfall's price on the card's pool (V4 Quoter exact-out) and "Buy from pool", which fills the market form with
+ * that much USDC plus 1% headroom. `onCardPage`: the form is on this page (scroll to it), else go to the card page.
+ */
+function BuyShortfall({ c, short, onCardPage }: { c: CardData; short: bigint; onCardPage: boolean }) {
+  const io = useMarketIo();
+  const pool = c.pool ?? null;
+  const q = useQuery({
+    queryKey: ["shortfall-quote", pool?.poolId ?? null, short.toString()],
+    queryFn: () => quoteBuyExactShards({ key: poolKeyOf(pool!, io.addresses), shards: short }, io),
+    enabled: isTradable(pool) && short > 0n,
+    retry: false,
+    refetchInterval: 30_000,
+  });
+  if (!isTradable(pool) || short <= 0n) return null;
+  const budget = q.data != null ? shortfallBudget(q.data) : null;
+  const fill = () => prefillMarket({
+    cardId: c.card!.id, side: "buy", amount: formatUsdcInput(budget!),
+    note: `Buys the ${shardsFixed(short)} shards you're short of 80%, with 1% headroom for the price moving.`,
+  });
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-bg/60 p-4">
+      <div className="flex items-center justify-between gap-3 text-[13px]">
+        <span className="text-text-2">Buy the {shardsFixed(short)} from the pool</span>
+        <span className="font-mono text-text">{q.data != null ? `≈ ${money(q.data)}` : q.isError ? "n/a" : "quoting…"}</span>
+      </div>
+      {q.isError && <p className="text-[12px] text-shu">The pool can&apos;t sell that many shards right now.</p>}
+      {onCardPage ? (
+        <Button variant="secondary" size="md" disabled={budget == null} onClick={fill}><ArrowLeftRightIcon aria-hidden />Buy from pool</Button>
+      ) : (
+        <Button asChild variant="secondary" size="md" disabled={budget == null}>
+          <Link href={`/app/cards/${c.card!.id}#market`} onClick={budget != null ? fill : undefined}><ArrowLeftRightIcon aria-hidden />Buy from pool</Link>
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** mnpO6 "Below 80%": how far from redeeming, in place of the redeem panel. */
-export function BelowThresholdCard({ c, balance, supply, onSend, holdersHref }: { c: CardData; balance: bigint; supply: bigint; onSend?: () => void; holdersHref: string }) {
+export function BelowThresholdCard({ c, balance, supply, onSend, holdersHref, onCardPage = true }: { c: CardData; balance: bigint; supply: bigint; onSend?: () => void; holdersHref: string; onCardPage?: boolean }) {
   const short = shardsShort(balance, supply);
   const total = c.sharding?.totalShards ?? 0;
   return (
@@ -361,9 +402,12 @@ export function BelowThresholdCard({ c, balance, supply, onSend, holdersHref }: 
       <span className="flex size-11 items-center justify-center rounded-xl bg-surface-2 text-s1"><KeyRoundIcon aria-hidden className="size-5" /></span>
       <div className="flex flex-col gap-1.5">
         <h2 className="text-[18px] font-semibold text-text">{shardsFixed(short)} shards short</h2>
-        <p className="text-[14px] text-text-2">You hold {shardsFixed(balance)} of {total}. Buy shards or wait for the next auction to reach 80% and redeem.</p>
+        <p className="text-[14px] text-text-2">
+          You hold {shardsFixed(balance)} of {total}. {isTradable(c.pool ?? null) ? "Buy the rest from the pool to reach 80% and redeem." : "Buy shards or wait for the next auction to reach 80% and redeem."}
+        </p>
       </div>
       <RedemptionMeter value={shareOf(balance, supply)} label="Distance to redemption" status={`${(shareOf(balance, supply) * 100).toFixed(1)}% · needs 80%`} />
+      <BuyShortfall c={c} short={short} onCardPage={onCardPage} />
       <div className="flex flex-wrap gap-2.5">
         <Button asChild variant="secondary" size="md"><Link href={holdersHref} scroll={false}>See holders</Link></Button>
         {onSend && <Button variant="secondary" size="md" onClick={onSend}><SendIcon aria-hidden />Send shards</Button>}
@@ -459,7 +503,7 @@ export function RedeemPage({ c, me, identity }: { c: CardData; me: Address | nul
   if (c.shardingsLoading) return <SkeletonRows />;
   if (!c.sharding) return <p className="text-[14px] text-text-2">This card isn&apos;t sharded.</p>;
   if (!s.chain) return <SkeletonRows />;
-  if (!s.eligible) return <BelowThresholdCard c={c} balance={s.chain.balance} supply={s.chain.supply} holdersHref={`/app/cards/${id}?tab=holders`} />;
+  if (!s.eligible) return <BelowThresholdCard c={c} balance={s.chain.balance} supply={s.chain.supply} holdersHref={`/app/cards/${id}?tab=holders`} onCardPage={false} />;
   const share = shareOf(s.chain.balance, s.chain.supply);
   return (
     <div className="mx-auto flex w-full max-w-[560px] flex-col gap-5">

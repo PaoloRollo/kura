@@ -97,7 +97,8 @@ function ItemCard({ it, block }: { it: AuctionItem; block: bigint }) {
       image={it.image ?? BLANK}
       name={it.name}
       set={setLine(it)}
-      clearingPrice={price(it.clearing)}
+      clearingPrice={price(it.poolPrice ?? it.clearing)}
+      priceLabel={it.poolPrice != null ? "Pool / shard" : undefined}
       premium={it.premium != null ? it.premium * 100 : undefined}
       timeLeft={timeLeft(it)}
       progress={elapsed(it, block)}
@@ -119,7 +120,7 @@ function ItemRow({ it }: { it: AuctionItem }) {
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
           <span className="truncate text-[15px] font-semibold text-text">{it.name}</span>
           <span className="truncate text-[12px] text-text-2">{[it.set, `${it.forSale} of ${it.totalShards}`].filter(Boolean).join(" · ")}</span>
-          <span className="font-mono text-[20px] leading-tight text-text">{price(it.clearing)}</span>
+          <span className="font-mono text-[20px] leading-tight text-text">{price(it.poolPrice ?? it.clearing)}{it.poolPrice != null && <span className="ml-1.5 font-sans text-[11px] text-muted-foreground">pool</span>}</span>
           <Premium premium={it.premium} />
         </div>
         <div className="flex shrink-0 flex-col items-end justify-end">

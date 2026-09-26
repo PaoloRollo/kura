@@ -4,7 +4,7 @@ import type * as React from "react";
 import { useState } from "react";
 import {
   AtSignIcon, CheckCheckIcon, ChevronLeftIcon, ChevronRightIcon, CoinsIcon, DownloadIcon, ExternalLinkIcon, FileCode2Icon,
-  GavelIcon, KeyRoundIcon, LayersIcon, PackageCheckIcon, ScanLineIcon, SendIcon, Undo2Icon, type LucideIcon,
+  ArrowLeftRightIcon, DropletsIcon, GavelIcon, KeyRoundIcon, LayersIcon, PackageCheckIcon, ScanLineIcon, SendIcon, Undo2Icon, type LucideIcon,
 } from "lucide-react";
 import { AddressName } from "@/components/address-name";
 import { explorerTx } from "@/lib/chain";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 const ICONS: Record<FeedKind, LucideIcon> = {
   bid: GavelIcon, exit: Undo2Icon, claim: DownloadIcon, settle: CheckCheckIcon, shard: LayersIcon, named: AtSignIcon, mint: ScanLineIcon,
   transfer: SendIcon, shardTransfer: SendIcon, record: FileCode2Icon, redeem: KeyRoundIcon, payout: CoinsIcon, release: PackageCheckIcon,
+  swap: ArrowLeftRightIcon, pool_opened: DropletsIcon,
 };
 
 function KindIcon({ kind }: { kind: FeedKind }) {

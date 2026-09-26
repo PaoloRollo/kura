@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { erc20Abi, type Address } from "viem";
 import { identities, useAttributes, useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
 import { useHandlesState } from "@/hooks/use-handles";
+import { usePools } from "@/hooks/use-pools";
 import { useTicket } from "@/hooks/use-ticket";
 import { useShardings, useVaultCards } from "@/hooks/use-vendor-data";
 import { addresses, publicClient } from "@/lib/chain";
@@ -92,6 +93,7 @@ export function usePortfolio(me: Hex): PortfolioData {
   const { handles } = useHandlesState();
   const { verified } = useWorldIdVerified(me);
   const usdc = useUsdcBalance(me);
+  const pools = usePools();
 
   const cardRows = useMemo(() => cards.data ?? [], [cards.data]);
   const shardingRows = useMemo(() => shardings.data ?? [], [shardings.data]);
@@ -120,7 +122,7 @@ export function usePortfolio(me: Hex): PortfolioData {
     return { name: m?.name ?? `Card #${id}`, image: m?.image || null, set: attributes[byId.get(id.toString())?.scryfallId ?? ""]?.set?.toUpperCase() ?? null };
   };
   const head = block ?? 0n;
-  const h = holdings({ me, balances: balanceRows, shardings: shardingRows, cards: cardRows, bids: bidRows, activities: activityRows, active: activeRows, block: head, ident });
+  const h = holdings({ me, balances: balanceRows, shardings: shardingRows, cards: cardRows, bids: bidRows, activities: activityRows, active: activeRows, block: head, ident, pools });
   const w = wholeCards(me, cardRows, ident, (id) => markets.get(id.toString()) ?? null);
   const releasedAt = new Map(activityRows.filter((a) => a.kind === "release").map((a) => [String(a.cardId), a.timestamp]));
   return {

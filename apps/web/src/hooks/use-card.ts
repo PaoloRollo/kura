@@ -8,6 +8,7 @@ import type { CardAttributes, CardAttributesMap } from "@/lib/card-attributes";
 import type { CardMetadata } from "@/lib/meta";
 import type { PriceQuote } from "@/lib/pricing";
 import { currentSharding } from "@/lib/card-view";
+import { loadPool, loadSwaps, type PoolRow, type SwapRow } from "@/lib/market";
 import { schema, t, type Row } from "@/lib/ponder";
 import { useKuraUser } from "@/hooks/use-kura-user";
 
@@ -30,6 +31,8 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ZERO_NODE = "0x0000000000000000000000000000000000000000000000000000000000000000";
 /** Activities fetched per card; the feed paginates client-side. */
 export const ACTIVITY_LIMIT = 500;
+/** Swaps fetched per card, for the pool price chart. */
+export const SWAP_LIMIT = 500;
 
 /** Everything the card page shows about one card. `useCard` builds it live; /design previews pass fixtures. */
 export type CardData = {
@@ -60,6 +63,10 @@ export type CardData = {
   ensNode: `0x${string}` | null;
   ensName: EnsNameRow | null;
   ensRecords: EnsRecordRow[];
+  /** The card's Uniswap pool (null: none, the auction didn't graduate or hasn't settled) and its latest swaps, newest first. */
+  pool?: PoolRow | null;
+  swaps?: SwapRow[];
+  poolLoading?: boolean;
   isLoading: boolean;
   /** The card's shardings haven't loaded yet: `sharding` null means "not known", not "not sharded". */
   shardingsLoading?: boolean;
@@ -141,6 +148,9 @@ export function useCard(id: bigint): CardData {
     queryFn: useCallback((db: Db) => db.select().from(t(schema.ensRecords)).where(eq(t(schema.ensRecords.node), node)) as Promise<EnsRecordRow[]>, [node]),
   });
 
+  const pool = usePonderQuery({ queryFn: useCallback((db: Db) => loadPool(db, id).then((p) => (p ? [p] : [])), [id]) });
+  const swaps = usePonderQuery({ queryFn: useCallback((db: Db) => loadSwaps(db, id, SWAP_LIMIT), [id]) });
+
   const meta = useQuery<CardMeta>({ queryKey: ["card-meta", id.toString()], queryFn: () => fetchJson(`/api/meta/${id}`), enabled: !!row, staleTime: 5 * 60_000, retry: 1 });
   const scryfallId = row?.scryfallId ?? "";
   const attributes = useQuery<CardAttributesMap>({
@@ -176,6 +186,9 @@ export function useCard(id: bigint): CardData {
     ensNode,
     ensName: names.data?.[0] ?? null,
     ensRecords: ensRecords.data ?? [],
+    pool: pool.data?.[0] ?? null,
+    swaps: swaps.data ?? [],
+    poolLoading: pool.isLoading,
     isLoading: card.isLoading,
     shardingsLoading: shardingRows.isLoading,
     holdersLoading: shardingRows.isLoading || (!!current && holders.isLoading),

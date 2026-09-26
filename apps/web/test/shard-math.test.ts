@@ -14,6 +14,7 @@ import {
   marketPrice,
   oneTick,
   roundFloor,
+  saleHalf,
   shardOutcome,
   TICK_MISMATCH,
   shardParamErrors,
@@ -21,7 +22,7 @@ import {
   type ShardParams,
 } from "@/lib/shard-math";
 
-const base: ShardParams = { totalShards: 16, forSale: 3, floorUsdcPerShard: 100n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 };
+const base: ShardParams = { totalShards: 16, floorUsdcPerShard: 100n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 };
 
 describe("shard math", () => {
   it("derives a floor and a tick that divides it", () => {
@@ -54,10 +55,14 @@ describe("shard math", () => {
     expect(floorPriceQ96(1_200_000_000n, 12_000_000n) % tickQ96).toBe(0n);
   });
   it("validates like the contract", () => {
-    expect(validateShardParams({ totalShards: 15, forSale: 1, floorUsdcPerShard: 10n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 })).toMatch(/multiple of 16/);
-    expect(validateShardParams({ totalShards: 16, forSale: 17, floorUsdcPerShard: 10n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 })).toMatch(/for sale/);
-    expect(validateShardParams({ totalShards: 16, forSale: 3, floorUsdcPerShard: 10n, tickUsdcPerShard: 3n, reserveUsdc: 0n, durationBlocks: 25 })).toMatch(/multiple of the tick/);
-    expect(validateShardParams({ totalShards: 16, forSale: 3, floorUsdcPerShard: 10n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 })).toBeNull();
+    expect(validateShardParams({ totalShards: 15, floorUsdcPerShard: 10n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 })).toMatch(/multiple of 16/);
+    expect(validateShardParams({ totalShards: 16, floorUsdcPerShard: 10n, tickUsdcPerShard: 3n, reserveUsdc: 0n, durationBlocks: 25 })).toMatch(/multiple of the tick/);
+    expect(validateShardParams({ totalShards: 16, floorUsdcPerShard: 10n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 })).toBeNull();
+  });
+  it("splits every sharding 50/50: half to the auction, half to the pool", () => {
+    expect(saleHalf(16)).toBe(8);
+    expect(saleHalf(32)).toBe(16);
+    expect(saleHalf(512)).toBe(256);
   });
   it("checks the duration range of AuctionSteps.linear", () => {
     expect(validateShardParams({ ...base, durationBlocks: 1 })).toMatch(/too short/);
@@ -124,7 +129,7 @@ describe("shard math", () => {
 describe("shardRevertMessage", () => {
   it("explains the vault's and the auction's rejections", async () => {
     const { shardRevertMessage } = await import("@/lib/shard-math");
-    for (const n of ["NotCardOwner", "WrongState", "InvalidShardCount", "InvalidForSale", "InvalidPricing", "DurationOutOfRange", "FloorPriceTooLow"]) {
+    for (const n of ["NotCardOwner", "WrongState", "InvalidShardCount", "InvalidPricing", "DurationOutOfRange", "FloorPriceTooLow"]) {
       expect(shardRevertMessage(n)?.title).toBeTruthy();
     }
     expect(shardRevertMessage("SomethingElse")).toBeNull();

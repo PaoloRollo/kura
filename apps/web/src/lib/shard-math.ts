@@ -4,11 +4,10 @@ import type { Sharded } from "@/lib/vendor";
 
 /**
  * `CardVault.ShardParams`, typed as viem types the ABI tuple: uint16 → number, uint256/uint128 → bigint, and uint40
- * (`durationBlocks`) → number.
+ * (`durationBlocks`) → number. There is no for-sale count: the vault always auctions half (`saleHalf`).
  */
 export type ShardParams = {
   totalShards: number;
-  forSale: number;
   floorUsdcPerShard: bigint;
   tickUsdcPerShard: bigint;
   reserveUsdc: bigint;
@@ -25,6 +24,12 @@ export const MAX_DURATION = 1_000_000;
 export const MIN_FLOOR_PRICE_Q96 = 2n ** 32n + 1n;
 export const MIN_TICK_SPACING_Q96 = 2n;
 const MAX_UINT128 = 2n ** 128n - 1n;
+
+/**
+ * The shards the auction sells: always half. The vault holds the other half, and at settle it and the auction's net
+ * proceeds open the Uniswap pool at the clearing price. `totalShards` is a multiple of 16, so the halves are whole.
+ */
+export const saleHalf = (totalShards: number) => Math.floor(totalShards / 2);
 
 /** Sepolia's block time, for turning a block count into an end date (an estimate). */
 export const BLOCK_SECONDS = 12;
@@ -97,7 +102,7 @@ export function marketPrice(q: { adjustedUsd: string | null } | null | undefined
 
 export const TICK_MISMATCH = "Floor must be a multiple of the tick";
 
-export type ShardField = "totalShards" | "forSale" | "floor" | "tick" | "reserve" | "duration";
+export type ShardField = "totalShards" | "floor" | "tick" | "reserve" | "duration";
 
 /** Every problem with `p`, keyed by the input it belongs under. Mirrors the vault's, AuctionSteps' and the CCA's checks. */
 export function shardParamErrors(p: ShardParams): Partial<Record<ShardField, string>> {
@@ -105,7 +110,6 @@ export function shardParamErrors(p: ShardParams): Partial<Record<ShardField, str
   if (p.totalShards < MIN_SHARDS || p.totalShards > MAX_SHARDS || p.totalShards % SHARD_STEP !== 0) {
     e.totalShards = "Shard count must be a multiple of 16 between 16 and 512";
   }
-  if (p.forSale < 1 || p.forSale > p.totalShards) e.forSale = "Shards for sale must be between 1 and the shard count";
   if (p.tickUsdcPerShard < 1n) e.tick = "Tick must be at least 0.000001 USDC";
   else if (usdcPerShardToQ96(p.tickUsdcPerShard) < MIN_TICK_SPACING_Q96) e.tick = "Tick is too small";
   if (!e.tick) {
@@ -119,7 +123,7 @@ export function shardParamErrors(p: ShardParams): Partial<Record<ShardField, str
   return e;
 }
 
-const ORDER: ShardField[] = ["totalShards", "forSale", "tick", "floor", "reserve", "duration"];
+const ORDER: ShardField[] = ["totalShards", "tick", "floor", "reserve", "duration"];
 
 export function validateShardParams(p: ShardParams): string | null {
   const e = shardParamErrors(p);
@@ -183,8 +187,6 @@ export function shardRevertMessage(name: string | null | undefined): { title: st
       return { title: "This card can't be sharded now", body: "It's no longer a whole card in the vault. Nothing was sent or charged." };
     case "InvalidShardCount":
       return { title: "That shard count isn't allowed", body: "Pick a multiple of 16 between 16 and 512." };
-    case "InvalidForSale":
-      return { title: "That many shards can't go up for sale", body: "Sell at least one shard and no more than the total." };
     case "InvalidPricing":
     case "FloorPriceTooLow":
     case "FloorPriceIsZero":

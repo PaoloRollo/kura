@@ -9,7 +9,7 @@ const lc = (a: string) => a.toLowerCase();
 
 type Activity = {
   id: string;
-  kind: "mint" | "shard" | "bid" | "exit" | "claim" | "settle" | "redeem" | "payout" | "release" | "named" | "transfer";
+  kind: "mint" | "shard" | "bid" | "exit" | "claim" | "settle" | "redeem" | "payout" | "release" | "named" | "transfer" | "pool_opened" | "swap";
   actor: Hex;
   amount: bigint | null;
   meta: unknown;
@@ -41,13 +41,14 @@ export type FeedRow = {
   timestamp: number;
 };
 
-export const FEED_FILTERS = ["all", "bids", "transfers", "settlement", "ens"] as const;
+export const FEED_FILTERS = ["all", "bids", "trades", "transfers", "settlement", "ens"] as const;
 export type FeedFilter = (typeof FEED_FILTERS)[number];
-export const FILTER_LABELS: Record<FeedFilter, string> = { all: "All", bids: "Bids", transfers: "Transfers", settlement: "Settlement", ens: "ENS" };
+export const FILTER_LABELS: Record<FeedFilter, string> = { all: "All", bids: "Bids", trades: "Trades", transfers: "Transfers", settlement: "Settlement", ens: "ENS" };
 
 /** Which filter each kind belongs to; mint shows under All only. */
 const FILTER_OF: Record<FeedKind, FeedFilter | null> = {
   bid: "bids", exit: "bids", claim: "bids",
+  swap: "trades", pool_opened: "trades",
   transfer: "transfers", shardTransfer: "transfers",
   shard: "settlement", settle: "settlement", redeem: "settlement", payout: "settlement", release: "settlement",
   named: "ens", record: "ens",
@@ -59,6 +60,7 @@ export const filterFeed = (rows: readonly FeedRow[], f: FeedFilter) => (f === "a
 const TITLES: Record<FeedKind, string> = {
   mint: "Minted", named: "Named", shard: "Sharded", bid: "Bid", exit: "Exited", claim: "Claimed", settle: "Settled",
   redeem: "Redeemed", payout: "Payout", release: "Released", transfer: "Transfer", shardTransfer: "Transfer", record: "ENS record",
+  pool_opened: "Pool opened", swap: "Swap",
 };
 
 /** USDC the way the rows show it: whole dollars without cents ("$1,712"), otherwise two decimals ("$128.40"). */
@@ -75,7 +77,8 @@ export type FeedContext = {
   shardings: readonly Sharding[];
   /** The card's ENS name, for "Named" rows. */
   ensName: string;
-  parties: { vendor: string; signer: string; cardVault: string };
+  /** `poolManager` and `shardMarket`, when deployed: shard transfers through them are swaps and seeding, shown as such. */
+  parties: { vendor: string; signer: string; cardVault: string; poolManager?: string; shardMarket?: string };
 };
 
 /** A role label in front ("vendor · kura.eth") is enough on its own; "anyone" (permissionless settle) is dropped. */
@@ -86,7 +89,7 @@ function shortWho(who: Part[]): Part[] {
   return who;
 }
 
-function describe(a: Activity, ctx: FeedContext): { who: Part[]; detail: Part[] } {
+function describe(a: Activity, ctx: FeedContext): { who: Part[]; detail: Part[]; title?: string } {
   const m = (a.meta ?? {}) as Record<string, unknown>;
   const actor = { address: a.actor };
   const sharding = typeof m.shardToken === "string" ? ctx.shardings.find((s) => lc(s.shardToken) === lc(m.shardToken as string)) : undefined;
@@ -130,6 +133,20 @@ function describe(a: Activity, ctx: FeedContext): { who: Part[]; detail: Part[] 
       return { who: [actor, "→", ...(typeof m.to === "string" ? [{ address: m.to as Hex }] : [])], detail: ["whole card"] };
     case "release":
       return { who: [actor], detail: ["picked up at the vault"] };
+    case "pool_opened": {
+      const price = big(m.priceUsdcPerShard) ?? a.amount;
+      const seedShards = big(m.seedShards);
+      const seedUsdc = big(m.seedUsdc);
+      const seed = seedShards != null && seedUsdc != null ? `${sh(seedShards)} + ${usd(seedUsdc)}` : null;
+      return { who: [actor], detail: [[price != null ? `at ${usd(price)}/shard` : null, seed].filter(Boolean).join(" · ")] };
+    }
+    case "swap": {
+      const buy = m.side !== "sell";
+      const shardAmount = big(m.shardAmount);
+      const price = big(m.priceUsdcPerShard);
+      const built = shardAmount != null ? `${buy ? "bought" : "sold"} ${sh(shardAmount)}${price != null ? ` at ${usd(price)}` : ""}` : "";
+      return { who: [actor], detail: [typeof m.summary === "string" && m.summary ? m.summary : built], title: buy ? "Bought" : "Sold" };
+    }
   }
 }
 
@@ -150,10 +167,12 @@ function recordWho(key: string, parties: FeedContext["parties"]): Part[] {
  */
 export function buildFeed(p: { activities: readonly Activity[]; transfers: readonly Transfer[]; records: readonly Record_[]; ctx: FeedContext }): FeedRow[] {
   const excluded = custodians(p.ctx.shardings, p.ctx.parties.cardVault);
+  // Swaps and seeding have their own rows; a zero address (not deployed) never matches a real transfer end.
+  for (const a of [p.ctx.parties.poolManager, p.ctx.parties.shardMarket]) if (a && lc(a) !== ZERO) excluded.add(lc(a));
   const tokens = new Set(p.ctx.shardings.map((s) => lc(s.shardToken)));
   const rows: FeedRow[] = p.activities.map((a) => {
-    const d = describe(a, p.ctx);
-    return { key: a.id, kind: a.kind, title: TITLES[a.kind], ...d, whoShort: shortWho(d.who), txHash: a.txHash, blockNumber: a.blockNumber, logIndex: a.logIndex, timestamp: a.timestamp };
+    const { title, ...d } = describe(a, p.ctx);
+    return { key: a.id, kind: a.kind, title: title ?? TITLES[a.kind], ...d, whoShort: shortWho(d.who), txHash: a.txHash, blockNumber: a.blockNumber, logIndex: a.logIndex, timestamp: a.timestamp };
   });
   for (const t of p.transfers) {
     if (!tokens.has(lc(t.shardToken))) continue;

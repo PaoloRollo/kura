@@ -109,6 +109,44 @@ describe("buildFeed", () => {
   });
 });
 
+describe("market rows", () => {
+  const POOL_MANAGER = a(0x9001), MARKET = a(0x9002);
+  const mctx = { ...ctx, parties: { ...parties, poolManager: POOL_MANAGER, shardMarket: MARKET } };
+  const rows = buildFeed({
+    activities: [
+      act("pool_opened", 300n, 9, PAOLO, 1712n * U, { poolId: "0x01", shardToken: TOKEN, priceUsdcPerShard: "1712000000", seedShards: (13n * S).toString(), seedUsdc: "5007600000" }),
+      act("swap", 310n, 2, KENJI, 4110n * U / 100n * 32n / 10n, { side: "buy", shardAmount: (32n * S / 10n).toString(), usdcAmount: "131520000", priceUsdcPerShard: "41100000", summary: "bought 3.2 shards at $41.10" }),
+      act("swap", 311n, 2, AIKO, 50n * U, { side: "sell", shardAmount: S.toString(), usdcAmount: "50000000", priceUsdcPerShard: "50000000" }),
+    ],
+    transfers: [
+      tr("0xs-1", POOL_MANAGER, KENJI, 32n * S / 10n, 310n), // the swap's shard leg: the swap row covers it
+      tr("0xs-2", VAULT, MARKET, 13n * S, 300n),            // seeding: excluded
+    ],
+    records: [],
+    ctx: mctx,
+  });
+
+  it("says the pool opened at its price with what seeded it", () => {
+    const r = rows.find((x) => x.kind === "pool_opened")!;
+    expect(r.title).toBe("Pool opened");
+    expect(text(r.detail)).toBe("at $1,712.00/shard · 13.0 shards + $5,007.60");
+  });
+
+  it("titles a swap by the trader's side, with the indexer's summary or one built from the amounts", () => {
+    const [sell, buy] = rows.filter((x) => x.kind === "swap");
+    expect(buy!.title).toBe("Bought");
+    expect(text(buy!.detail)).toBe("bought 3.2 shards at $41.10");
+    expect(text(buy!.who)).toBe(`<${KENJI}>`);
+    expect(sell!.title).toBe("Sold");
+    expect(text(sell!.detail)).toBe("sold 1.0 shards at $50.00");
+  });
+
+  it("leaves out shard transfers through the pool and the market, and files trades under Trades", () => {
+    expect(rows.some((x) => x.kind === "shardTransfer")).toBe(false);
+    expect(filterFeed(rows, "trades").map((x) => x.kind)).toEqual(["swap", "swap", "pool_opened"]);
+  });
+});
+
 describe("filters", () => {
   const kinds = (f: Parameters<typeof filterFeed>[1]) => filterFeed(feed, f).map((r) => r.kind);
   it("groups kinds as the Activity tab does; mint is under All only", () => {

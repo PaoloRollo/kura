@@ -8,6 +8,7 @@ import type { ShareRow } from "@/components/charts/share-bars";
 import { PREMIUM_NEUTRAL, premiumLabel } from "@/lib/chart-colors";
 import { currentSharding } from "@/lib/card-view";
 import { languageName } from "@/lib/explore";
+import { poolValuePrice, type PoolPrice } from "@/lib/market";
 import { impliedValueUsdc, premium } from "@/lib/metrics";
 import { bucketSeries, type SeriesUnit } from "@/lib/series";
 
@@ -71,6 +72,8 @@ export type AnalyticsInput = {
   block: bigint;
   now: number;
   range: AnalyticsRange;
+  /** The indexer's pools: a card whose pool trades is valued at the pool price. */
+  pools?: readonly PoolPrice[];
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -144,7 +147,7 @@ export function analyticsView(p: AnalyticsInput): AnalyticsView {
     if (card.state !== "sharded" && card.state !== "auctioning") continue;
     const s = currentSharding(card, byCard.get(card.id.toString()) ?? []);
     if (!s) continue;
-    const implied = impliedValueUsdc(s, s.graduated === null ? (live.get(lc(s.auction)) ?? null) : null);
+    const implied = impliedValueUsdc(s, s.graduated === null ? (live.get(lc(s.auction)) ?? null) : null, poolValuePrice(p.pools, s.shardToken));
     const market = p.markets.get(card.id.toString()) ?? null;
     const a = p.attributes[card.scryfallId];
     entries.push({ card, implied, market, premium: premium(implied, market), name: a?.name || card.label, thumb: a?.image || undefined, live: s.graduated === null });
