@@ -35,7 +35,8 @@ vi.mock("@/lib/db/client", () => ({
   }),
 }));
 
-import { BUDGET_MS, GET, MAX_ENS_WRITES_PER_RUN, MIN_SIGNER_BALANCE_WEI } from "@/app/api/cron/prices/route";
+import { BUDGET_MS, GET, MAX_ENS_WRITES_PER_RUN } from "@/app/api/cron/prices/route";
+import { MIN_SIGNER_BALANCE_WEI } from "@/lib/signer-floor";
 import { defaultDeps as appraiseDeps } from "@/lib/appraise";
 import { marketPriceForCard } from "@/lib/market-price";
 import { publishAppraisalRecord } from "@/lib/appraise";

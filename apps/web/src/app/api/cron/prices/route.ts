@@ -7,6 +7,7 @@ import { marketPrices } from "@/lib/db/schema";
 import { jsonError } from "@/lib/http";
 import { ENS_WRITE_TIMEOUT_MS, defaultDeps as appraiseDeps, publishAppraisalRecord } from "@/lib/appraise";
 import { marketPriceForCard } from "@/lib/market-price";
+import { MIN_SIGNER_BALANCE_WEI } from "@/lib/signer-floor";
 import type { PriceQuote } from "@/lib/pricing";
 import { ponderServer, schema } from "@/lib/ponder-server";
 import { t, type Row } from "@/lib/ponder-bridge";
@@ -20,8 +21,6 @@ export const maxDuration = 60;
 export const BUDGET_MS = 50_000;
 /** At most this many ENS appraisal writes per run (one signer, one nonce sequence); the rest wait for the next run. */
 export const MAX_ENS_WRITES_PER_RUN = 20;
-/** Below this signer balance the cron writes no appraisals, leaving the ETH to buyout appraisals. */
-export const MIN_SIGNER_BALANCE_WEI = 3_000_000_000_000_000n; // 0.003 ETH
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
