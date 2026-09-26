@@ -10,9 +10,9 @@ import { TxStepper, describeTxError } from "@/components/tx-stepper";
 import { WorldIdGate, worldIdErrorMessage, worldIdRefusalTitle, type IssuedTicket } from "@/components/world-id-gate";
 import type { ShardingRow } from "@/hooks/use-card";
 import { useTicket } from "@/hooks/use-ticket";
-import { TICKET_ERRORS, bidRevertMessage, defaultMaxPriceQ96, endedNowPreview, isRetryableBidError, isValidMax, maxQ96FromUsdc } from "@/lib/bid-math";
+import { TICKET_ERRORS, bidRevertMessage, defaultMaxPriceQ96, endedNowPreview, isRetryableBidError, isValidMax, maxFieldText, maxQ96FromUsdc, minValidMaxUsdc } from "@/lib/bid-math";
 import { addresses, explorerTx } from "@/lib/chain";
-import { money, moneySig, shortAddress, shortHash, shardsFixed } from "@/lib/format";
+import { money, moneyExact, shortAddress, shortHash, shardsFixed } from "@/lib/format";
 import { TxError, encodeHookData, type Revert, type Sent } from "@/lib/tx-core";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,6 @@ export function parseUsdcText(text: string): bigint | null {
 }
 
 /** USDC for an input field: "1,760.00". */
-const fieldText = (x: bigint) => money(x).slice(1);
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -69,7 +68,7 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
 
   // The max follows the clearing price (+2 ticks) until the user types one.
   const defaultMax = defaultMaxPriceQ96(clearingQ96, tick);
-  const maxText = max ?? fieldText(q96ToUsdcPerShard(defaultMax));
+  const maxText = max ?? maxFieldText(q96ToUsdcPerShard(defaultMax));
 
   const budgetUsdc = parseUsdcText(budget) ?? 0n;
   const maxUsdcTyped = parseUsdcText(maxText);
@@ -239,8 +238,8 @@ export function BidForm({ sharding, me, chain, clearingQ96, className }: {
         hint={
           !ready ? undefined
           : !validMax
-            ? <>Use a step of {moneySig(q96ToUsdcPerShard(tick))}, at least one step above the current {moneySig(clearingUsdc)}.</>
-            : <>You stay in while the price is below this. Current {moneySig(clearingUsdc)}, steps of {moneySig(q96ToUsdcPerShard(tick))}.</>
+            ? <>Enter at least {moneyExact(minValidMaxUsdc(clearingQ96, tick))}: one step ({moneyExact(q96ToUsdcPerShard(tick))}) above the current {moneyExact(clearingUsdc)}.</>
+            : <>You stay in while the price is below this. Current {moneyExact(clearingUsdc)}; prices move in steps of {moneyExact(q96ToUsdcPerShard(tick))} and your max rounds down to one.</>
         }
         hintClassName={!validMax ? "text-shu" : undefined}
       />

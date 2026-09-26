@@ -1,6 +1,7 @@
 // Pure bid maths for the CCA auction panel: price ticks, the "if it ended now" preview, exit routing with checkpoint
 // hints, and the human copy for auction reverts. No React, no chain reads, so it is unit-tested directly.
 import { q96ToUsdcPerShard, usdcPerShardToQ96 } from "@kura/shared";
+import { moneyExact } from "@/lib/format";
 
 const SHARD = 10n ** 18n;
 
@@ -27,6 +28,23 @@ export function maxQ96FromUsdc(usdc: bigint, tickQ96: bigint): bigint {
   if (tickQ96 <= 0n || usdc <= 0n) return 0n;
   const k = usdcPerShardToQ96(usdc) / tickQ96;
   return q96ToUsdcPerShard((k + 1n) * tickQ96) <= usdc ? (k + 1n) * tickQ96 : k * tickQ96;
+}
+
+/** A USDC max as the bid form's input text, exact to the last decimal ("0.13974"), so a pre-filled max stays valid. */
+export function maxFieldText(usdc: bigint): string {
+  return moneyExact(usdc).slice(1);
+}
+
+/**
+ * The lowest USDC max per shard the bid form accepts: the smallest amount that `maxQ96FromUsdc` rounds to one tick above
+ * the current price. Q96 rounding can land the plain conversion a unit short, so it steps up until it validates.
+ */
+export function minValidMaxUsdc(clearingQ96: bigint, tickQ96: bigint): bigint {
+  if (tickQ96 <= 0n) return 0n;
+  const target = clearingQ96 + tickQ96;
+  let usdc = q96ToUsdcPerShard(target);
+  while (maxQ96FromUsdc(usdc, tickQ96) < target) usdc += 1n;
+  return usdc;
 }
 
 /** "If the auction ended now" (HisVE): what the bid would pay and get at the current clearing price. */

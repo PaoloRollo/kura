@@ -36,14 +36,14 @@ export function money(x: bigint, dp = 2): string {
 
 
 /**
- * Money for amounts that can be a fraction of a cent (bid steps, tick sizes): a cent or more is formatted exactly like
- * `money`; below a cent it keeps decimals up to the first non-zero one, so a $0.0016 step reads "$0.001", never "$0.00".
- * Truncates like `money`, so it never overstates. USDC has 6 decimals, the most it can show.
+ * Money for prices that must be typed exactly (bid steps, minimum bids): every USDC decimal the amount has, at least
+ * two, trailing zeros dropped. "$0.00137", "$0.137", "$0.02". Never rounds or truncates, so what it shows is what counts.
  */
-export function moneySig(x: bigint): string {
-  const abs = x < 0n ? -x : x;
-  if (abs === 0n || abs >= 10_000n) return money(x);
-  return money(x, 7 - abs.toString().length);
+export function moneyExact(x: bigint): string {
+  const neg = x < 0n;
+  const v = usdc(neg ? -x : x);
+  const [i, f = ""] = v.split(".");
+  return `${neg ? "-" : ""}$${BigInt(i).toLocaleString("en-US")}.${f}`;
 }
 
 /** Shards with a fixed number of decimals, the way the designs show them: "13.0", "0.5". */

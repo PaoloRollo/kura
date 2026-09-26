@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { q96ToUsdcPerShard, usdcPerShardToQ96 } from "@kura/shared";
+import { parseUsdcInput } from "@/lib/shard-math";
 import {
   bidRevertMessage,
   bidView,
@@ -11,6 +12,8 @@ import {
   isRetryableBidError,
   isValidMax,
   maxQ96FromUsdc,
+  minValidMaxUsdc,
+  maxFieldText,
   roundDownToTick,
 } from "@/lib/bid-math";
 
@@ -120,5 +123,38 @@ describe("stats and copy", () => {
     expect(bidRevertMessage("BidMustBeAboveClearingPrice")?.title).toBe("The price moved. Raise your max.");
     expect(isRetryableBidError("AlreadyBound")).toBe(false);
     expect(isRetryableBidError("Expired")).toBe(true);
+  });
+});
+
+describe("minValidMaxUsdc", () => {
+  // Card #6 on Sepolia: tick $0.00137, floor $0.13563. Typing $0.131 was refused while the hint said "steps of $0.001".
+  const tick6 = 108542582644543n;
+  const floor6 = 10745715681809757n;
+  const tick7 = 18618618190853n;
+  const floor7 = 1843243200894447n;
+
+  it("is the lowest USDC max the form accepts: one tick above the current price", () => {
+    const min = minValidMaxUsdc(floor6, tick6);
+    expect(min).toBe(137_000n); // $0.137
+    expect(isValidMax(maxQ96FromUsdc(min, tick6), floor6, tick6)).toBe(true);
+    expect(isValidMax(maxQ96FromUsdc(min - 1n, tick6), floor6, tick6)).toBe(false);
+    expect(isValidMax(maxQ96FromUsdc(131_000n, tick6), floor6, tick6)).toBe(false); // the $0.131 from the report
+  });
+
+  it("holds wherever Q96 rounding lands, for an odd tick too", () => {
+    for (const [floor, tick] of [[floor6, tick6], [floor7, tick7], [floor6 + 37n * tick6, tick6]] as const) {
+      const min = minValidMaxUsdc(floor, tick);
+      expect(isValidMax(maxQ96FromUsdc(min, tick), floor, tick)).toBe(true);
+      expect(isValidMax(maxQ96FromUsdc(min - 1n, tick), floor, tick)).toBe(false);
+    }
+  });
+
+  it("pre-fills a default max that passes its own check, even on a sub-cent tick", () => {
+    for (const [floor, tick] of [[floor6, tick6], [floor7, tick7]] as const) {
+      const text = maxFieldText(q96ToUsdcPerShard(defaultMaxPriceQ96(floor, tick)));
+      const typed = parseUsdcInput(text);
+      expect(typed).not.toBeNull();
+      expect(isValidMax(maxQ96FromUsdc(typed!, tick), floor, tick)).toBe(true);
+    }
   });
 });
