@@ -3,7 +3,7 @@ import { activities } from "ponder:schema";
 import { logId } from "./ids";
 
 type EventLike = { transaction: { hash: `0x${string}` }; log: { logIndex: number }; block: { number: bigint; timestamp: bigint } };
-type Kind = "mint" | "shard" | "bid" | "exit" | "claim" | "settle" | "redeem" | "payout" | "release" | "named" | "transfer";
+type Kind = "mint" | "shard" | "bid" | "exit" | "claim" | "settle" | "redeem" | "payout" | "release" | "named" | "transfer" | "pool_opened" | "swap";
 
 export async function recordActivity(
   context: Context,
