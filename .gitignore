@@ -6,6 +6,7 @@ node_modules/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+contracts/broadcast-fork/
 contracts/deployments/*.pending.json
 contracts/deployments/tmp/
 apps/indexer/.ponder/

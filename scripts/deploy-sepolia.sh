@@ -2,6 +2,9 @@
 # Deploys Kura to Sepolia: registers the vault's .eth name (commit, wait, register),
 # deploys the contracts and seeds one demo card. Reads secrets from the git-ignored .env.
 #
+# After Deploy it regenerates packages/shared/src/abi.ts and syncs the deployments to the web and the indexer.
+# Rehearse a deployment on a local fork first: pnpm rehearse:fork (nothing reaches Sepolia).
+#
 # Usage: ./scripts/deploy-sepolia.sh            full run
 #        ./scripts/deploy-sepolia.sh deploy     skip ENS setup (name already registered)
 #        ./scripts/deploy-sepolia.sh seed       only the seed step
@@ -72,6 +75,10 @@ if [[ "$STEP" == "all" || "$STEP" == "deploy" ]]; then
   forge script script/Deploy.s.sol:Deploy --rpc-url "$RPC" --resume --verify \
     --verifier blockscout --verifier-url https://eth-sepolia.blockscout.com/api/ \
     || echo "verification failed; the contracts are deployed, verify later" >&2
+  echo
+  echo "==> regenerating the shared ABIs and syncing deployments"
+  node "$ROOT/scripts/gen-abi.mjs"
+  node "$ROOT/scripts/sync-deployments.mjs"
 fi
 
 if [[ "$STEP" == "all" || "$STEP" == "deploy" || "$STEP" == "seed" ]]; then
@@ -81,3 +88,18 @@ fi
 echo
 echo "Done. Deployment files:"
 ls -1 "$ROOT/contracts/deployments/"
+
+if [[ "$STEP" == "all" || "$STEP" == "deploy" ]]; then
+  cat <<'NEXT'
+
+Next steps:
+  1. Commit the deployments and ABIs:
+       git add contracts/deployments/sepolia.json packages/shared/src/abi.ts \
+         apps/web/src/generated/deployments.json apps/indexer/generated/deployments.json
+       git commit -m "chore(deploy): sepolia redeploy with the shard market"
+  2. Review, then reset the database (drops the Ponder schemas, empties the chain-bound app tables):
+       pnpm db:reset && pnpm db:reset --apply
+  3. Redeploy the indexer on Railway and wait for /ready.
+  4. Seed the demo: pnpm rehearse --dry-run, then pnpm rehearse --broadcast (needs a TTY)
+NEXT
+fi
