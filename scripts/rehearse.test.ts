@@ -11,6 +11,8 @@ import {
   isKnownTxError,
   txHashOf,
   MIN_FLOOR_USDC,
+  REFUSED_LOOKUPS,
+  REFUSED_LOOKUP_MS,
   TICK_USDC,
   bidBudget,
   bidMaxQ96,
@@ -93,6 +95,7 @@ describe("resumable steps", () => {
     receipt: vi.fn(async (_h: Hex): Promise<ReceiptLike | null> => null),
     lookup: vi.fn(async (_h: Hex) => true),
     nonceUsed: vi.fn(async (_raw: Hex) => false),
+    sleep: vi.fn(async (_ms: number) => {}),
     save: vi.fn(),
     ...over,
   });
@@ -130,10 +133,48 @@ describe("resumable steps", () => {
 
   it("fresh: a tx the node refuses and doesn't know fails the step with the node's reason", async () => {
     const s = newState("sepolia");
-    const x = io({ broadcast: vi.fn(async () => { throw new Error("insufficient funds for gas * price + value"); }), lookup: vi.fn(async () => false) });
+    const sleep = vi.fn(async (_ms: number) => {});
+    const x = io({ broadcast: vi.fn(async () => { throw new Error("insufficient funds for gas * price + value"); }), lookup: vi.fn(async () => false), sleep });
     await expect(runStep(s, "bid", x)).rejects.toThrow(/refused .*insufficient funds/);
     expect(s.steps.bid).toEqual({ status: "failed", failed: [H1] });
     expect(x.wait).not.toHaveBeenCalled();
+    // It looked the hash up REFUSED_LOOKUPS times, REFUSED_LOOKUP_MS apart (~15 s), before failing.
+    expect(x.lookup).toHaveBeenCalledTimes(REFUSED_LOOKUPS);
+    expect(sleep.mock.calls).toEqual(Array.from({ length: REFUSED_LOOKUPS - 1 }, () => [REFUSED_LOOKUP_MS]));
+    expect(REFUSED_LOOKUPS * REFUSED_LOOKUP_MS).toBe(15_000);
+  });
+
+  it("fresh: a refused tx that shows up on a later lookup is waited for, not failed", async () => {
+    const s = newState("sepolia");
+    const lookup = vi.fn(async (_h: Hex) => false).mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const x = io({ broadcast: vi.fn(async () => { throw new Error("nonce too low"); }), lookup });
+    const r = await runStep(s, "bid", x);
+    expect(r.hash).toBe(H1);
+    expect(lookup).toHaveBeenCalledTimes(3);
+    expect(s.steps.bid.status).toBe("done");
+  });
+
+  it("failed: refuses to re-sign while the sender has a tx in flight, and re-signs once it cleared", async () => {
+    const s = newState("sepolia");
+    s.steps.bid = { status: "failed", failed: [H1] };
+    const busy = io({ sign: vi.fn(async () => RAW2), nonces: vi.fn(async () => ({ pending: 8, latest: 7 })) });
+    await expect(runStep(s, "bid", busy)).rejects.toThrow(/not re-signing .*1 transaction in flight \(pending nonce 8 > latest 7\)/);
+    expect(busy.sign).not.toHaveBeenCalled();
+    expect(busy.broadcast).not.toHaveBeenCalled();
+    // The state is untouched, so the file format and the failed history stay as they were.
+    expect(s.steps.bid).toEqual({ status: "failed", failed: [H1] });
+    const clear = io({ sign: vi.fn(async () => RAW2), nonces: vi.fn(async () => ({ pending: 8, latest: 8 })) });
+    await runStep(s, "bid", clear);
+    expect(clear.sign).toHaveBeenCalledOnce();
+    expect(s.steps.bid).toEqual({ status: "done", hash: H2, out: null, failed: [H1] });
+  });
+
+  it("a new step signs without the in-flight check (a nonce gap only matters for a step that failed)", async () => {
+    const s = newState("sepolia");
+    const x = io({ nonces: vi.fn(async () => ({ pending: 9, latest: 7 })) });
+    await runStep(s, "bid", x);
+    expect(x.nonces).not.toHaveBeenCalled();
+    expect(s.steps.bid.status).toBe("done");
   });
 
   it("fresh: a broadcast error for a tx the node has anyway is just waited for", async () => {

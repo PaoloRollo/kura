@@ -245,6 +245,10 @@ export type StepIO<R extends ReceiptLike> = {
   lookup: (hash: Hex) => Promise<boolean>;
   /** Whether the sender's mined nonce has passed this tx's nonce (so it, or another tx with its nonce, landed). */
   nonceUsed: (raw: Hex) => Promise<boolean>;
+  /** The sender's nonces: `pending` above `latest` means one of its txs is still in flight. */
+  nonces?: () => Promise<{ pending: number; latest: number }>;
+  /** Waits between hash lookups after a refused broadcast (injected so tests don't wait). */
+  sleep?: (ms: number) => Promise<void>;
   parse?: (receipt: R) => Json;
   save: (state: RehearseState) => void;
 };
@@ -260,13 +264,20 @@ export const isKnownTxError = (e: unknown) => /already known|known transaction/i
 const errorText = (e: unknown) => (e instanceof Error ? `${e.message} ${(e as { details?: string }).details ?? ""}` : String(e));
 const shortError = (e: unknown) => (e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e)).split("\n")[0];
 
+/** After a refused broadcast, how often and how far apart to look the hash up before failing the step (~15 s). */
+export const REFUSED_LOOKUPS = 5;
+export const REFUSED_LOOKUP_MS = 3_000;
+
 export const stuckHint = (hash: Hex) => `check ${hash} on Etherscan; don't use the seed/vendor/deployer keys elsewhere during the run`;
 
 /**
  * Runs one step at most once, and never loops on a tx that can't land.
  * - Done or skipped: returns the recorded output.
- * - New: checks `skip`, signs locally, saves the hash and the raw tx as "sent", then broadcasts. If the node refuses it
- *   and doesn't know the hash, the step is marked failed with the node's reason (the next run signs afresh).
+ * - New: checks `skip`, signs locally, saves the hash and the raw tx as "sent", then broadcasts. If the node refuses it,
+ *   the hash is looked up REFUSED_LOOKUPS times over ~15 s (a node can refuse a tx that another node already relays);
+ *   only when it never shows up is the step marked failed with the node's reason (the next run signs afresh).
+ * - Failed before: refuses to re-sign while the sender has a tx in flight (pending nonce above latest), so a slow
+ *   earlier tx can't be doubled by a new one; rerun once it lands or drops.
  * - Sent (resumed): a hash the node doesn't know is re-broadcast at once, the same raw tx, never re-signed.
  * - Not mined after the wait: if the sender's nonce has moved past the tx's, it was replaced; then `skip` decides
  *   whether the effect is on chain anyway (skipped), else the step is failed. Otherwise the same tx is re-broadcast
@@ -320,6 +331,12 @@ export async function runStep<R extends ReceiptLike>(state: RehearseState, id: s
       const already = await io.skip();
       if (already !== undefined) return skipped(already);
     }
+    if (rec?.status === "failed" && io.nonces) {
+      const { pending, latest } = await io.nonces();
+      if (pending > latest) {
+        throw new Error(`step ${id}: not re-signing while the sender has ${pending - latest} transaction${pending - latest === 1 ? "" : "s"} in flight (pending nonce ${pending} > latest ${latest}); wait for ${pending - latest === 1 ? "it" : "them"} to land or drop, then rerun. ${rec.failed?.length ? stuckHint(rec.failed.at(-1)!) : ""}`.trim());
+      }
+    }
     raw = await io.sign();
     hash = txHashOf(raw);
     state.steps[id] = { status: "sent", hash, raw, failed: rec?.failed };
@@ -327,7 +344,13 @@ export async function runStep<R extends ReceiptLike>(state: RehearseState, id: s
     try {
       await io.broadcast(raw);
     } catch (e) {
-      if (!(await io.lookup(hash))) throw fail(hash, `the node refused ${hash}: ${shortError(e)}`);
+      const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+      let known = await io.lookup(hash);
+      for (let i = 1; !known && i < REFUSED_LOOKUPS; i++) {
+        await sleep(REFUSED_LOOKUP_MS);
+        known = await io.lookup(hash);
+      }
+      if (!known) throw fail(hash, `the node refused ${hash}: ${shortError(e)}`);
     }
   }
 
@@ -509,6 +532,13 @@ function txIO(ctx: Ctx, from: Wallet, tx: () => Promise<{ to: Address; data?: He
     nonceUsed: async (raw: Hex) => {
       const { nonce } = parseTransaction(raw);
       return (await ctx.pub.getTransactionCount({ address: from.address, blockTag: "latest" })) > (nonce ?? 0);
+    },
+    nonces: async () => {
+      const [pending, latest] = await Promise.all([
+        ctx.pub.getTransactionCount({ address: from.address, blockTag: "pending" }),
+        ctx.pub.getTransactionCount({ address: from.address, blockTag: "latest" }),
+      ]);
+      return { pending, latest };
     },
     wait: (hash: Hex) =>
       ctx.pub.waitForTransactionReceipt({ hash, timeout: (ctx.network === "fork" ? 1 : 5) * 60_000, pollingInterval: ctx.network === "fork" ? 200 : 4_000 }).catch((e) => {
