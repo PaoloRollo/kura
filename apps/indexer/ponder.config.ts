@@ -3,9 +3,13 @@ import { getAbiItem } from "viem";
 import { abi } from "@kura/shared";
 import deployments from "./generated/deployments.json";
 import { shardMarketSource, type ShardMarketSource } from "./src/lib/market-config";
+import { LEGACY_CARD_NAMES } from "./src/lib/legacy";
 
 const rpc = [process.env.PONDER_RPC_URL_11155111, "https://ethereum-sepolia-rpc.publicnode.com"].filter((u): u is string => !!u);
 const startBlock = Math.max(0, deployments.deployBlock - 1);
+
+const legacyNames = LEGACY_CARD_NAMES.map((l) => l.address);
+const legacyStartBlock = Math.min(...LEGACY_CARD_NAMES.map((l) => l.startBlock));
 
 const cardSharded = getAbiItem({ abi: abi.cardVault, name: "CardSharded" });
 const collectorNamed = getAbiItem({ abi: abi.cardNames, name: "CollectorNamed" });
@@ -37,6 +41,14 @@ export default createConfig({
       chain: "sepolia",
       address: factory({ address: deployments.cardNames as `0x${string}`, event: collectorNamed, parameter: "resolver" }),
       startBlock,
+    },
+    // Earlier deployments' adapters, for their collector handles only (src/lib/legacy.ts).
+    LegacyCardNames: { abi: abi.cardNames, chain: "sepolia", address: legacyNames, startBlock: legacyStartBlock },
+    LegacyCollectorResolver: {
+      abi: abi.ensResolver,
+      chain: "sepolia",
+      address: factory({ address: legacyNames, event: collectorNamed, parameter: "resolver" }),
+      startBlock: legacyStartBlock,
     },
     // Typed as always present so ShardMarket handlers type-check; absent at runtime on a deployment without it.
     ...(shardMarketSource(deployments.shardMarket, startBlock) as { ShardMarket: ShardMarketSource }),

@@ -3,6 +3,7 @@ import config from "../ponder.config";
 import deployments from "../generated/deployments.json";
 import { abi } from "@kura/shared";
 import { shardMarketSource } from "../src/lib/market-config";
+import { LEGACY_CARD_NAMES } from "../src/lib/legacy";
 
 describe("ponder.config", () => {
   it("indexes Sepolia with a public RPC fallback", () => {
@@ -12,7 +13,7 @@ describe("ponder.config", () => {
   });
 
   it("declares every Kura source, ShardMarket only when deployed", () => {
-    const base = ["Auction", "BidGateHook", "CardNames", "CardVault", "CollectorResolver", "EnsRegistry", "EnsResolver", "ShardToken"];
+    const base = ["Auction", "BidGateHook", "CardNames", "CardVault", "CollectorResolver", "EnsRegistry", "EnsResolver", "LegacyCardNames", "LegacyCollectorResolver", "ShardToken"];
     const hasMarket = deployments.shardMarket !== "0x0000000000000000000000000000000000000000";
     expect(Object.keys(config.contracts).sort()).toEqual((hasMarket ? [...base, "ShardMarket"] : base).sort());
     expect(config.blocks.AuctionTick.interval).toBe(5);
@@ -25,7 +26,7 @@ describe("ponder.config", () => {
     expect(config.contracts.CardNames.address).toBe(deployments.cardNames);
     expect(config.contracts.EnsRegistry.address).toBe(deployments.ensRegistry);
     expect(config.contracts.EnsResolver.address).toBe(deployments.ensResolver);
-    for (const c of Object.values(config.contracts)) expect(c.startBlock).toBe(startBlock);
+    for (const [name, c] of Object.entries(config.contracts)) if (!name.startsWith("Legacy")) expect(c.startBlock).toBe(startBlock);
     expect(config.blocks.AuctionTick.startBlock).toBe(startBlock);
   });
 
@@ -48,5 +49,23 @@ describe("ponder.config", () => {
     expect(resolver.address).toBe(deployments.cardNames);
     expect(resolver.event.name).toBe("CollectorNamed");
     expect(resolver.parameter).toBe("resolver");
+  });
+
+  // Collector handles claimed through an earlier deployment's CardNames still exist in the shared ENS registry; the
+  // earlier adapter is indexed from its own deploy block so those wallets keep their handle. Only collector handles:
+  // card names there belong to the earlier vault's card ids, which collide with this deployment's.
+  it("indexes earlier CardNames adapters and their collector resolvers from their own deploy blocks", () => {
+    expect(LEGACY_CARD_NAMES.length).toBeGreaterThan(0);
+    const addresses = LEGACY_CARD_NAMES.map((l) => l.address);
+    const first = Math.min(...LEGACY_CARD_NAMES.map((l) => l.startBlock));
+    expect(addresses).not.toContain(deployments.cardNames);
+    expect(config.contracts.LegacyCardNames.address).toEqual(addresses);
+    expect(config.contracts.LegacyCardNames.startBlock).toBe(first);
+    expect(config.contracts.LegacyCardNames.abi).toBe(abi.cardNames);
+    const resolver = config.contracts.LegacyCollectorResolver.address as any;
+    expect(resolver.address).toEqual(addresses);
+    expect(resolver.event.name).toBe("CollectorNamed");
+    expect(resolver.parameter).toBe("resolver");
+    expect(config.contracts.LegacyCollectorResolver.startBlock).toBe(first);
   });
 });

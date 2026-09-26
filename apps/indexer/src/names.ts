@@ -38,7 +38,9 @@ ponder.on("CardNames:CardNameRevoked", async ({ event, context }) => {
   await context.db.update(ensNames, { label: event.args.label }).set({ revokedAt: Number(event.block.timestamp), ...stamp(event) });
 });
 
-ponder.on("CardNames:CollectorNamed", async ({ event, context }) => {
+type CollectorNamedEvent = BlockLike & { args: { collector: Hex; label: string; resolver: Hex; node: Hex } };
+
+async function indexCollectorNamed(context: Context, event: CollectorNamedEvent) {
   const ts = Number(event.block.timestamp);
   const { collector, label, resolver, node } = event.args;
   await context.db.insert(ensNames).values({
@@ -61,7 +63,16 @@ ponder.on("CardNames:CollectorNamed", async ({ event, context }) => {
   // resolver, so the CollectorResolver guard drops it. Write the collector's own addr record here instead.
   const addrRecord = { value: collector.toLowerCase(), setBy: collector, resolver, ...stamp(event) };
   await context.db.insert(ensRecords).values({ node, key: "addr", ...addrRecord }).onConflictDoUpdate(addrRecord);
-  await recordActivity(context, event, { kind: "named", actor: collector, meta: { label, handle: true } });
+}
+
+ponder.on("CardNames:CollectorNamed", async ({ event, context }) => {
+  await indexCollectorNamed(context, event);
+  await recordActivity(context, event, { kind: "named", actor: event.args.collector, meta: { label: event.args.label, handle: true } });
+});
+
+// A handle claimed through an earlier deployment's adapter (src/lib/legacy.ts): imported state, so no activity row.
+ponder.on("LegacyCardNames:CollectorNamed", async ({ event, context }) => {
+  await indexCollectorNamed(context, event);
 });
 
 // Registry events add token ids, owners and expiries; the label is in the event. The row's labelHash comes from the
@@ -126,11 +137,13 @@ async function isOwnCollectorRecord(context: Context, resolver: Hex, node: Hex):
   return false;
 }
 
-ponder.on("CollectorResolver:TextChanged", async ({ event, context }) => {
-  if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
-  await upsertRecord(context, event, event.args.node, event.args.key, event.args.value);
-});
-ponder.on("CollectorResolver:AddrChanged", async ({ event, context }) => {
-  if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
-  await upsertRecord(context, event, event.args.node, "addr", event.args.a.toLowerCase());
-});
+for (const source of ["CollectorResolver", "LegacyCollectorResolver"] as const) {
+  ponder.on(`${source}:TextChanged`, async ({ event, context }) => {
+    if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
+    await upsertRecord(context, event, event.args.node, event.args.key, event.args.value);
+  });
+  ponder.on(`${source}:AddrChanged`, async ({ event, context }) => {
+    if (!(await isOwnCollectorRecord(context, event.log.address, event.args.node))) return;
+    await upsertRecord(context, event, event.args.node, "addr", event.args.a.toLowerCase());
+  });
+}
