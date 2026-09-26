@@ -8,6 +8,7 @@ import {
   MAX_TOTAL_USDC,
   budgetCapError,
   redact,
+  isKnownTxError,
   txHashOf,
   MIN_FLOOR_USDC,
   TICK_USDC,
@@ -87,11 +88,19 @@ describe("resumable steps", () => {
   const H2 = keccak256(RAW2);
   const io = (over: Partial<Parameters<typeof runStep>[2]> = {}) => ({
     sign: vi.fn(async () => RAW1),
-    broadcast: vi.fn(async () => undefined),
-    wait: vi.fn(async (h: Hex) => ok(h)),
+    broadcast: vi.fn(async (_raw: Hex): Promise<unknown> => undefined),
+    wait: vi.fn(async (h: Hex): Promise<ReceiptLike | null> => ok(h)),
+    receipt: vi.fn(async (_h: Hex): Promise<ReceiptLike | null> => null),
+    lookup: vi.fn(async (_h: Hex) => true),
+    nonceUsed: vi.fn(async (_raw: Hex) => false),
     save: vi.fn(),
     ...over,
   });
+  const sent = () => {
+    const s = newState("sepolia");
+    s.steps.bid = { status: "sent", hash: H1, raw: RAW1 };
+    return s;
+  };
 
   it("skips a finished step without touching the chain", async () => {
     const s = newState("sepolia");
@@ -119,38 +128,100 @@ describe("resumable steps", () => {
     expect(txHashOf(RAW1)).toBe(H1);
   });
 
-  it("a crash after saving but before broadcasting still resumes with that tx", async () => {
+  it("fresh: a tx the node refuses and doesn't know fails the step with the node's reason", async () => {
     const s = newState("sepolia");
-    await expect(runStep(s, "bid", io({ broadcast: vi.fn(async () => { throw new Error("socket hang up"); }) }))).rejects.toThrow(/socket/);
-    expect(s.steps.bid).toEqual({ status: "sent", hash: H1, raw: RAW1, failed: undefined });
-    // Next run: not found at first, so the same raw tx is re-broadcast; nothing is signed again.
-    const wait = vi.fn<(h: Hex) => Promise<ReceiptLike | null>>().mockResolvedValueOnce(null).mockImplementation(async (h) => ok(h));
-    const x = io({ sign: vi.fn(async () => RAW2), wait });
+    const x = io({ broadcast: vi.fn(async () => { throw new Error("insufficient funds for gas * price + value"); }), lookup: vi.fn(async () => false) });
+    await expect(runStep(s, "bid", x)).rejects.toThrow(/refused .*insufficient funds/);
+    expect(s.steps.bid).toEqual({ status: "failed", failed: [H1] });
+    expect(x.wait).not.toHaveBeenCalled();
+  });
+
+  it("fresh: a broadcast error for a tx the node has anyway is just waited for", async () => {
+    const s = newState("sepolia");
+    const x = io({ broadcast: vi.fn(async () => { throw new Error("socket hang up"); }), lookup: vi.fn(async () => true) });
     const r = await runStep(s, "bid", x);
-    expect(x.sign).not.toHaveBeenCalled();
-    expect(x.broadcast).toHaveBeenCalledExactlyOnceWith(RAW1);
     expect(r.hash).toBe(H1);
     expect(s.steps.bid.status).toBe("done");
   });
 
-  it("a hash with a receipt on resume is only awaited, never sent again", async () => {
-    const s = newState("sepolia");
-    s.steps.bid = { status: "sent", hash: H1, raw: RAW1 };
+  it("resume: a hash the node doesn't know is re-broadcast at once, the same raw tx, never re-signed", async () => {
+    const s = sent();
+    const order: string[] = [];
+    const x = io({
+      lookup: vi.fn(async () => false),
+      broadcast: vi.fn(async (raw: Hex) => { order.push(`broadcast:${raw}`); }),
+      wait: vi.fn(async (h: Hex) => { order.push("wait"); return ok(h); }),
+      sign: vi.fn(async () => RAW2),
+    });
+    const r = await runStep(s, "bid", x);
+    expect(order).toEqual([`broadcast:${RAW1}`, "wait"]);
+    expect(x.sign).not.toHaveBeenCalled();
+    expect(r.hash).toBe(H1);
+  });
+
+  it("resume: a known hash with a receipt is only awaited", async () => {
+    const s = sent();
     const skip = vi.fn(async () => "on chain");
     const x = io({ skip, parse: () => "id-3" });
     const r = await runStep(s, "bid", x);
     expect(x.sign).not.toHaveBeenCalled();
     expect(x.broadcast).not.toHaveBeenCalled();
     expect(skip).not.toHaveBeenCalled();
-    expect(x.wait).toHaveBeenCalledWith(H1);
     expect(r.fresh).toBe(true);
     expect(s.steps.bid).toEqual({ status: "done", hash: H1, out: "id-3", failed: undefined });
   });
 
-  it("keeps a tx that never shows up as sent, for the next run to wait on", async () => {
-    const s = newState("sepolia");
-    await expect(runStep(s, "x", io({ wait: vi.fn(async () => null) }))).rejects.toThrow(/not mined yet/);
-    expect(s.steps.x.status).toBe("sent");
+  it("not mined and its nonce used elsewhere, with the effect on chain: skipped", async () => {
+    const s = sent();
+    const x = io({ wait: vi.fn(async () => null), nonceUsed: vi.fn(async () => true), skip: vi.fn(async () => "12") });
+    const r = await runStep(s, "bid", x);
+    expect(r).toEqual({ out: "12", fresh: false });
+    expect(s.steps.bid.status).toBe("skipped");
+    expect(x.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("not mined and its nonce used elsewhere, no effect on chain: failed, so the next run re-signs", async () => {
+    const s = sent();
+    const x = io({ wait: vi.fn(async () => null), nonceUsed: vi.fn(async () => true) });
+    await expect(runStep(s, "bid", x)).rejects.toThrow(/nonce was used by another transaction/);
+    expect(s.steps.bid).toEqual({ status: "failed", failed: [H1] });
+    const y = io({ sign: vi.fn(async () => RAW2) });
+    await runStep(s, "bid", y);
+    expect(y.sign).toHaveBeenCalledOnce();
+    expect(s.steps.bid.hash).toBe(H2);
+  });
+
+  it("the nonce moved because this very tx landed: its receipt is used", async () => {
+    const s = sent();
+    const x = io({ wait: vi.fn(async () => null), nonceUsed: vi.fn(async () => true), receipt: vi.fn(async (h: Hex) => ok(h)) });
+    const r = await runStep(s, "bid", x);
+    expect(r.fresh).toBe(true);
+    expect(s.steps.bid.status).toBe("done");
+  });
+
+  it("not mined, nonce free: re-broadcasts (already known is fine) and waits once more", async () => {
+    const s = sent();
+    const wait = vi.fn<(h: Hex) => Promise<ReceiptLike | null>>().mockResolvedValueOnce(null).mockImplementation(async (h) => ok(h));
+    const x = io({ wait, broadcast: vi.fn(async () => { throw new Error("already known"); }) });
+    const r = await runStep(s, "bid", x);
+    expect(x.broadcast).toHaveBeenCalledExactlyOnceWith(RAW1);
+    expect(wait).toHaveBeenCalledTimes(2);
+    expect(r.hash).toBe(H1);
+  });
+
+  it("not mined, nonce free, and the node now refuses it as underpriced: failed", async () => {
+    const s = sent();
+    const x = io({ wait: vi.fn(async () => null), broadcast: vi.fn(async () => { throw new Error("replacement transaction underpriced"); }) });
+    await expect(runStep(s, "bid", x)).rejects.toThrow(/refused .*underpriced/);
+    expect(s.steps.bid).toEqual({ status: "failed", failed: [H1] });
+  });
+
+  it("still pending after the second wait: stays sent, with a recovery hint", async () => {
+    const s = sent();
+    const x = io({ wait: vi.fn(async () => null) });
+    await expect(runStep(s, "bid", x)).rejects.toThrow(/not mined yet.*check 0x[0-9a-f]{64} on Etherscan; don't use the seed\/vendor\/deployer keys/);
+    expect(s.steps.bid.status).toBe("sent");
+    expect(x.broadcast).toHaveBeenCalledOnce();
   });
 
   it("marks a step skipped when its effect is already on chain", async () => {
@@ -179,6 +250,13 @@ describe("resumable steps", () => {
     const back = decodeState(encodeState(s));
     expect(back).toEqual(s);
     expect(back.plan!.auctions.C.reserveUsdc).toBe(5n * U);
+  });
+
+  it("only 'already known' counts as a harmless re-broadcast error", () => {
+    expect(isKnownTxError(new Error("already known"))).toBe(true);
+    expect(isKnownTxError(new Error("known transaction: 0xabc"))).toBe(true);
+    expect(isKnownTxError(new Error("nonce too low"))).toBe(false);
+    expect(isKnownTxError(new Error("insufficient funds"))).toBe(false);
   });
 });
 

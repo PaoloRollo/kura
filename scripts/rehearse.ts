@@ -19,6 +19,9 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   WaitForTransactionReceiptTimeoutError,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
+  parseTransaction,
   formatEther,
   formatUnits,
   http,
@@ -234,8 +237,14 @@ export type StepIO<R extends ReceiptLike> = {
   sign: () => Promise<Hex>;
   /** Broadcasts a signed tx (eth_sendRawTransaction). */
   broadcast: (raw: Hex) => Promise<unknown>;
-  /** The receipt, or null when the tx isn't found or mined within the wait. */
+  /** The receipt, or null when the tx isn't mined within the wait. */
   wait: (hash: Hex) => Promise<R | null>;
+  /** The receipt right now, or null (no waiting). */
+  receipt: (hash: Hex) => Promise<R | null>;
+  /** Whether the node knows the tx at all (pending or mined). */
+  lookup: (hash: Hex) => Promise<boolean>;
+  /** Whether the sender's mined nonce has passed this tx's nonce (so it, or another tx with its nonce, landed). */
+  nonceUsed: (raw: Hex) => Promise<boolean>;
   parse?: (receipt: R) => Json;
   save: (state: RehearseState) => void;
 };
@@ -246,48 +255,91 @@ export const isStarted = (rec: StepRecord | undefined) => rec?.status === "done"
 /** The tx hash of a serialized signed transaction (legacy and typed alike). */
 export const txHashOf = (raw: Hex) => keccak256(raw);
 
+/** A broadcast error that only means the node already has this exact tx. */
+export const isKnownTxError = (e: unknown) => /already known|known transaction/i.test(errorText(e));
+const errorText = (e: unknown) => (e instanceof Error ? `${e.message} ${(e as { details?: string }).details ?? ""}` : String(e));
+const shortError = (e: unknown) => (e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e)).split("\n")[0];
+
+export const stuckHint = (hash: Hex) => `check ${hash} on Etherscan; don't use the seed/vendor/deployer keys elsewhere during the run`;
+
 /**
- * Runs one step at most once. Done or skipped: returns the recorded output. New: checks `skip`, signs locally, saves
- * the hash and the raw tx as "sent", and only then broadcasts, so no crash can leave a tx on the wire that the state
- * doesn't know. Sent: waits for that hash; if it never shows up, re-broadcasts the same raw tx (same nonce, same
- * hash), never a new one. A reverted receipt marks the step failed (a revert can't land later), so a rerun signs anew.
+ * Runs one step at most once, and never loops on a tx that can't land.
+ * - Done or skipped: returns the recorded output.
+ * - New: checks `skip`, signs locally, saves the hash and the raw tx as "sent", then broadcasts. If the node refuses it
+ *   and doesn't know the hash, the step is marked failed with the node's reason (the next run signs afresh).
+ * - Sent (resumed): a hash the node doesn't know is re-broadcast at once, the same raw tx, never re-signed.
+ * - Not mined after the wait: if the sender's nonce has moved past the tx's, it was replaced; then `skip` decides
+ *   whether the effect is on chain anyway (skipped), else the step is failed. Otherwise the same tx is re-broadcast
+ *   ("already known" is fine; underpriced or insufficient funds fail the step) and waited for once more.
+ * - A reverted receipt fails the step. A tx still pending at the end stays "sent" with a recovery hint.
  */
 export async function runStep<R extends ReceiptLike>(state: RehearseState, id: string, io: StepIO<R>): Promise<{ out: Json; hash?: Hex; fresh: boolean; receipt?: R }> {
   const rec = state.steps[id];
   if (rec && (rec.status === "done" || rec.status === "skipped")) return { out: rec.out ?? null, hash: rec.hash, fresh: false };
+
+  const fail = (hash: Hex, why: string) => {
+    state.steps[id] = { status: "failed", failed: [...(rec?.failed ?? []), hash] };
+    io.save(state);
+    return new Error(`step ${id}: ${why}`);
+  };
+  const skipped = (out: Json) => {
+    state.steps[id] = { status: "skipped", out, failed: rec?.failed };
+    io.save(state);
+    return { out, fresh: false };
+  };
+  type Outcome = { receipt: R } | { skipped: Json };
+  /** The tx's nonce went to another tx: it can never land. */
+  const replaced = async (hash: Hex): Promise<Outcome> => {
+    const r = await io.receipt(hash);
+    if (r) return { receipt: r };
+    const already = io.skip ? await io.skip() : undefined;
+    if (already !== undefined) return { skipped: already };
+    throw fail(hash, `its nonce was used by another transaction, so ${hash} will never land; the next run signs it afresh`);
+  };
+  /** Re-sends the same raw tx; null when it is (still) out there, an outcome when it was replaced. */
+  const rebroadcast = async (hash: Hex, raw: Hex): Promise<Outcome | null> => {
+    try {
+      await io.broadcast(raw);
+      return null;
+    } catch (e) {
+      if (isKnownTxError(e)) return null;
+      if (await io.nonceUsed(raw)) return replaced(hash);
+      throw fail(hash, `the node refused ${hash}: ${shortError(e)}`);
+    }
+  };
+
   let hash: Hex;
   let raw: Hex | undefined;
-  let receipt: R | null;
+  let early: Outcome | null = null;
   if (rec?.status === "sent" && rec.hash) {
     hash = rec.hash;
     raw = rec.raw;
-    receipt = await io.wait(hash);
-    if (!receipt && raw) {
-      await io.broadcast(raw).catch(() => undefined); // "already known" / "nonce too low" mean it is out there already
-      receipt = await io.wait(hash);
-    }
+    if (raw && !(await io.lookup(hash))) early = await rebroadcast(hash, raw);
   } else {
     if (io.skip) {
       const already = await io.skip();
-      if (already !== undefined) {
-        state.steps[id] = { status: "skipped", out: already, failed: rec?.failed };
-        io.save(state);
-        return { out: already, fresh: false };
-      }
+      if (already !== undefined) return skipped(already);
     }
     raw = await io.sign();
     hash = txHashOf(raw);
     state.steps[id] = { status: "sent", hash, raw, failed: rec?.failed };
     io.save(state);
-    await io.broadcast(raw);
-    receipt = await io.wait(hash);
+    try {
+      await io.broadcast(raw);
+    } catch (e) {
+      if (!(await io.lookup(hash))) throw fail(hash, `the node refused ${hash}: ${shortError(e)}`);
+    }
   }
-  if (!receipt) throw new Error(`step ${id}: ${hash} not mined yet; rerun to keep waiting (the same signed tx is re-broadcast, never a new one)`);
-  if (receipt.status !== "success") {
-    state.steps[id] = { status: "failed", failed: [...(rec?.failed ?? []), hash] };
-    io.save(state);
-    throw new Error(`step ${id} reverted in ${hash}`);
+
+  if (early && "skipped" in early) return skipped(early.skipped);
+  let receipt: R | null = early ? early.receipt : await io.wait(hash);
+  if (!receipt && raw) {
+    const next = (await io.nonceUsed(raw)) ? await replaced(hash) : await rebroadcast(hash, raw);
+    if (next && "skipped" in next) return skipped(next.skipped);
+    receipt = next ? next.receipt : await io.wait(hash);
   }
+  if (!receipt) throw new Error(`step ${id}: ${hash} is not mined yet; rerun to keep waiting (the same signed tx is re-broadcast, never a new one). ${stuckHint(hash)}`);
+  if (receipt.status !== "success") throw fail(hash, `reverted in ${hash}`);
   const out = io.parse ? io.parse(receipt) : null;
   state.steps[id] = { status: "done", hash, out, failed: rec?.failed };
   io.save(state);
@@ -446,6 +498,18 @@ function txIO(ctx: Ctx, from: Wallet, tx: () => Promise<{ to: Address; data?: He
       return wallet.signTransaction(prepared as never) as Promise<Hex>;
     },
     broadcast: (raw: Hex) => wallet.sendRawTransaction({ serializedTransaction: raw }),
+    receipt: (hash: Hex) => ctx.pub.getTransactionReceipt({ hash }).catch((e) => {
+      if (e instanceof TransactionReceiptNotFoundError) return null;
+      throw e;
+    }),
+    lookup: (hash: Hex) => ctx.pub.getTransaction({ hash }).then(() => true, (e) => {
+      if (e instanceof TransactionNotFoundError) return false;
+      throw e;
+    }),
+    nonceUsed: async (raw: Hex) => {
+      const { nonce } = parseTransaction(raw);
+      return (await ctx.pub.getTransactionCount({ address: from.address, blockTag: "latest" })) > (nonce ?? 0);
+    },
     wait: (hash: Hex) =>
       ctx.pub.waitForTransactionReceipt({ hash, timeout: (ctx.network === "fork" ? 1 : 5) * 60_000, pollingInterval: ctx.network === "fork" ? 200 : 4_000 }).catch((e) => {
         if (e instanceof WaitForTransactionReceiptTimeoutError) return null;
@@ -455,6 +519,7 @@ function txIO(ctx: Ctx, from: Wallet, tx: () => Promise<{ to: Address; data?: He
 }
 
 async function step(ctx: Ctx, id: string, from: Wallet, call: { address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint }, opts: { skip?: () => Promise<Json | undefined>; parse?: (r: TransactionReceipt) => Json; note?: string; fees?: boolean } = {}) {
+  if (ctx.state.steps[id]?.status === "sent") ctx.resumed = true; // started by an earlier run: balance deltas span both
   const res = await runStep<TransactionReceipt>(ctx.state, id, {
     skip: opts.skip,
     ...txIO(ctx, from, async () => ({ to: call.address, data: encodeFunctionData(call as never), value: call.value, simulate: call })),
@@ -1069,14 +1134,18 @@ async function main() {
   assert((await st("D")) === 4, "card D is Released");
   assert((await st("E")) === 1, "card E is Whole");
   assert((await shardsOf(ctx, sB.token, seeds.bidder0.address)) >= SHARD / 2n, `${HANDLES.bidder0} holds the 0.5 shards sent on card B`);
+  // The chain is in its final state: record it before any check that could still fail.
+  if (mode === "broadcast") writeManifest(ctx, cards, ids, { A: sA, B: sB, C: sC, A2: sA2 });
   const feesPaid = (await usdcOf(ctx, payoutAddr)) - payoutBefore;
+  const feeMsg = `vault fees ${usd(ctx.fees)} (settle + buyout events) reached the payout address`;
   if (ctx.resumed) console.log("  (resumed run: the fee total is checked on a fresh run only)");
-  else assert(feesPaid === ctx.fees, `vault fees ${usd(ctx.fees)} (settle + buyout events) reached the payout address`);
+  else if (mode === "dry-run") assert(feesPaid === ctx.fees, feeMsg);
+  else if (feesPaid === ctx.fees) console.log(`  ✓ ${feeMsg}`);
+  else console.warn(`  ! WARNING: fee mismatch: the payout address gained ${usd(feesPaid)}, the events sum to ${usd(ctx.fees)} (did it receive USDC from elsewhere during the run?)`);
 
   if (mode === "broadcast") {
     console.log("\nAssertions (indexer)");
     await indexerChecks(ctx, ids, sC.token);
-    writeManifest(ctx, cards, ids, { A: sA, B: sB, C: sC, A2: sA2 });
   }
 
   console.log("\nSummary");
