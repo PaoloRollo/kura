@@ -13,6 +13,7 @@ import {ICardNames} from "./interfaces/ICardNames.sol";
 import {AuctionSteps} from "./libraries/AuctionSteps.sol";
 import {ShardToken} from "./ShardToken.sol";
 import {ICCAFactory, ICCAAuction, AuctionParameters} from "./interfaces/ICCA.sol";
+import {IShardMarket} from "./interfaces/IShardMarket.sol";
 
 /// @notice Kura vault: one ERC-721 per physical card held by the vendor. Owns sharding, auctions, buyouts and release.
 contract CardVault is ERC721, TicketVerifier, Ownable {
@@ -47,7 +48,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     struct Sharding {
         uint256 cardId;
         uint256 totalShards; // whole shards, N
-        uint256 forSale; // whole shards sent to the auction
+        uint256 forSale; // whole shards sent to the auction, always totalShards / 2
         uint256 clearingPriceQ96; // set at settle
         bool graduated;
         bool settled;
@@ -57,8 +58,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     }
 
     struct ShardParams {
-        uint16 totalShards; // 16..512, multiple of 16
-        uint16 forSale; // 1..totalShards
+        uint16 totalShards; // 16..512, multiple of 16; half are auctioned, half seed the pool
         uint256 floorUsdcPerShard; // USDC units per whole shard, multiple of tickUsdcPerShard
         uint256 tickUsdcPerShard; // USDC units per whole shard, >= 1
         uint128 reserveUsdc; // graduation threshold, 0 = none
@@ -103,6 +103,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     uint16 public feeBps;
     address public payout;
     ICardNames public names;
+    IShardMarket public market;
     string public siteURI;
     string private _baseTokenURI;
 
@@ -145,7 +146,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
     error WrongState(uint256 cardId, State actual);
     error NotCardOwner();
     error InvalidShardCount();
-    error InvalidForSale();
+    error MarketAlreadySet();
     error InvalidPricing();
     error AuctionNotOver();
     error BelowThreshold(uint256 balance, uint256 supply);
@@ -213,6 +214,13 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         siteURI = siteURI_;
     }
 
+    /// @notice Wire the Uniswap v4 shard market (the hook address is mined after the vault is deployed). Owner only, once.
+    function setMarket(address m) external onlyOwner {
+        if (address(market) != address(0)) revert MarketAlreadySet();
+        if (m == address(0)) revert ZeroAddress();
+        market = IShardMarket(m);
+    }
+
     // ---------------------------------------------------------------- views
 
     /// @notice Full record of card `id`.
@@ -267,7 +275,8 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
 
     // ---------------------------------------------------------------- sharding
 
-    /// @notice Escrow the card, mint its shards and open a Uniswap CCA for `p.forSale` of them. Card owner only.
+    /// @notice Escrow the card, mint its shards and open a Uniswap CCA for half of them. The vault holds the other half
+    /// until settle, when it seeds the card's Uniswap v4 pool. Card owner only.
     function shardAndAuction(uint256 id, ShardParams calldata p) external returns (address shardToken, address auction) {
         Card storage c = _cards[id];
         if (c.state != State.Whole) revert WrongState(id, c.state);
@@ -280,16 +289,16 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         AuctionParameters memory params = _auctionParams(p);
         c.state = State.Auctioning;
         c.endBlock = params.endBlock;
+        uint16 forSale = p.totalShards / 2;
         {
             ShardToken token = new ShardToken(string.concat("Shard ", c.label), "SHARD", address(this));
             shardToken = address(token);
 
-            uint256 saleUnits = uint256(p.forSale) * PriceMath.SHARD;
+            uint256 saleUnits = uint256(forSale) * PriceMath.SHARD;
             auction = ICCAFactory(ccaFactory).create(shardToken, saleUnits, abi.encode(params), keccak256(abi.encode(id, shardToken)));
 
             token.mint(auction, saleUnits);
-            uint256 keptUnits = (uint256(p.totalShards) - p.forSale) * PriceMath.SHARD;
-            if (keptUnits > 0) token.mint(msg.sender, keptUnits);
+            token.mint(address(this), saleUnits); // the held half
             ICCAAuction(auction).onTokensReceived();
         }
 
@@ -298,7 +307,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         _shardings[shardToken] = Sharding({
             cardId: id,
             totalShards: p.totalShards,
-            forSale: p.forSale,
+            forSale: forSale,
             clearingPriceQ96: 0,
             graduated: false,
             settled: false,
@@ -313,7 +322,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
             shardToken,
             auction,
             p.totalShards,
-            p.forSale,
+            forSale,
             params.startBlock,
             params.endBlock,
             params.floorPrice,
@@ -344,7 +353,6 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
 
     function _validateShardParams(ShardParams calldata p) internal pure {
         if (p.totalShards < MIN_SHARDS || p.totalShards > MAX_SHARDS || p.totalShards % SHARD_STEP != 0) revert InvalidShardCount();
-        if (p.forSale == 0 || p.forSale > p.totalShards) revert InvalidForSale();
         if (p.tickUsdcPerShard == 0 || p.floorUsdcPerShard < p.tickUsdcPerShard || p.floorUsdcPerShard % p.tickUsdcPerShard != 0) {
             revert InvalidPricing();
         }
@@ -353,8 +361,9 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
 
     // ---------------------------------------------------------------- settle
 
-    /// @notice Finalise an ended auction: sweep unsold shards back to the owner, and when the auction graduated, sweep
-    /// the USDC raised, pay the vendor fee and forward the rest to the owner. Anyone may call.
+    /// @notice Finalise an ended auction. Graduated: sweep the USDC raised, pay the vendor fee, and hand the held half,
+    /// the unsold shards and the rest of the USDC to the shard market, which opens the card's Uniswap v4 pool at the
+    /// clearing price with the owner as LP. Not graduated: every shard the vault holds goes to the owner. Anyone may call.
     /// @dev The settled flag and the Sharded state are written before any external call; graduation and the clearing
     /// price are only known once sweepUnsoldTokens has checkpointed the auction, so they are recorded after it.
     function settle(uint256 id) external {
@@ -371,8 +380,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         c.state = State.Sharded;
 
         auction.sweepUnsoldTokens();
-        uint256 unsold = token.balanceOf(address(this));
-        if (unsold > 0) token.safeTransfer(owner_, unsold);
+        uint256 shards = token.balanceOf(address(this)); // held half + unsold
 
         bool graduated = auction.isGraduated();
         uint256 clearingQ96 = auction.clearingPrice();
@@ -387,7 +395,12 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
             raised = usdc.balanceOf(address(this)) - before;
             fee = raised * feeBps / 10_000;
             if (fee > 0) usdc.safeTransfer(payout, fee);
-            if (raised > fee) usdc.safeTransfer(owner_, raised - fee);
+            address m = address(market);
+            token.safeTransfer(m, shards);
+            usdc.safeTransfer(m, raised - fee);
+            market.seed(id, address(token), clearingQ96, owner_, shards, raised - fee);
+        } else {
+            token.safeTransfer(owner_, shards);
         }
 
         names.setState(id, "sharded", c.shardToken, c.auction, PriceMath.q96ToUsdcPerShard(clearingQ96));
@@ -434,6 +447,7 @@ contract CardVault is ERC721, TicketVerifier, Ownable {
         c.endBlock = 0;
         c.beneficialOwner = msg.sender;
 
+        market.unwind(id); // no-op when the sharding never seeded a pool; frozen pool's shards go to its LP owner
         token.burn(msg.sender, bal);
         if (payoutAmount + fee > 0) usdc.safeTransferFrom(msg.sender, address(this), payoutAmount + fee);
         if (fee > 0) usdc.safeTransfer(payout, fee);

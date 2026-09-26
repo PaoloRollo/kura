@@ -8,6 +8,7 @@ import {BidGateHook} from "../../src/BidGateHook.sol";
 import {Tickets} from "../../src/libraries/Tickets.sol";
 import {ICCAAuction, IPermit2} from "../../src/interfaces/ICCA.sol";
 import {MockCardNames} from "./MockCardNames.sol";
+import {MockShardMarket} from "../mocks/MockShardMarket.sol";
 
 abstract contract ForkTest is Test {
     address constant CCA_FACTORY = 0x000000001F26a0044BaA66024e7b6599c61963F8;
@@ -26,6 +27,7 @@ abstract contract ForkTest is Test {
     MockCardNames names;
     BidGateHook hook;
     CardVault vault;
+    MockShardMarket market;
 
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("SEPOLIA_RPC_URL"));
@@ -51,6 +53,14 @@ abstract contract ForkTest is Test {
                 siteURI: "https://kura.example/app/cards/"
             })
         );
+        market = new MockShardMarket(address(vault), address(USDC));
+        vm.prank(deployer);
+        vault.setMarket(address(market));
+    }
+
+    /// @dev Stands in for buying every shard the settle handed to the market: moves them all to `to`.
+    function _buyPool(address shardToken, address to) internal {
+        market.give(shardToken, to, IERC20(shardToken).balanceOf(address(market)));
     }
 
     function _mintTo(address to) internal returns (uint256 id) {
@@ -72,7 +82,6 @@ abstract contract ForkTest is Test {
     function _defaultParams() internal pure returns (CardVault.ShardParams memory) {
         return CardVault.ShardParams({
             totalShards: 16,
-            forSale: 3,
             floorUsdcPerShard: 10_000_000,
             tickUsdcPerShard: 500_000,
             reserveUsdc: 0,

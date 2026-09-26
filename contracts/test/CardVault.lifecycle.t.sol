@@ -43,6 +43,7 @@ contract CardVaultLifecycleTest is ForkTest {
         uint256 carolBid = _bid(carol, a, tick * 24, 15e6);
         vm.roll(ICCAAuction(a).endBlock());
         vault.settle(cardId);
+        _buyPool(t, alice); // alice buys every shard the settle put in the pool
         vm.prank(bob);
         ICCAAuction(a).exitBid(bobBid);
         vm.prank(carol);

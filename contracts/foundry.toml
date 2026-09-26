@@ -12,6 +12,10 @@ via_ir = false
 fs_permissions = [{ access = "read-write", path = "./deployments" }]
 ffi = false
 
+# CardVault sits at the EIP-170 limit (test/Size.t.sol), so it alone is optimised for size.
+additional_compiler_profiles = [{ name = "vault", optimizer_runs = 1 }]
+compilation_restrictions = [{ paths = "src/CardVault.sol", optimizer_runs = 1 }]
+
 [profile.default.fuzz]
 runs = 256
 
