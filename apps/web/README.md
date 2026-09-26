@@ -59,8 +59,8 @@ output too instead of stubbing it out there.
     market reference while it runs), that has a USD price: the whole card's market price at its finish and
     condition, the value a buyout appraisal publishes. It goes through the buyout's write path in
     `src/lib/appraise.ts` (`publishAppraisalRecord`: one write queue, a per-card advisory lock with a claim
-    row in `app.ens_appraisal_writes`, the pending nonce with one retry, no send while the signer has a tx
-    pending, and a rewrite only on a price change or after an hour). Whole and released cards are skipped.
+    row in `app.ens_appraisal_writes`, the pending nonce with one retry, no send while an appraisal write over
+    two minutes old is unmined with txs pending behind it, and a rewrite only on a price change or after an hour). Whole and released cards are skipped.
     Per run it writes at most `MAX_ENS_WRITES_PER_RUN` (20) records, none while the signer holds under
     0.003 ETH, and it stops starting writes after one times out, finds the signer stuck or runs out of funds.
     It needs `SIGNER_PRIVATE_KEY` (the appraiser; at 1 gwei 0.02 ETH covers about 250–330 writes),

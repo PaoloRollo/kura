@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "@ponder/client";
-import { and as dbAnd, eq as dbEq, sql, type SQL } from "drizzle-orm";
-import { encodeFunctionData, parseUnits, type Address, type Hex } from "viem";
+import { and as dbAnd, desc, eq as dbEq, gte, isNotNull, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { TransactionReceiptNotFoundError, encodeFunctionData, parseUnits, type Address, type Hex } from "viem";
 import { TTL, q96ToUsdcPerShard, type Appraisal } from "@kura/shared";
 import { getDb, type AnyDb } from "@/lib/db/client";
 import { appraisals, ensAppraisalWrites, marketPrices, scryfallCache } from "@/lib/db/schema";
@@ -192,18 +192,43 @@ export async function sendWithFreshNonce(send: (nonce: number) => Promise<Hex>, 
   }
 }
 
+/** A signer write sent this long ago and still unmined means the signer is stuck; a younger one is just in flight. */
+export const STUCK_AFTER_SEC = 120;
+/** Only writes from within this window are checked for being stuck. */
+const STUCK_WINDOW_SEC = 24 * 60 * 60;
+
+export type StuckCheck = {
+  /** The newest recorded appraisal write sent over STUCK_AFTER_SEC ago (within the last day), or null. */
+  lastOldWrite: () => Promise<Hex | null>;
+  /** Whether that write is mined. */
+  mined: (hash: Hex) => Promise<boolean>;
+  nonces: () => Promise<{ pending: number; latest: number }>;
+};
+
 /**
- * Sends only when the signer has no transaction in flight: a pending nonce above the latest one means an earlier tx is
- * stuck (underpriced, or waiting on a gap), and another send would only queue behind it, so the write is skipped
- * ("stuck") and logged instead.
+ * Sends unless the signer is stuck: an appraisal write sent over STUCK_AFTER_SEC ago is still unmined and the pending
+ * nonce is above the latest one (so it, or something before it, blocks the queue; another send would only wait behind
+ * it). The write is then skipped ("stuck") and logged. A pending nonce above the latest on its own is normal right after
+ * a send (this very cron's previous card, a buyout seconds ago): the pending nonce queues the new write behind it.
  */
-export async function sendUnlessStuck(send: () => Promise<Hex>, nonces: () => Promise<{ pending: number; latest: number }>): Promise<Hex | "stuck"> {
-  const { pending, latest } = await nonces();
-  if (pending > latest) {
-    console.warn(`appraise: the signer has ${pending - latest} transaction${pending - latest === 1 ? "" : "s"} pending (nonce ${latest}…${pending - 1}); ENS write skipped`);
-    return "stuck";
+export async function sendUnlessStuck(send: () => Promise<Hex>, check: StuckCheck): Promise<Hex | "stuck"> {
+  const old = await check.lastOldWrite();
+  if (old && !(await check.mined(old))) {
+    const { pending, latest } = await check.nonces();
+    if (pending > latest) {
+      console.warn(`appraise: the signer's write ${old} is unmined after ${STUCK_AFTER_SEC}s with ${pending - latest} transaction${pending - latest === 1 ? "" : "s"} pending (nonce ${latest}…${pending - 1}); ENS write skipped`);
+      return "stuck";
+    }
   }
   return send();
+}
+
+/** The newest appraisal write with a tx hash claimed STUCK_AFTER_SEC to STUCK_WINDOW_SEC ago, from ens_appraisal_writes. */
+export async function lastOldAppraisalTx(now = Math.floor(Date.now() / 1000)): Promise<Hex | null> {
+  const rows = await getDb().select({ txHash: ensAppraisalWrites.txHash }).from(ensAppraisalWrites)
+    .where(dbAnd(isNotNull(ensAppraisalWrites.txHash), lt(ensAppraisalWrites.at, BigInt(now - STUCK_AFTER_SEC)), gte(ensAppraisalWrites.at, BigInt(now - STUCK_WINDOW_SEC))))
+    .orderBy(desc(ensAppraisalWrites.at)).limit(1);
+  return (rows[0]?.txHash as Hex | undefined) ?? null;
 }
 
 async function signerClients() {
@@ -233,9 +258,16 @@ async function writeAppraisalText(node: Hex, usd: string): Promise<Hex | "stuck"
       (nonce) => wallet.writeContract({ abi: abi.ensResolver, address: addresses.ensResolver, functionName: "multicall", args: [calls], nonce }),
       pendingNonce,
     ),
-    async () => {
-      const [pending, latest] = await Promise.all([pendingNonce(), reader.getTransactionCount({ address: account.address, blockTag: "latest" })]);
-      return { pending, latest };
+    {
+      lastOldWrite: () => lastOldAppraisalTx(),
+      mined: (hash) => reader.getTransactionReceipt({ hash }).then(() => true, (e) => {
+        if (e instanceof TransactionReceiptNotFoundError) return false;
+        throw e;
+      }),
+      nonces: async () => {
+        const [pending, latest] = await Promise.all([pendingNonce(), reader.getTransactionCount({ address: account.address, blockTag: "latest" })]);
+        return { pending, latest };
+      },
     },
   );
 }
@@ -288,26 +320,37 @@ export type PublishOutcome = "written" | "unchanged" | "disabled" | "busy" | "lo
 
 type ClaimRow = typeof ensAppraisalWrites.$inferSelect;
 
+/** A claim with no tx hash this old is stale: its writer crashed between the claim and the send. */
+export const STALE_CLAIM_SEC = 300;
+
+type Claim = { previous: ClaimRow | null; usd: string; at: bigint };
+
 /**
  * Claims the card's write in ens_appraisal_writes (inside the lock's transaction): refused when the row says the same
  * price was claimed within ENS_REWRITE_SEC (another instance, an overlapping cron run or a buyout already sent it, or
- * is sending it); otherwise the row is upserted with this price, `now` and no tx hash yet. Answers the previous row, to
- * put back if the send fails.
+ * is sending it), unless that claim never got a tx hash and is over STALE_CLAIM_SEC old; otherwise the row is upserted
+ * with this price, `now` and no tx hash yet. Answers the claim and the previous row, to put back if the send fails.
  */
-async function claimEnsWrite(tx: DbTx, id: bigint, usd: string, now: number): Promise<{ previous: ClaimRow | null } | null> {
+async function claimEnsWrite(tx: DbTx, id: bigint, usd: string, now: number): Promise<Claim | null> {
   const rows = (await tx.select().from(ensAppraisalWrites).where(dbEq(ensAppraisalWrites.cardId, id)).limit(1)) as ClaimRow[];
   const row = rows[0] ?? null;
-  if (row && !needsEnsWrite({ usd: row.usd, at: Number(row.at) }, usd, now)) return null;
+  const stale = !!row && row.txHash == null && now - Number(row.at) >= STALE_CLAIM_SEC;
+  if (row && !stale && !needsEnsWrite({ usd: row.usd, at: Number(row.at) }, usd, now)) return null;
   const claim = { usd, at: BigInt(now), txHash: null };
   await tx.insert(ensAppraisalWrites).values({ cardId: id, ...claim }).onConflictDoUpdate({ target: ensAppraisalWrites.cardId, set: claim });
-  return { previous: row };
+  return { previous: row, usd, at: claim.at };
 }
 
-/** Puts the claim row back as it was before a send that didn't happen (or failed). */
-async function restoreClaim(id: bigint, previous: ClaimRow | null) {
+/**
+ * Puts the claim row back as it was before a send that didn't happen (or failed) — only while the row is still this
+ * call's claim (same price and time, no tx hash), so a newer claim by another writer is never overwritten.
+ */
+async function restoreClaim(id: bigint, claim: Claim) {
   const db = getDb();
-  if (previous) await db.update(ensAppraisalWrites).set({ usd: previous.usd, at: previous.at, txHash: previous.txHash }).where(dbEq(ensAppraisalWrites.cardId, id));
-  else await db.delete(ensAppraisalWrites).where(dbEq(ensAppraisalWrites.cardId, id));
+  const mine = dbAnd(dbEq(ensAppraisalWrites.cardId, id), dbEq(ensAppraisalWrites.at, claim.at), dbEq(ensAppraisalWrites.usd, claim.usd), isNull(ensAppraisalWrites.txHash));
+  const { previous } = claim;
+  if (previous) await db.update(ensAppraisalWrites).set({ usd: previous.usd, at: previous.at, txHash: previous.txHash }).where(mine);
+  else await db.delete(ensAppraisalWrites).where(mine);
 }
 
 const INSUFFICIENT_FUNDS = /insufficient funds/i;
@@ -331,9 +374,9 @@ export async function publishAppraisalRecord(id: bigint, node: Hex, usd: string,
     const [cur, at] = await Promise.all([deps.loadEnsText(node, "appraisal.usd"), deps.loadEnsText(node, "appraisal.at")]).catch(() => [null, null] as const);
     if (!needsEnsWrite({ usd: cur, at: at && /^\d+$/.test(at) ? Number(at) : null }, usd, now)) return "unchanged";
     let outcome: PublishOutcome = "unchanged";
-    let claimed: { previous: ClaimRow | null } | null = null;
+    let claimed: Claim | null = null;
     const unclaim = async () => {
-      if (claimed) await restoreClaim(id, claimed.previous).catch((r) => console.error("appraise: could not restore the ENS write claim", r));
+      if (claimed) await restoreClaim(id, claimed).catch((r) => console.error("appraise: could not restore the ENS write claim", r));
     };
     const acquired = await deps.ensWriteLock(id, async () => {
       let sent: Hex | "stuck" | void;

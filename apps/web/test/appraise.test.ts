@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "@/lib/db/migrate";
 import { appraisals, ensAppraisalWrites } from "@/lib/db/schema";
 import { deployments, resetDeploymentsForTests, setDeploymentsForTests } from "@/lib/deployments";
-import { ENS_REWRITE_SEC, ENS_WRITE_TIMEOUT_MS, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, sendUnlessStuck, sendWithFreshNonce, type DbTx, type Deps, type PriceLookup } from "@/lib/appraise";
+import { ENS_REWRITE_SEC, ENS_WRITE_TIMEOUT_MS, computeUsdcPerShard, publishAppraisalRecord, lookupPrice, needsEnsWrite, pgEnsWriteLock, resetAppraisalWritesForTests, runAppraise, runAppraiseFor, STALE_CLAIM_SEC, lastOldAppraisalTx, sendUnlessStuck, sendWithFreshNonce, type DbTx, type StuckCheck, type Deps, type PriceLookup } from "@/lib/appraise";
 import { marketPrices } from "@/lib/db/schema";
 import type { PriceQuote } from "@/lib/pricing";
 import { signerAddress } from "@/lib/signer";
@@ -225,14 +225,63 @@ describe("appraise", () => {
     err.mockRestore();
   });
 
-  it("skips a send while the signer has a transaction pending", async () => {
+  it("sends right after the signer's own write (pending = latest + 1), and skips only behind an old unmined write", async () => {
+    const OLD = `0x${"0e".repeat(32)}` as Hex;
     const send = vi.fn(async () => "0x01" as Hex);
+    const check = (over: Partial<StuckCheck> = {}): StuckCheck => ({
+      lastOldWrite: vi.fn(async () => null), mined: vi.fn(async () => false), nonces: vi.fn(async () => ({ pending: 12, latest: 11 })), ...over,
+    });
+    // A write seconds ago is still in flight: no old write, so the new one queues behind it on the pending nonce.
+    expect(await sendUnlessStuck(send, check())).toBe("0x01");
+    // An old write that has since been mined: send.
+    expect(await sendUnlessStuck(send, check({ lastOldWrite: vi.fn(async () => OLD), mined: vi.fn(async () => true) }))).toBe("0x01");
+    // An old write unmined but the queue is clear (it was replaced): send.
+    expect(await sendUnlessStuck(send, check({ lastOldWrite: vi.fn(async () => OLD), nonces: vi.fn(async () => ({ pending: 12, latest: 12 })) }))).toBe("0x01");
+    expect(send).toHaveBeenCalledTimes(3);
+    // An old write unmined and txs pending: stuck.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect(await sendUnlessStuck(send, async () => ({ pending: 12, latest: 11 }))).toBe("stuck");
-    expect(send).not.toHaveBeenCalled();
+    expect(await sendUnlessStuck(send, check({ lastOldWrite: vi.fn(async () => OLD) }))).toBe("stuck");
+    expect(send).toHaveBeenCalledTimes(3);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
-    expect(await sendUnlessStuck(send, async () => ({ pending: 12, latest: 12 }))).toBe("0x01");
+  });
+
+  it("finds the newest write sent over two minutes (and under a day) ago", async () => {
+    const now = 2_000_000_000;
+    const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}` as Hex;
+    await db.insert(ensAppraisalWrites).values([
+      { cardId: 1n, usd: "1", at: BigInt(now - 30), txHash: h(1) }, // in flight, not old
+      { cardId: 2n, usd: "1", at: BigInt(now - 600), txHash: h(2) },
+      { cardId: 3n, usd: "1", at: BigInt(now - 900), txHash: h(3) },
+      { cardId: 4n, usd: "1", at: BigInt(now - 400), txHash: null }, // claimed, never sent
+      { cardId: 5n, usd: "1", at: BigInt(now - 2 * 86_400), txHash: h(5) }, // too old to matter
+    ]);
+    expect(await lastOldAppraisalTx(now)).toBe(h(2));
+    expect(await lastOldAppraisalTx(now + 2 * 86_400)).toBeNull();
+  });
+
+  it("takes over a claim that never got a tx hash after five minutes, and never restores over a newer claim", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const now = Math.floor(Date.now() / 1000);
+    // A writer crashed between its claim and its send.
+    await db.insert(ensAppraisalWrites).values({ cardId: 5n, usd: "8.50", at: BigInt(now - STALE_CLAIM_SEC), txHash: null });
+    const TX = `0x${"ef".repeat(32)}` as Hex;
+    const d = deps({ ensWriteLock: pgEnsWriteLock, writeEnsRecord: vi.fn(async () => TX) });
+    expect(await publishAppraisalRecord(5n, "0xabc", "8.50", d)).toBe("written");
+    // A fresh unsent claim (someone sending right now) is respected.
+    await db.insert(ensAppraisalWrites).values({ cardId: 6n, usd: "8.50", at: BigInt(now - 10), txHash: null });
+    expect(await publishAppraisalRecord(6n, "0xabc", "8.50", d)).toBe("unchanged");
+    // Our send fails after another writer took a newer claim: their row stays.
+    const racing = deps({
+      ensWriteLock: pgEnsWriteLock,
+      writeEnsRecord: vi.fn(async () => {
+        await db.update(ensAppraisalWrites).set({ usd: "9.99", at: BigInt(now + 5), txHash: TX }).where(eq(ensAppraisalWrites.cardId, 7n));
+        throw new Error("socket hang up");
+      }),
+    });
+    expect(await publishAppraisalRecord(7n, "0xabc", "9.00", racing)).toBe("failed");
+    expect(await db.select().from(ensAppraisalWrites).where(eq(ensAppraisalWrites.cardId, 7n))).toMatchObject([{ usd: "9.99", txHash: TX }]);
+    err.mockRestore();
   });
 
   it("answers busy to a concurrent publish of the same card, and timeout when the send outlasts the wait", async () => {
