@@ -11,6 +11,7 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {MarketTest} from "./utils/MarketTest.sol";
 import {ShardToken} from "../src/ShardToken.sol";
 import {IShardMarket} from "../src/interfaces/IShardMarket.sol";
@@ -211,5 +212,158 @@ contract ShardMarketSeedTest is MarketTest {
             }
         }
         revert("no ShardSwap");
+    }
+}
+
+contract ShardMarketUnwindTest is MarketTest {
+    using StateLibrary for IPoolManager;
+
+    uint256 constant CARD = 7;
+    uint256 constant SHARDS = 135e17;
+    uint256 constant NET_USDC = 24_375_000;
+
+    address outsider = makeAddr("outsider");
+    ShardToken t;
+
+    function setUp() public override {
+        super.setUp();
+        t = _shardToken(true);
+        _seed(CARD, t, 10e6, SHARDS, NET_USDC);
+    }
+
+    function _trade() internal {
+        usdc.mint(trader, 5e6);
+        BalanceDelta d = _swap(trader, CARD, true, 5e6); // buy ~0.49 shards
+        _swap(trader, CARD, false, uint256(int256(d.amount0())) / 2); // sell half back
+    }
+
+    function test_collectFeesPaysTheLpOwner() public {
+        _trade();
+        vm.recordLogs();
+        vm.prank(trader); // anyone may collect
+        mkt.collectFees(CARD);
+        uint256 usdcFee = usdc.balanceOf(lp);
+        uint256 shardFee = t.balanceOf(lp);
+        assertApproxEqRel(usdcFee, 5e6 / 100, 1e16, "1 percent of the 5 USDC buy");
+        assertGt(shardFee, 0, "fee on the shard sell");
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        Vm.Log memory l = logs[logs.length - 1];
+        assertEq(l.topics[0], IShardMarket.FeesCollected.selector);
+        assertEq(uint256(l.topics[1]), CARD);
+        assertEq(address(uint160(uint256(l.topics[2]))), lp);
+        (uint256 s, uint256 u) = abi.decode(l.data, (uint256, uint256));
+        assertEq(s, shardFee);
+        assertEq(u, usdcFee);
+
+        // nothing more until the next trade, and liquidity is untouched
+        mkt.collectFees(CARD);
+        assertEq(usdc.balanceOf(lp), usdcFee);
+        assertGt(manager.getLiquidity(PoolId.wrap(mkt.poolIdOf(CARD))), 0);
+    }
+
+    function test_collectFeesUnknownCard() public {
+        vm.expectRevert(IShardMarket.UnknownCard.selector);
+        mkt.collectFees(99);
+    }
+
+    function test_unwindFreezesAndPaysTheLpOwner() public {
+        _trade();
+        uint256[] memory pos = mkt.positionsOf(CARD);
+
+        vm.expectEmit(true, true, false, false, address(mkt));
+        emit IShardMarket.Unwound(CARD, lp, 0, 0);
+        mkt.unwind(CARD);
+
+        assertTrue(mkt.isFrozen(CARD));
+        assertEq(t.balanceOf(address(mkt)), 0, "every shard of the card leaves");
+        assertEq(usdc.balanceOf(address(mkt)), 0, "every USDC of the card leaves");
+        // the LP owner got the whole pool: principal, both trades' fees and dust
+        assertEq(t.balanceOf(lp) + t.balanceOf(trader) + t.balanceOf(address(manager)), SHARDS, "shards conserved");
+        assertLe(t.balanceOf(address(manager)), 10, "only rounding dust stays in the PoolManager");
+        assertEq(usdc.balanceOf(lp) + usdc.balanceOf(trader) + usdc.balanceOf(address(manager)), NET_USDC + 5e6, "USDC conserved");
+        assertLe(usdc.balanceOf(address(manager)), 10);
+        for (uint256 i; i < pos.length; i++) {
+            vm.expectRevert();
+            IERC721(address(posm)).ownerOf(pos[i]);
+        }
+
+        // swaps and new liquidity revert (Frozen, wrapped by the PoolManager)
+        usdc.mint(trader, 1e6);
+        vm.expectRevert();
+        this.swapFor(trader, true, 1e6);
+        vm.expectRevert();
+        this.outsideFor(outsider, 1e15, bytes32(0));
+        vm.expectRevert(IShardMarket.Frozen.selector);
+        mkt.collectFees(CARD);
+
+        // a second unwind is a no-op
+        uint256 lpBal = t.balanceOf(lp);
+        mkt.unwind(CARD);
+        assertEq(t.balanceOf(lp), lpBal);
+    }
+
+    function test_outsideLiquidityLeavesAfterFreeze() public {
+        t.mint(outsider, 5e18);
+        usdc.mint(outsider, 100e6);
+        _outsideLiquidity(outsider, CARD, 1e12, bytes32("o"));
+        uint256 shardsIn = 5e18 - t.balanceOf(outsider);
+        assertGt(shardsIn, 0);
+
+        mkt.unwind(CARD);
+
+        _outsideLiquidity(outsider, CARD, -1e12, bytes32("o"));
+        assertApproxEqAbs(t.balanceOf(outsider), 5e18, 2, "outside LP gets its shards back after the freeze");
+        assertApproxEqAbs(usdc.balanceOf(outsider), 100e6, 2);
+    }
+
+    function test_unwindNeverTouchesAnotherCard() public {
+        ShardToken t2 = _shardToken(false);
+        _seed(8, t2, 20e6, SHARDS, 50e6);
+        uint256 usdcBefore = usdc.balanceOf(address(mkt));
+        uint256 t2Before = t2.balanceOf(address(mkt));
+        mkt.unwind(CARD);
+        assertEq(usdc.balanceOf(address(mkt)), usdcBefore, "card 8's USDC dust stays");
+        assertEq(t2.balanceOf(address(mkt)), t2Before);
+        assertFalse(mkt.isFrozen(8));
+        usdc.mint(trader, 1e6);
+        _swap(trader, 8, true, 1e6); // card 8 still trades
+    }
+
+    function test_unwindOfUnseededCardIsNoop() public {
+        mkt.unwind(99);
+        assertFalse(mkt.isFrozen(99));
+    }
+
+    /// A bought-out card can be sharded again: the new pool trades, the old one stays frozen.
+    function test_reseedAfterUnwindKeepsTheOldPoolFrozen() public {
+        PoolKey memory oldKey = _key(CARD);
+        mkt.unwind(CARD);
+        ShardToken t2 = _shardToken(false);
+        _seed(CARD, t2, 10e6, SHARDS, NET_USDC);
+        assertFalse(mkt.isFrozen(CARD));
+        assertTrue(mkt.poolIdOf(CARD) != PoolId.unwrap(oldKey.toId()));
+
+        usdc.mint(trader, 2e6);
+        _swap(trader, CARD, true, 1e6);
+        vm.startPrank(trader);
+        usdc.approve(address(swapRouter), 1e6);
+        vm.expectRevert();
+        swapRouter.swap(
+            oldKey,
+            IPoolManager.SwapParams({zeroForOne: false, amountSpecified: -1e6, sqrtPriceLimitX96: MAX_PRICE_LIMIT}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+        vm.stopPrank();
+    }
+
+    // external wrappers so vm.expectRevert can target a single call
+    function swapFor(address who, bool buy, uint256 amt) external {
+        _swap(who, CARD, buy, amt);
+    }
+
+    function outsideFor(address who, int256 liq, bytes32 salt) external {
+        _outsideLiquidity(who, CARD, liq, salt);
     }
 }

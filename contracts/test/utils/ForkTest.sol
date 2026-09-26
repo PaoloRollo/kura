@@ -53,9 +53,15 @@ abstract contract ForkTest is Test {
                 siteURI: "https://kura.example/app/cards/"
             })
         );
-        market = new MockShardMarket(address(vault), address(USDC));
+        address m = _deployMarket();
         vm.prank(deployer);
-        vault.setMarket(address(market));
+        vault.setMarket(m);
+    }
+
+    /// @dev The shard market the vault is wired to. A recording mock by default; override for the real ShardMarket.
+    function _deployMarket() internal virtual returns (address) {
+        market = new MockShardMarket(address(vault), address(USDC));
+        return address(market);
     }
 
     /// @dev Stands in for buying every shard the settle handed to the market: moves them all to `to`.

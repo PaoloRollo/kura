@@ -80,6 +80,19 @@ abstract contract MarketTest is Test, Deployers, DeployPermit2 {
         return c1 == USDC_ADDR;
     }
 
+    /// @dev Full-range liquidity from `who` through the v4-core test router (the router owns the position; salt tells
+    /// positions apart). Positive `liquidity` adds, negative removes.
+    function _outsideLiquidity(address who, uint256 cardId, int256 liquidity, bytes32 salt) internal returns (BalanceDelta d) {
+        PoolKey memory k = _key(cardId);
+        vm.startPrank(who);
+        MockERC20(Currency.unwrap(k.currency0)).approve(address(modifyLiquidityRouter), type(uint256).max);
+        MockERC20(Currency.unwrap(k.currency1)).approve(address(modifyLiquidityRouter), type(uint256).max);
+        d = modifyLiquidityRouter.modifyLiquidity(
+            k, IPoolManager.ModifyLiquidityParams({tickLower: -887200, tickUpper: 887200, liquidityDelta: liquidity, salt: salt}), ""
+        );
+        vm.stopPrank();
+    }
+
     /// @dev Exact-in swap by `who` through the v4-core test router. Buying spends USDC, selling spends shards.
     function _swap(address who, uint256 cardId, bool buyShards, uint256 amountIn) internal returns (BalanceDelta d) {
         PoolKey memory k = _key(cardId);
