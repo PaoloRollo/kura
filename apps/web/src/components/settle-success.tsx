@@ -64,7 +64,7 @@ export function OwnerSettled({ info, cardName, sold, buyers, onClose }: { info: 
       </div>
       <div className="flex w-full flex-col gap-2.5 pt-4">
         <Button variant="primary" size="md" className="h-12 w-full rounded-xl" onClick={onClose}><ArrowRightIcon aria-hidden />See {cardName}</Button>
-        <Button asChild variant="secondary" size="md" className="h-12 w-full rounded-xl"><Link href="/app/portfolio?tab=whole">Open another auction</Link></Button>
+        <Button asChild variant="secondary" size="md" className="h-12 w-full rounded-xl"><Link href="/app/portfolio?tab=whole" onClick={() => showOwnerSettled(null)}>Open another auction</Link></Button>
       </div>
     </div>
   );
