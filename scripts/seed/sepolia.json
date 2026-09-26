@@ -1,0 +1,178 @@
+{
+  "seed": true,
+  "network": "sepolia",
+  "chainId": 11155111,
+  "generatedAt": "2026-09-26T06:59:39.189Z",
+  "wallets": {
+    "owner0": {
+      "address": "0x87cf087eaBE98eA401F3098637bf18C6F3ead7dA",
+      "handle": "seedaiko.kura.eth"
+    },
+    "owner1": {
+      "address": "0x314C1adf34762dC1F214E275C09C15f41607f197",
+      "handle": "seedkenji.kura.eth"
+    },
+    "bidder0": {
+      "address": "0x54a256bE34d6c8F4837BE8a697926ef98309e1b3",
+      "handle": "seedmei.kura.eth"
+    },
+    "bidder1": {
+      "address": "0xf8b0a45a92FdD0Fb169374B531466d6C3085D84A",
+      "handle": "seedren.kura.eth"
+    },
+    "bidder2": {
+      "address": "0x02ad56A9D21fb5a37D107cDBbD0B2eCf0FD07Fc6",
+      "handle": "seedsora.kura.eth"
+    },
+    "bidder3": {
+      "address": "0x91eeD91AB762b81a9D444a2828C23E6148a5a899",
+      "handle": "seedyuki.kura.eth"
+    }
+  },
+  "cards": {
+    "A": {
+      "id": "3",
+      "scryfallId": "9521375e-0bc1-45ef-b513-6d332a25f9d2",
+      "name": "Lightning Bolt",
+      "label": "lightning-bolt-4ed-3",
+      "owner": "owner0",
+      "role": "buyout, then re-sharded as the live auction"
+    },
+    "B": {
+      "id": "4",
+      "scryfallId": "cca8eb95-d071-46a4-885c-3da25b401806",
+      "name": "Counterspell",
+      "label": "counterspell-a25-4",
+      "owner": "owner1",
+      "role": "graduated auction, stays sharded"
+    },
+    "C": {
+      "id": "5",
+      "scryfallId": "5fa7af70-08d0-453f-a0b6-a408642bf03e",
+      "name": "Llanowar Elves",
+      "label": "llanowar-elves-btd-5",
+      "owner": "owner0",
+      "role": "reserve not met, all bids refunded"
+    },
+    "D": {
+      "id": "6",
+      "scryfallId": "6739a5bb-5ed7-4f15-affb-4170239d997a",
+      "name": "Dark Ritual",
+      "label": "dark-ritual-sum-6",
+      "owner": "owner1",
+      "role": "released at the counter (Passport ticket)"
+    },
+    "E": {
+      "id": "7",
+      "scryfallId": "b635680a-12ae-49f8-a3d7-7254cb0962ec",
+      "name": "Swords to Plowshares",
+      "label": "swords-to-plowshares-mb2-7",
+      "owner": "owner0",
+      "role": "stays whole: station and owner fallback"
+    }
+  },
+  "shardings": {
+    "A": {
+      "shardToken": "0x213aacc95F745d53F1F5Bb0D6495c143A0d8217f",
+      "auction": "0xe97fcfAb1F97E4135504D23AA525f3DaBC3fa825",
+      "startBlock": "11784518",
+      "endBlock": "11784543"
+    },
+    "B": {
+      "shardToken": "0x9447749a1fDd2136f2307F59bB9E0aEB18E859EB",
+      "auction": "0x51B5550eE8073f235Bd5Af6a5049a3f83a5079e7",
+      "startBlock": "11784526",
+      "endBlock": "11784556"
+    },
+    "C": {
+      "shardToken": "0xBb1d94bA5507B96CD94b1af664947f5A0cc95e37",
+      "auction": "0xF0ab55e3623D0b5cF1684ABa491a98cFcFB7fF9a",
+      "startBlock": "11784539",
+      "endBlock": "11784569"
+    },
+    "A2": {
+      "shardToken": "0x9D6e9DED8571D4d786Db68dBe84ed08f0391C921",
+      "auction": "0xFBEEb83F0BbF8c2D62F4AF92C8F6B675d810f2C2",
+      "startBlock": "11784602",
+      "endBlock": "11791802"
+    }
+  },
+  "txs": {
+    "eth-owner0": "0x2b7e32ad7d44156a1d5399f188fc6d2b93fe0d850cb31f78a898081e52c29e87",
+    "eth-owner1": "0xb2722329fa16694fc2ea1fe4614d255c6a51abfa96acfde79bba093c690af6cd",
+    "eth-bidder0": "0xcc1d5ee953fe853182eaef118665332eb52ce6d9ee7644eae603f1becad1bf63",
+    "eth-bidder1": "0x83d22b6f4b919e1c2a3452a20a60883c192bdef7fdddad33d6bdd4b8faa3a24d",
+    "eth-bidder2": "0xdbec4cfc0b5a7af47127cfa069c58ce0cb04f97185a6dfb114f305ef8c5a5859",
+    "eth-bidder3": "0x4c921f704cd5e903b8382a29f36255017ba8ac1b14dd34c62929f8865d921577",
+    "usdc-owner0": "0xd660034915c86990d370bf5a64e2f4ef2a0af18ccbb8a6e914b7f8ea76a3cb8b",
+    "usdc-bidder0": "0x6c3ff858353a1b12a2e93345b969f21bc7ef12d28722688f7ace7a697dd902b5",
+    "usdc-bidder1": "0x81436449acb5c285da4df24af85283f63f451febab716da3cf27a9781b818d9b",
+    "usdc-bidder2": "0x3bfc07f2aa7a5c6b875a81bc773b7e3eeec310ea2a6dfd47665a25d8e5539e5c",
+    "usdc-bidder3": "0x9d6bdecd08afd4804849f0f35cec114c6804a50ece3afc8e3763b87c6755bab1",
+    "handle-owner0": "0x0fc22a4b5aea8d37fd62e55cac7d77533c5fbc398180b091238a63207dffec53",
+    "handle-owner1": "0xd0ad826f4a4cb18bb7c2572c47a172438bb5a9cd76df447fd0816f81e5e1b061",
+    "handle-bidder0": "0x1f213103a2ea9d0ab470b28f93f44ea10810f7daa3a8b27eebfc50970fafec0f",
+    "handle-bidder1": "0xa6c6d630884d6ed5a99884c51ed5fb12eea4741d6ed0dda01c1e27e84e0cd393",
+    "handle-bidder2": "0x919a822e0482f8970006c39d69aabcc95f4702170efc3a90aa6915950c9d6341",
+    "handle-bidder3": "0x57c3cce92000f3dd2b2e948a776a7f98c8a35b3f3d125ea26145ad852cc70bfb",
+    "permit2-bidder2": "0x6ed8d591910d1ed9c78f68e523eb407777eead1b2762ab86429f16e0837e9693",
+    "permit2-bidder1": "0xd87581d7a72ddc2e7ba7a06dcb48685400ef65fbe95f7ceb88cf0c9d11b55e73",
+    "permit2-bidder0": "0xdf7bc8781d3199d0cbf7f6dd555a537a9f2e378985e19f83bbcd14bbfbc37e3c",
+    "permit2-bidder3": "0x3e1077554167a601bbecf3cd177061fd4d1362e0fe061ea38da428e90264b779",
+    "mint-A": "0x72de8a99375e3660b9eda4a1c3267d7a5bdce2c19e92d7f28a288a7da69d71fc",
+    "mint-B": "0x3f12a939a7f289d7697249af6626365536fc081233da1af91cdebb3089340a93",
+    "mint-C": "0x85b6121a4bebff312405b9b302c454ab69329bb14117561d05e4c1c0bc2141a4",
+    "mint-D": "0x4c8af4b250a5d92bdece8e07a271b659e9d097e3a88d88fe4d1bdb831ad138f0",
+    "mint-E": "0xf960ff5a7376abe679e7db03c4fe3f1fcf108d08e4470710c1f1d6d03340b8ee",
+    "shard-A": "0x81d41c46d570cb68b76958a239e4b8628dc126887afea3f6eaa27bc2b24bf049",
+    "p2-A-bidder2": "0xdd13fe3f55c5c3fa161c2296c88e880de2ab1aa9b61767857effb174bb992387",
+    "bid-A-bidder2": "0x246ad2cb30f820cd8de2c7150fecaa9c4975c1ed13d70ee79c9a9d7307854e4a",
+    "p2-A-bidder1": "0x61cfb0a8c12f7d70cf08f589de121cc3377dc1a37bde166a7b838091c4795489",
+    "bid-A-bidder1": "0x909f584872aae43e36f4e8f3a9fb1f6f32770cf37182a744f798c8bd9aca9304",
+    "p2-A-bidder0": "0xce9c639d185908b198a4e46dba03f8f1d1c3b6bc80ace66d2fa5b732103bded8",
+    "bid-A-bidder0": "0x487fded5472755a7a25d1e744a93fa352d8c5ea494e0268f6a3d29b1cb1d8a31",
+    "shard-B": "0xb629a5679ac119e1f322f01550c520c7656c01a93935840c2f96694ab60fc612",
+    "p2-B-bidder3": "0x271cb4b7d3c0eb95db91524ad8687a9ca778479cc64d92da78488e57aff3ed2b",
+    "bid-B-bidder3": "0xbea194d515133b2128a4b9a3bfaecf1a1ea6f8eec8fd2715c3604e793f2b17f1",
+    "p2-B-bidder2": "0xf2518bb789caa0949cc790636afdd2847a6e3986054a1f0e6907733dadc458e2",
+    "bid-B-bidder2": "0x0ca568fc23aba16ed944119e7634022b997d6be854a4461dce55a9d29ad94483",
+    "p2-B-bidder1": "0xdf3fb9151e6ba4d8a9a0ab4c53f50be8acea44e45e7dad0012ca9117594bcd38",
+    "bid-B-bidder1": "0x67205e86eed94bb3eb0cb6f48bd54cc9b8c2cecf52fc4926f2bf4dbf9e7e92ec",
+    "p2-B-bidder0": "0x96aed2016ef449f2e519778c21bd04613797456ea112278c1633e27ad4716fa5",
+    "bid-B-bidder0": "0x400e3fd2effcedd5995ab4f6057ec19556f277ccc55e67b6d5e23f68f4407d4f",
+    "shard-C": "0x5782d9c6d0e5634b8cb09d507d26469c00faf10455752bf0fb341e386850d1c3",
+    "p2-C-bidder3": "0xcd11de0f9f87ab95bc0d76b56034074535555912d0e61dafbc8736f1e3276edb",
+    "bid-C-bidder3": "0x8610a90f12a3bad608b123b9ef64aa81cf3a407dd5342f4e831692c1b7c76be6",
+    "p2-C-bidder2": "0xc404360127051674a4ce2ae01b89caad19c2f6af89669a38f948f2f45a6076f2",
+    "bid-C-bidder2": "0xe896b77768d42d98dd75148e7c6e4581dab5ba9373d1b7353a17f55bb201caad",
+    "settle-A": "0x13b2bd12e9a772c247bb0964bd64bfef9416f16d8a4f607b9fedbce219497ccf",
+    "settle-B": "0x1429d5223faf6e03183f1f682c2021502eac45717af12729ee89ca9d3b919538",
+    "settle-C": "0xdca7344c1f7254ec25fe4e4c1524eb27ee372d19b7cd644eda43a90fedf926ed",
+    "exit-A-bidder2": "0x16ecf0d0c3e52fe144e4c7c7579e6d5506e06213d702d79036360962e6c346e7",
+    "claim-A-bidder2": "0x740dd21f007d11294cc2bc549d26d7bfa6efca19b69938fdadafd934ef7b0c8e",
+    "exit-A-bidder1": "0xc618ba69addec45e37872c855f2f9510bd6c269682a9d1bae7a0789cb402ce79",
+    "claim-A-bidder1": "0xc2a5b3f1d4036399a8c52a16a172a009d9746ac996b7ff90a115bd5ca3bb6d96",
+    "exit-A-bidder0": "0x7cc75adc9048d496ef29b27fedc8196effe31d5b4a7c25a1ad22c2d9b5f9f159",
+    "claim-A-bidder0": "0xb14f314c2492168982e53773247c67d8234e294891301c5d6a11094360aadeff",
+    "exit-B-bidder3": "0xdc06bf26fa26ebea778d2a8fedb6890bd0c9a69cbe9fd32aa071eaad47eebf9f",
+    "claim-B-bidder3": "0xcbb6de6626e02c7b88179c8c439be9e0002fe6bd776dacd2fb90dd578dcc5462",
+    "exit-B-bidder2": "0xecec469ff8ec6f7d62832e842b497e9b28418b3ede8fe2c0dfa6514c1fac4fe9",
+    "claim-B-bidder2": "0x849eb967e114df35a69b6bc22e2bd7aca69da2d01012bea36edeb91cda4335a4",
+    "exit-B-bidder1": "0x0ffb884db8a34ebb7b5861f1e35e0f83a16e69a610f477e3da8a4ead37cf02a8",
+    "claim-B-bidder1": "0x32f6ddc0298ccea42e9920596d5cb3c6e575b2842ccbbfad4d2c62d0c3a57ba0",
+    "exit-B-bidder0": "0xfd1a276fdda20b4bd34471d6da9079028852f9e1d3265707abcb4754d6fc66a7",
+    "claim-B-bidder0": "0x6c75b29a069047b4efb4dca6e845864937fbe34f5c01785fbb2c613c07a783ca",
+    "exit-C-bidder3": "0xec6611c4182d9ca7de3f4186b4c0b58032c188da1a764b6efacf9064ac483736",
+    "exit-C-bidder2": "0x92138e1b44b13f49eba3413ca2265a3b619044993a474af2864a840c12f305e7",
+    "approve-redeem-A": "0xb7f869e4a5551515895a590ce4753a1976c81e87c708279d5a3311ee65230d1a",
+    "redeem-A": "0xb7052ffb432ea829ac71aa4d22bef869c8cebafa42ca3bf5120c887a7e27d0bf",
+    "payout-A-bidder2": "0x2ee7c6d298309cc8d64c3349407277745d9598eea8601fd9e206523691b3ca0d",
+    "payout-A-bidder1": "0x081ce1cc6429c84833ea7e4edbe1075708f2bf81a2f4f6f7b4ded51aedbb9d2a",
+    "payout-A-bidder0": "0x632eb14a2639a0960950bc4b9e9c3b1ee09b9f7e3cb25e275ccabe628cbb08cc",
+    "send-B": "0xa71fad43d310001436a8b186cbff9cebbc064e197a0ed4cbc3fae7bafeaaf34e",
+    "release-D": "0x1eb789cf860456de23960a9556af26b97c89e269c5c7ca8fdd2387bdcb013643",
+    "shard-A2": "0x1fe5bfc9a547b7639be44bd9413484b2d28a1231f7a11c9a94fd0b41cc45192c",
+    "p2-A2-bidder3": "0x02eeb09f84bac157731c4d88ae8b1b608246d601fcf83122ae85843b5a484736",
+    "bid-A2-bidder3": "0xa39a355918c85fc6e1d0dd6b43059303d567a77c57b4165d38cf9c380d96960c"
+  }
+}
