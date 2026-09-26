@@ -87,6 +87,17 @@ describe("deriveNotifications", () => {
       id: `ends-${a(0x203)}`, kind: "ends-soon", cardId: 3n, title: "Ancestral Recall ends in 10 minutes", body: "You're in at $662 per shard",
       time: NOW, href: "/app/cards/3?tab=auction",
     }]);
+    // Anchored on chain time: a lagging indexer (same block, later clock) keeps the row's time.
+    const lag = (now: number) => deriveNotifications(input({
+      now,
+      shardings: [sharding(3, { endBlock: BLOCK + 50n })],
+      active: [{ auction: a(0x203), endBlock: BLOCK + 50n }],
+      bids: [bid(3, 700)],
+      checkpoints: [{ auction: a(0x203), blockNumber: 900n, clearingPriceQ96: q(662), timestamp: NOW - 1300 }],
+    }))[0]?.time;
+    expect(lag(NOW)).toBe(NOW - 100);
+    expect(lag(NOW + 600)).toBe(NOW - 100);
+    expect(lag(NOW + 3600)).toBe(NOW - 100);
     // 51 blocks left: not yet.
     expect(deriveNotifications(input({ shardings: [sharding(3, { endBlock: BLOCK + 51n })], active: [{ auction: a(0x203), endBlock: BLOCK + 51n }], bids: [bid(3, 700)] }))).toEqual([]);
   });

@@ -63,33 +63,38 @@ export function NotificationsMenu({ data, onSelect, defaultOpen, className }: {
           {hasUnread && <span aria-hidden className="absolute top-1.5 right-1.5 size-2 rounded-full bg-shu ring-2 ring-surface" />}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={8} className="w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface p-0 ring-0 shadow-toast">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
+      <DropdownMenuContent align="end" alignOffset={-48} sideOffset={8} className="w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface p-0 ring-0 shadow-toast">
+        <div role="none" className="flex items-center justify-between border-b border-border px-4 py-3.5">
           <h2 className="text-[15px] font-semibold text-text">Notifications</h2>
-          <button
-            type="button"
-            onClick={markAllRead}
+          {/* A menu item, so arrow keys reach it; preventDefault keeps the menu open. */}
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              markAllRead();
+            }}
             disabled={!hasUnread}
-            className="text-[12px] text-text-2 hover:text-text disabled:cursor-default disabled:opacity-60 disabled:hover:text-text-2"
+            className="rounded-sm px-1 py-0.5 text-[12px] text-text-2 hover:text-text focus:bg-transparent focus:text-text focus:underline data-disabled:opacity-60"
           >
             Mark all read
-          </button>
+          </DropdownMenuItem>
         </div>
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-[13px] text-text-2">You&apos;re all caught up.</p>
         ) : (
-          <ul className="max-h-[min(70vh,560px)] overflow-y-auto">
+          <div role="none" className="max-h-[min(70vh,560px)] overflow-y-auto">
             {rows.map((n) => (
-              <li key={n.id} className="border-b border-border last:border-b-0">
-                <DropdownMenuItem
-                  onSelect={() => onSelect(n)}
-                  className={cn("cursor-pointer items-start gap-3 rounded-none px-4 py-3.5 focus:bg-surface-2", unread.has(n.id) && "bg-shu/5")}
-                >
-                  <Row n={n} unread={unread.has(n.id)} now={now} />
-                </DropdownMenuItem>
-              </li>
+              <DropdownMenuItem
+                key={n.id}
+                onSelect={() => onSelect(n)}
+                className={cn(
+                  "cursor-pointer items-start gap-3 rounded-none border-b border-border px-4 py-3.5 last:border-b-0 focus:bg-surface-2",
+                  unread.has(n.id) && "bg-shu/5",
+                )}
+              >
+                <Row n={n} unread={unread.has(n.id)} now={now} />
+              </DropdownMenuItem>
             ))}
-          </ul>
+          </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

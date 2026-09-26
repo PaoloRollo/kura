@@ -70,6 +70,18 @@ export type NotificationInput = {
 const tokenOf = (a: Activity) => lc(String((a.meta as { shardToken?: string } | null)?.shardToken ?? ""));
 const cardHref = (id: bigint, tab?: string) => `/app/cards/${id}${tab ? `?tab=${tab}` : ""}`;
 
+/**
+ * When the auction entered its last 50 blocks, on chain time: the latest checkpoint's timestamp plus 12 s per block
+ * from there. Without a checkpoint, from the clock and the indexer's block. Never later than `now`, so the row keeps
+ * its time (and its read state) while the indexer lags.
+ */
+function endsSoonTime(endBlock: bigint, cp: Checkpoint | undefined, now: number, left: bigint): number {
+  const t = cp
+    ? cp.timestamp + Number(endBlock - ENDS_SOON_BLOCKS - cp.blockNumber) * SECONDS_PER_BLOCK
+    : now - Number(ENDS_SOON_BLOCKS - left) * SECONDS_PER_BLOCK;
+  return Math.min(t, now);
+}
+
 /** Every notification for `me`, newest first (at most NOTIFICATION_LIMIT). */
 export function deriveNotifications(p: NotificationInput): Notification[] {
   const me = lc(p.me);
@@ -117,8 +129,7 @@ export function deriveNotifications(p: NotificationInput): Notification[] {
         cardId: s.cardId,
         title: `${name} ends in ${minutes} minute${minutes === 1 ? "" : "s"}`,
         body: `You're in at ${money(q96ToUsdcPerShard(clearingQ96), 0)} per shard`,
-        // When it entered the last 50 blocks.
-        time: p.now - Number(ENDS_SOON_BLOCKS - left) * SECONDS_PER_BLOCK,
+        time: endsSoonTime(s.endBlock, latest, p.now, left),
         href: cardHref(s.cardId, "auction"),
       });
     }
