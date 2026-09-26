@@ -69,6 +69,13 @@ describe("holdersView", () => {
     expect(gift.rows[0]!.since).toMatchObject({ kind: "from", from: KENJI });
   });
 
+  it("marks the Uniswap pool's row: it never redeems and is never the top holder", () => {
+    const POOL = "0x000000000000000000000000000000000000900d" as const;
+    const pv = holdersView({ balances: [{ holder: POOL, balance: 13n * S, isPool: true }, { holder: KENJI, balance: 3n * S }], sharding, shardings: [sharding], transfers: [], vault: VAULT });
+    expect(pv.rows.map((r) => [r.holder, r.isPool, r.canRedeem])).toEqual([[POOL, true, false], [KENJI, false, false]]);
+    expect(pv.top?.holder).toBe(KENJI);
+  });
+
   it("shows no value when the auction did not graduate", () => {
     const failed = holdersView({ balances, sharding: { ...sharding, graduated: false }, shardings: [sharding], transfers: [], vault: VAULT });
     expect(failed.clearingPerShard).toBeNull();

@@ -14,6 +14,12 @@ importers:
       '@ponder/client':
         specifier: ^0.17.11
         version: 0.17.11(@electric-sql/pglite@0.5.8)(@opentelemetry/api@1.9.1)(kysely@0.26.3)(pg@8.23.0)(postgres@3.4.9)(typescript@5.9.3)
+      drizzle-orm:
+        specifier: ^0.45.3
+        version: 0.45.3(@electric-sql/pglite@0.5.8)(@opentelemetry/api@1.9.1)(kysely@0.26.3)(pg@8.23.0)(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

@@ -159,7 +159,7 @@ export function cardFixture(state: PreviewState, now: number): CardData {
   activities.sort((a, b) => (a.blockNumber === b.blockNumber ? b.logIndex - a.logIndex : a.blockNumber > b.blockNumber ? -1 : 1));
 
   // Balances: every holder of the current token, the auction included (it holds unclaimed shards).
-  const bal = (holder: Hex, units: bigint): BalanceRow => ({ id: `${TOKEN}-${holder}`.toLowerCase(), shardToken: TOKEN, holder, balance: units, updatedBlock: HEAD, updatedAt: at(60) });
+  const bal = (holder: Hex, units: bigint): BalanceRow => ({ id: `${TOKEN}-${holder}`.toLowerCase(), shardToken: TOKEN, holder, balance: units, isPool: false, updatedBlock: HEAD, updatedAt: at(60) });
   const holders: BalanceRow[] = whole || released ? []
     : auctioning ? [bal(PAOLO, 13n * S), bal(AUCTION, 3n * S)]
     : failed ? [bal(PAOLO, 16n * S)]

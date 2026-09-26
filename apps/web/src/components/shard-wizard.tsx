@@ -30,6 +30,7 @@ import {
   oneTick,
   parseUsdcInput,
   roundFloor,
+  saleHalf,
   shardParamErrors,
   TICK_MISMATCH,
   type ShardCreated,
@@ -117,9 +118,17 @@ function ShuSlider(props: React.ComponentProps<typeof Slider>) {
   );
 }
 
-/** The card art under a grid of one cell per shard (bands above 64 shards): kept cells in s1, cells for sale in shu. */
-export function ShardGrid({ image, name, total, forSale }: { image: string | null; name: string; total: number; forSale: number }) {
+/** The split, in the wizard's words: the auction sells half, the other half and the proceeds open the pool. */
+export const SPLIT_EXPLAINER =
+  "Half the shards are sold in the auction. The other half, with the auction proceeds, opens a Uniswap pool at the clearing price. You earn the pool's trading fees until the card is bought out.";
+
+/**
+ * The card art under a grid of one cell per shard (bands above 64 shards): the pool's half in s1, the auction's in shu.
+ * The split is always 50/50 (`saleHalf`).
+ */
+export function ShardGrid({ image, name, total }: { image: string | null; name: string; total: number }) {
   const cols = gridColumns(total);
+  const forSale = saleHalf(total);
   const kept = total - forSale;
   return (
     <div className="flex flex-col items-center gap-3">
@@ -141,8 +150,8 @@ export function ShardGrid({ image, name, total, forSale }: { image: string | nul
         </div>
       </div>
       <div className="flex items-center gap-5 text-[13px] text-text-2">
-        <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-[2px] bg-s1" />You keep {kept}</span>
-        <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-[2px] bg-shu" />For sale {forSale}</span>
+        <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-[2px] bg-s1" />Pool {kept}</span>
+        <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-[2px] bg-shu" />Auction {forSale}</span>
       </div>
     </div>
   );
@@ -206,7 +215,7 @@ export type ShardWizardProps = {
   renderSubmit: (p: ShardParams, disabled: boolean, onDone: (done: ShardDone) => void) => React.ReactNode;
 };
 
-/** Shard a whole card (bWyqz, ITGkz, couMI): shards and for sale, then pricing, then duration and review. */
+/** Shard a whole card (bWyqz, ITGkz, couMI): the shard count (half go to auction), then pricing, then duration and review. */
 export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1, initialDone = null, initialFloor, renderSubmit }: ShardWizardProps) {
   // The URL names the step; the form only shows steps it has reached (browser forward can't skip ahead of the state).
   const [reached, setReached] = useState<WizardStep>(initialStep);
@@ -221,7 +230,6 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
   // Which of floor and tick the user touched last: a floor off the tick is reported under that one.
   const [lastEdited, setLastEdited] = useState<"floor" | "tick">("floor");
   const [totalShards, setTotalShards] = useState(32);
-  const [forSale, setForSale] = useState(8);
   // Floor and tick follow the market price until edited; an edited floor picks its own tick (autoTick) until that is edited too.
   const [floorText, setFloorText] = useState<string | null>(initialFloor ?? null);
   const [tickText, setTickText] = useState<string | null>(null);
@@ -248,7 +256,6 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
   const reserve = parseUsdcInput(reserveText || "0");
   const p: ShardParams = {
     totalShards,
-    forSale,
     floorUsdcPerShard: floor ?? 0n,
     tickUsdcPerShard: tick ?? 0n,
     reserveUsdc: reserve ?? 0n,
@@ -276,7 +283,8 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
       Round to {price(rounded)}
     </button>
   );
-  const stepErrors = { 1: !!(errors.totalShards || errors.forSale), 2: !!(errors.floor || errors.tick || errors.reserve), 3: !!errors.duration };
+  const forSale = saleHalf(totalShards);
+  const stepErrors = { 1: !!errors.totalShards, 2: !!(errors.floor || errors.tick || errors.reserve), 3: !!errors.duration };
   const disabledReason = stepErrors[1] ? "Fix the shard counts on step 1 first."
     : stepErrors[2] ? "Fix the floor, tick or reserve on step 2 first."
       : stepErrors[3] ? "Pick one of the listed auction lengths."
@@ -294,7 +302,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
 
       {step === 1 && (
         <>
-          <ShardGrid image={identity.image} name={identity.name} total={totalShards} forSale={forSale} />
+          <ShardGrid image={identity.image} name={identity.name} total={totalShards} />
           <div className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between"><span className="text-[14px] text-text-2">Total shards</span><span className="font-mono text-[16px] text-text">{totalShards}</span></div>
             <ShuSlider
@@ -303,19 +311,15 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
               max={MAX_SHARDS}
               step={SHARD_STEP}
               value={[totalShards]}
-              onValueChange={([v]) => {
-                setTotalShards(v);
-                setForSale((f) => Math.min(f, v));
-              }}
+              onValueChange={([v]) => setTotalShards(v)}
             />
             <div className="flex justify-between font-mono text-[11px] text-muted-foreground">{[16, 128, 256, 384, 512].map((v) => <span key={v}>{v}</span>)}</div>
             <FieldError>{errors.totalShards}</FieldError>
           </div>
-          <div className="flex flex-col gap-3">
-            <div className="flex items-baseline justify-between"><span className="text-[14px] text-text-2">For sale</span><span className="font-mono text-[16px] text-text">{forSale} of {totalShards}</span></div>
-            <ShuSlider aria-label="Shards for sale" min={1} max={totalShards} step={1} value={[forSale]} onValueChange={([v]) => setForSale(v)} />
-            <FieldError>{errors.forSale}</FieldError>
-          </div>
+          <p className="flex gap-3 rounded-2xl border border-border bg-surface p-4 text-[13px] text-text-2">
+            <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {SPLIT_EXPLAINER}
+          </p>
           <Summary
             items={[
               { label: "Market", value: market != null ? money(market, 0) : "n/a" },
@@ -392,10 +396,10 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
             items={[
               { label: "Implied value", value: price(implied) },
               { label: "Max raise at floor", value: price(maxRaise) },
-              { label: "You receive", value: feeBps != null ? price(afterFee(maxRaise, feeBps)) : "…" },
+              { label: "Into the pool", value: feeBps != null ? price(afterFee(maxRaise, feeBps)) : "…" },
             ]}
           />
-          <p className="text-[12px] text-text-2">After the {feePct} vault fee. Clearing above the floor raises more.</p>
+          <p className="text-[12px] text-text-2">After the {feePct} vault fee, the proceeds and the other {totalShards - forSale} shards open the pool. Clearing above the floor raises more.</p>
           <Pinned>
             <Button variant="primary" size="md" className="w-full" disabled={stepErrors[2]} onClick={() => next(3)}>
               Next: duration <ArrowRightIcon aria-hidden />
@@ -419,7 +423,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
           </div>
           <div className="rounded-2xl border border-border bg-surface">
             <Row label="Card"><span className="break-all text-kin">{c.card!.ensName}</span></Row>
-            <Row label="Shards">{totalShards} total · {forSale} for sale · {totalShards - forSale} kept</Row>
+            <Row label="Shards">{totalShards} total · {forSale} in the auction · {totalShards - forSale} to the pool</Row>
             <Row label="Floor · tick">{price(p.floorUsdcPerShard)} · {price(p.tickUsdcPerShard)}</Row>
             <Row label="Reserve">{p.reserveUsdc > 0n ? price(p.reserveUsdc) : "none"}</Row>
             <Row label="Ends">{dateTime(ends)} · {durationText(duration)} · {duration.toLocaleString("en-US")} blocks</Row>
@@ -428,7 +432,7 @@ export function ShardWizard({ c, me, feeBps, now, cardHref, nav, initialStep = 1
           </div>
           <p className="flex gap-3 px-1 text-[13px] text-text-2">
             <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            Your card moves into escrow until the auction settles. You can redeem it back once you hold 80% of the shards.
+            Your card moves into escrow. {SPLIT_EXPLAINER} You can redeem it back once you hold 80% of the shards.
           </p>
           <Pinned>
             {renderSubmit(p, !!disabledReason, setDone)}
@@ -484,10 +488,10 @@ function ShardSuccess({ c, done, cardHref }: { c: CardData; done: ShardDone; car
         <span className="flex size-14 items-center justify-center rounded-full bg-good-soft text-good-fg"><CheckIcon aria-hidden className="size-7" strokeWidth={2.5} /></span>
         <h1 className="font-display text-[28px] leading-tight font-semibold text-text">Your auction is live</h1>
         <p className="max-w-[420px] text-[14px] text-text-2">
-          {identity.name} is now {p.totalShards} shards. {p.forSale} are up for auction and {p.totalShards - p.forSale} are in your wallet.
+          {identity.name} is now {p.totalShards} shards. {saleHalf(p.totalShards)} are up for auction. The other {p.totalShards - saleHalf(p.totalShards)} open a Uniswap pool at the clearing price, with the proceeds, once the auction settles.
         </p>
       </div>
-      <ShardGrid image={identity.image} name={identity.name} total={p.totalShards} forSale={p.forSale} />
+      <ShardGrid image={identity.image} name={identity.name} total={p.totalShards} />
       <div className="rounded-2xl border border-border bg-surface">
         <Row label="Floor · tick">{price(p.floorUsdcPerShard)} · {price(p.tickUsdcPerShard)}</Row>
         <Row label="Reserve">{p.reserveUsdc > 0n ? price(p.reserveUsdc) : "none"}</Row>

@@ -2,6 +2,7 @@ import { createConfig, factory } from "ponder";
 import { getAbiItem } from "viem";
 import { abi } from "@kura/shared";
 import deployments from "./generated/deployments.json";
+import { shardMarketSource, type ShardMarketSource } from "./src/lib/market-config";
 
 const rpc = [process.env.PONDER_RPC_URL_11155111, "https://ethereum-sepolia-rpc.publicnode.com"].filter((u): u is string => !!u);
 const startBlock = Math.max(0, deployments.deployBlock - 1);
@@ -37,6 +38,8 @@ export default createConfig({
       address: factory({ address: deployments.cardNames as `0x${string}`, event: collectorNamed, parameter: "resolver" }),
       startBlock,
     },
+    // Typed as always present so ShardMarket handlers type-check; absent at runtime on a deployment without it.
+    ...(shardMarketSource(deployments.shardMarket, startBlock) as { ShardMarket: ShardMarketSource }),
   },
   blocks: {
     AuctionTick: { chain: "sepolia", interval: 5, startBlock },

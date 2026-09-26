@@ -78,8 +78,10 @@ describe("ShardWizard", () => {
   it("walks the three steps with market-priced defaults and hands the contract's params to the CTA", () => {
     const { submit } = renderWizard(cardFixture("whole-owner", NOW));
     expect(screen.getByText("1 of 3")).toBeTruthy();
-    expect(screen.getByText("You keep 24")).toBeTruthy();
-    expect(screen.getByText("8 of 32")).toBeTruthy();
+    expect(screen.getByText("Auction 16")).toBeTruthy();
+    expect(screen.getByText("Pool 16")).toBeTruthy();
+    expect(screen.queryByRole("slider", { name: "Shards for sale" })).toBeNull();
+    expect(screen.getByText(/Half the shards are sold in the auction\. The other half, with the auction proceeds, opens a Uniswap pool at the clearing price\. You earn the pool's trading fees until the card is bought out\./)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Close" }).getAttribute("href")).toBe(HREF);
     toPricing();
 
@@ -88,7 +90,7 @@ describe("ShardWizard", () => {
     expect(input("Floor price per shard").value).toBe("781.25");
     expect(input("Price tick").value).toBe("7.8125");
     expect(screen.getByLabelText("Reserve (total, optional)")).toBeTruthy();
-    expect(screen.getByText("$6,093.75")).toBeTruthy(); // 8 × $781.25 less 2.5%
+    expect(screen.getByText("$12,187.50")).toBeTruthy(); // 16 × $781.25 less 2.5%, into the pool
     toReview();
 
     expect(screen.getByText("3 of 3")).toBeTruthy();
@@ -96,7 +98,7 @@ describe("ShardWizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: "5 min" }));
     expect(screen.getByText("black-lotus-lea-1.kura.eth")).toBeTruthy();
     expect(submit).toHaveBeenLastCalledWith(
-      { totalShards: 32, forSale: 8, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 25 },
+      { totalShards: 32, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 25 },
       false,
     );
   });
@@ -193,9 +195,10 @@ describe("ShardWizard", () => {
     // The indexer flips the card to auctioning before the stepper resolves: the form must stay.
     act(() => handle.setCard(cardFixture("auctioning", NOW)));
     fireEvent.click(screen.getByRole("button", { name: "Create shards and open auction" }));
-    const params: ShardParams = { totalShards: 32, forSale: 8, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 };
+    const params: ShardParams = { totalShards: 32, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 };
     act(() => handle.finish({ params, hash: HASH, at: NOW }));
     expect(screen.getByText("Your auction is live")).toBeTruthy();
+    expect(screen.getByText(/16 are up for auction\. The other 16 open a Uniswap pool/)).toBeTruthy();
     expect(screen.getByText("reading the receipt…")).toBeTruthy();
     act(() =>
       handle.finish({
@@ -223,7 +226,7 @@ describe("ShardWizard", () => {
     const tx = auctioning.activities.find((a) => a.kind === "shard")!.txHash;
     act(() =>
       handle.finish({
-        params: { totalShards: 16, forSale: 3, floorUsdcPerShard: 1n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 },
+        params: { totalShards: 16, floorUsdcPerShard: 1n, tickUsdcPerShard: 1n, reserveUsdc: 0n, durationBlocks: 25 },
         at: NOW,
         created: { shardToken: s.shardToken, auction: s.auction, endBlock: 1_000_025n, refBlock: 1_000_000n, hash: null, source: "vault" },
       }),

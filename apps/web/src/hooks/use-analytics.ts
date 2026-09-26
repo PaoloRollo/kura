@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { count, desc, inArray } from "@ponder/client";
 import { usePonderQuery } from "@ponder/react";
+import { usePools } from "@/hooks/use-pools";
 import { useIsFetching } from "@tanstack/react-query";
 import { useAttributes, useIndexerBlock, useMarketPrices } from "@/hooks/use-explore";
 import { useNow } from "@/hooks/use-now";
@@ -51,6 +52,7 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
   const activities = usePonderQuery({ queryFn: activitiesQuery });
   const fees = usePonderQuery({ queryFn: feesQuery });
   const collectors = usePonderQuery({ queryFn: collectorsQuery });
+  const pools = usePools();
   const block = useIndexerBlock();
   const now = useNow(30_000);
   const feeBps = useVaultFeeBps();
@@ -92,6 +94,7 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
     block,
     now,
     range,
+    pools,
   });
   return { view, isLoading, feeBps };
 }

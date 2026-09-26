@@ -141,7 +141,7 @@ contract CardVaultReleaseTest is Test {
         vault.shardAndAuction(
             id,
             CardVault.ShardParams({
-                totalShards: 16, forSale: 1, floorUsdcPerShard: 1e6, tickUsdcPerShard: 1e6, reserveUsdc: 0, durationBlocks: 2
+                totalShards: 16, floorUsdcPerShard: 1e6, tickUsdcPerShard: 1e6, reserveUsdc: 0, durationBlocks: 2
             })
         );
 

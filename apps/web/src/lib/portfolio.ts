@@ -4,6 +4,7 @@ import { q96ToUsdcPerShard } from "@kura/shared";
 import { estimateShards, bidView, type BidView } from "@/lib/bid-math";
 import { blocksToDuration, canRedeem } from "@/lib/card-view";
 import { clearingOf } from "@/lib/explore";
+import { poolValuePrice, type PoolPrice } from "@/lib/market";
 import { costBasis, referencePrice, unrealized } from "@/lib/portfolio-math";
 
 type Hex = `0x${string}`;
@@ -77,6 +78,8 @@ export function holdings(p: {
   active: readonly Active[];
   block: bigint;
   ident: (cardId: bigint) => Ident;
+  /** The indexer's pools: a holding is valued at its pool price while the pool trades. */
+  pools?: readonly PoolPrice[];
 }): Holding[] {
   const byToken = new Map(p.shardings.map((s) => [lc(s.shardToken), s]));
   const out: Holding[] = [];
@@ -89,7 +92,7 @@ export function holdings(p: {
     const avg = costBasis(mine);
     const seller = isSeller(p.me, s, p.activities);
     const cost = avg ?? (seller ? q96ToUsdcPerShard(s.floorPriceQ96) : null);
-    const price = referencePrice({ ...s, clearingUsdcPerShard: live ? clearingOf(s) : s.clearingUsdcPerShard });
+    const price = referencePrice({ ...s, clearingUsdcPerShard: live ? clearingOf(s) : s.clearingUsdcPerShard }, poolValuePrice(p.pools, s.shardToken));
     const supply = BigInt(s.totalShards) * SHARD;
     const { name, image } = p.ident(s.cardId);
     out.push({

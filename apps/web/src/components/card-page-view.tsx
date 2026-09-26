@@ -12,6 +12,7 @@ import { identityOf } from "@/components/card-page-parts";
 import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 import { OwnedByPanel, OwnerPanel, PastAuction, ReleasedSummary, ShardedSummary } from "@/components/card-state-panel";
 import { EnsRecords } from "@/components/ens-records";
+import { MarketPanel } from "@/components/market-panel";
 import { PayoutPanel } from "@/components/payout-panel";
 import { RedeemPanel } from "@/components/redeem-panel";
 import { PayoutClaimedView, RedeemedView, showVaultSuccess, useVaultSuccess } from "@/components/vault-success";
@@ -158,9 +159,17 @@ export function CardPageView({ c, me, now, block, tab, tabHref, market }: CardPa
             <Credit identity={identity} className="lg:hidden" />
           </div>
           {panel}
+          {/* The card's Uniswap pool: trading while sharded, "closed" after a buyout; nothing without a pool. */}
+          {!released && <MarketPanel c={c} me={me as `0x${string}` | null} />}
           {/* Payouts of bought-out shardings stay claimable, released cards included (each renders only with a balance). */}
           {c.allShardings.filter((s) => s.redeemer && s.buyoutPerShard != null).map((s) => (
-            <PayoutPanel key={s.shardToken} me={me as `0x${string}` | null} cardName={identity.name} sharding={{ cardId: s.cardId, shardToken: s.shardToken, buyoutPerShard: s.buyoutPerShard!, redeemer: s.redeemer }} />
+            <PayoutPanel
+              key={s.shardToken}
+              me={me as `0x${string}` | null}
+              cardName={identity.name}
+              sharding={{ cardId: s.cardId, shardToken: s.shardToken, buyoutPerShard: s.buyoutPerShard!, redeemer: s.redeemer }}
+              fromPool={!!me && !!c.pool && c.pool.shardToken.toLowerCase() === s.shardToken.toLowerCase() && c.pool.lpOwner.toLowerCase() === me.toLowerCase()}
+            />
           ))}
           {!released && (
             <div className="grid gap-10 xl:grid-cols-2">

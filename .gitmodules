@@ -7,3 +7,6 @@
 [submodule "contracts/lib/continuous-clearing-auction"]
 	path = contracts/lib/continuous-clearing-auction
 	url = https://github.com/Uniswap/continuous-clearing-auction
+[submodule "contracts/lib/v4-periphery"]
+	path = contracts/lib/v4-periphery
+	url = https://github.com/Uniswap/v4-periphery

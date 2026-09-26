@@ -34,11 +34,12 @@ contract CardVaultShardTest is ForkTest {
         assertEq(c.auction, auction);
         assertEq(c.endBlock, start + 20);
 
-        // shard supply split
+        // shard supply split: half to the auction, half held by the vault for the pool
         ShardToken token = ShardToken(shardToken);
         assertEq(token.totalSupply(), 16e18);
-        assertEq(token.balanceOf(alice), 13e18);
-        assertEq(token.balanceOf(auction), 3e18);
+        assertEq(token.balanceOf(alice), 0, "owner receives nothing up front");
+        assertEq(token.balanceOf(address(vault)), 8e18);
+        assertEq(token.balanceOf(auction), 8e18);
         assertEq(token.name(), "Shard black-lotus-lea-1");
 
         // auction wiring
@@ -50,7 +51,7 @@ contract CardVaultShardTest is ForkTest {
         assertEq(a.startBlock(), start);
         assertEq(a.endBlock(), start + 20);
         assertEq(a.claimBlock(), start + 20);
-        assertEq(a.totalSupply(), 3e18);
+        assertEq(a.totalSupply(), 8e18);
         assertEq(a.validationHook(), address(hook));
         assertEq(a.fundsRecipient(), address(vault));
         assertEq(a.tokensRecipient(), address(vault));
@@ -61,7 +62,7 @@ contract CardVaultShardTest is ForkTest {
         CardVault.Sharding memory s = vault.shardings(shardToken);
         assertEq(s.cardId, id);
         assertEq(s.totalShards, 16);
-        assertEq(s.forSale, 3);
+        assertEq(s.forSale, 8);
         assertFalse(s.settled);
         (, string memory state, address stToken, address stAuction,) = names.lastState();
         assertEq(state, "auctioning");
@@ -98,14 +99,6 @@ contract CardVaultShardTest is ForkTest {
         vault.shardAndAuction(id, p);
 
         p = _defaultParams();
-        p.forSale = 0;
-        vm.expectRevert(CardVault.InvalidForSale.selector);
-        vault.shardAndAuction(id, p);
-        p.forSale = 17;
-        vm.expectRevert(CardVault.InvalidForSale.selector);
-        vault.shardAndAuction(id, p);
-
-        p = _defaultParams();
         p.tickUsdcPerShard = 0;
         vm.expectRevert(CardVault.InvalidPricing.selector);
         vault.shardAndAuction(id, p);
@@ -123,13 +116,19 @@ contract CardVaultShardTest is ForkTest {
         vm.stopPrank();
     }
 
-    function test_sellEverythingAndKeepNothing() public {
+    function test_halfForSaleAtLargerSupply() public {
         CardVault.ShardParams memory p = _defaultParams();
-        p.forSale = 16;
+        p.totalShards = 48;
         vm.prank(alice);
+        uint64 start = uint64(block.number);
+        uint256 tickQ96 = PriceMath.usdcPerShardToQ96(500_000);
+        vm.expectEmit(true, false, false, true); // token and auction addresses are not known up front
+        emit CardVault.CardSharded(id, address(0), address(0), 48, 24, start, start + 20, tickQ96 * 20, tickQ96, 0);
         (address shardToken, address auction) = vault.shardAndAuction(id, p);
         assertEq(ShardToken(shardToken).balanceOf(alice), 0);
-        assertEq(ShardToken(shardToken).balanceOf(auction), 16e18);
+        assertEq(ShardToken(shardToken).balanceOf(auction), 24e18);
+        assertEq(ShardToken(shardToken).balanceOf(address(vault)), 24e18);
+        assertEq(vault.shardings(shardToken).forSale, 24);
     }
 
     function test_bidWithoutTicketReverts() public {

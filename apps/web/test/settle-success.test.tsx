@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, renderHook } from "@testing-library/react";
+import { usdcPerShardToQ96 } from "@kura/shared";
 import { OwnerSettled, showOwnerSettled, useOwnerSettled, type SettledInfo } from "@/components/settle-success";
 
 afterEach(() => {
@@ -21,5 +22,20 @@ describe("OwnerSettled", () => {
     fireEvent.click(link);
     hook.rerender();
     expect(hook.result.current).toBeNull();
+  });
+
+  it("says the pool opened at the clearing price and that the net proceeds went into it", () => {
+    render(<OwnerSettled info={{ ...info, clearingQ96: usdcPerShardToQ96(1_712_000_000n) }} cardName="Black Lotus" sold={3} buyers={2} onClose={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Pool opened at $1,712.00 / shard" })).toBeTruthy();
+    expect(screen.getByText("Into the pool")).toBeTruthy();
+    expect(screen.getByText("$5,007.60")).toBeTruthy();
+    expect(screen.queryByText("To you")).toBeNull();
+  });
+
+  it("returns every shard to the seller when the reserve wasn't met, with no pool", () => {
+    render(<OwnerSettled info={{ ...info, graduated: false, raisedUsdc: 0n, feeUsdc: 0n, sold: null }} cardName="Black Lotus" sold={null} buyers={0} onClose={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Your auction didn't reach its reserve" })).toBeTruthy();
+    expect(screen.queryByText(/Pool opened/)).toBeNull();
+    expect(screen.getByText(/every shard is back in your wallet/)).toBeTruthy();
   });
 });

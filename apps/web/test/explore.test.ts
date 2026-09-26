@@ -62,6 +62,18 @@ describe("explore items", () => {
     expect(items.find((i) => i.cardId === 5n)!.clearing).toBeNull();
   });
 
+  it("prices a settled card at its live pool, and compares that to the market", () => {
+    const shardings = [sharding(1, { settled: true, graduated: true })];
+    const base = { active: [], shardings, cards: [card(1)], metas: new Map(), attributes: {}, markets: new Map([["1", usd(25_000)]]), block: BLOCK };
+    const [it0] = buildAuctionItems({ ...base, pools: [{ cardId: 1n, shardToken: shardings[0]!.shardToken, priceUsdcPerShard: usd(1875), frozen: false }] });
+    expect(it0).toMatchObject({ clearing: usd(1712), poolPrice: usd(1875) });
+    expect(it0!.premium).toBeCloseTo(0.2, 3);
+    const [frozen] = buildAuctionItems({ ...base, pools: [{ cardId: 1n, shardToken: shardings[0]!.shardToken, priceUsdcPerShard: usd(1875), frozen: true }] });
+    expect(frozen!.poolPrice).toBeNull();
+    const [none] = buildAuctionItems(base);
+    expect(none!.poolPrice).toBeNull();
+  });
+
   it("puts live rows in Live, the last 300 blocks in Ending soon, never anything in Upcoming", () => {
     const items = fixture();
     expect(items.filter((i) => inTab(i, "live", BLOCK)).map((i) => i.cardId)).toEqual([1n, 2n]);

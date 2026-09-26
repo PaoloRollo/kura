@@ -10,7 +10,7 @@ import { TxStepper, describeTxError } from "@/components/tx-stepper";
 import { useCard } from "@/hooks/use-card";
 import { HandlesFixture } from "@/hooks/use-handles";
 import { useVaultFeeBps } from "@/hooks/use-vault-fee";
-import { shardRevertMessage, type ShardParams } from "@/lib/shard-math";
+import { saleHalf, shardRevertMessage, type ShardParams } from "@/lib/shard-math";
 import { TxError } from "@/lib/tx-core";
 import { cn } from "@/lib/utils";
 import { HANDLES, PAOLO, cardFixture } from "../card/fixtures";
@@ -24,7 +24,7 @@ const LIVE_OWNER = "0xDeADaD159DF0923dAF871f8B4740eD7f7F417ee9";
 function PreviewSubmit({ p, disabled }: { p: ShardParams; disabled: boolean }) {
   return (
     <TxStepper
-      steps={[{ id: "shard", label: `Shard into ${p.totalShards} and auction ${p.forSale}`, run: async () => { await new Promise((r) => setTimeout(r, 900)); throw new TxError("preview", { name: "WrongState" }); } }]}
+      steps={[{ id: "shard", label: `Shard into ${p.totalShards} and auction ${saleHalf(p.totalShards)}`, run: async () => { await new Promise((r) => setTimeout(r, 900)); throw new TxError("preview", { name: "WrongState" }); } }]}
       cta="Create shards and open auction"
       ctaIcon={<GavelIcon aria-hidden />}
       title="Opening your auction"
@@ -53,7 +53,7 @@ export function ShardPreview({ state, now, liveId }: { state: ShardPreviewState;
   const c = state === "noprice" ? { ...fixture, price: { ...fixture.price!, usd: null, adjustedUsd: null } } : fixture;
   const step: WizardStep = state === "step2" || state === "noprice" || state === "invalid" ? 2 : state === "step3" ? 3 : 1;
   const done: ShardDone | null = state === "done"
-    ? { params: { totalShards: 32, forSale: 8, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 }, hash: "0x3a1f8e2b9c4d5a6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c49f2", at: now,
+    ? { params: { totalShards: 32, floorUsdcPerShard: 781_250_000n, tickUsdcPerShard: 7_812_500n, reserveUsdc: 0n, durationBlocks: 50_400 }, hash: "0x3a1f8e2b9c4d5a6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c49f2", at: now,
         created: { shardToken: "0x8c0B76235b3c4D179C0576517ae1C66640C8cEBf", auction: "0xdb6E8ADEdfd5dA3A50b9c738755770EDD98E5cCb", endBlock: 11_832_178n, refBlock: 11_781_778n, hash: null, source: "receipt" } }
     : null;
   return (

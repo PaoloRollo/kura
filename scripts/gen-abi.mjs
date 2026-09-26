@@ -16,6 +16,7 @@ const sources = {
   ccaAuction: ["ICCA.sol", "ICCAAuction"],
   ccaFactory: ["ICCA.sol", "ICCAFactory"],
   shardToken: ["ShardToken.sol", "ShardToken"],
+  shardMarket: ["IShardMarket.sol", "IShardMarket"],
   erc20: ["IERC20Metadata.sol", "IERC20Metadata"],
   permit2: ["ICCA.sol", "IPermit2"],
   ensResolver: ["IENSv2.sol", "IENSResolverV2"],
@@ -35,8 +36,10 @@ const ccaUpstreamFiles = [
 ];
 
 function readArtifact([file, name]) {
-  const p = resolve(out, file, `${name}.json`);
-  if (!existsSync(p)) throw new Error(`missing artifact ${p}; run \`cd contracts && forge build\``);
+  // A contract built under several compiler profiles (foundry.toml's additional_compiler_profiles) gets one artifact
+  // per profile, `<name>.default.json` and `<name>.<profile>.json`; the ABI is the same, so read the default one.
+  const p = [`${name}.json`, `${name}.default.json`].map((f) => resolve(out, file, f)).find(existsSync);
+  if (!p) throw new Error(`missing artifact ${resolve(out, file, `${name}.json`)}; run \`cd contracts && forge build\``);
   return JSON.parse(readFileSync(p, "utf8")).abi.filter((i) => ["function", "event", "error"].includes(i.type));
 }
 

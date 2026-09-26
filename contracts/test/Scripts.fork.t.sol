@@ -9,6 +9,8 @@ import {CardVault} from "../src/CardVault.sol";
 import {CardNames} from "../src/CardNames.sol";
 import {IENSRegistryV2, IENSResolverV2} from "../src/interfaces/IENSv2.sol";
 import {DnsName} from "../src/libraries/DnsName.sol";
+import {ShardMarket} from "../src/ShardMarket.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 
 interface IETHRegistryView {
     function findOwner(string calldata label) external view returns (address);
@@ -21,6 +23,8 @@ interface IETHRegistryView {
 contract ScriptsForkTest is Test {
     string constant DIR = "deployments/tmp/fork-test";
     string constant LABEL = "kurascriptfork";
+    uint160 constant MARKET_FLAGS =
+        Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG;
 
     address deployer;
     uint256 deployerPk;
@@ -80,6 +84,21 @@ contract ScriptsForkTest is Test {
         assertEq(registry.findOwner("appraiser"), deployer, "appraiser owner");
         assertEq(resolver.addr(DnsName.node(parentNode, "appraiser")), signer, "appraiser addr");
         assertEq(registry.findOwner("black-lotus-lea-1"), address(names), "card name owner");
+
+        // shard market: mined hook address, wired into the vault, pointed at Sepolia v4
+        ShardMarket market = ShardMarket(vm.parseJsonAddress(dep, ".shardMarket"));
+        assertEq(address(vault.market()), address(market));
+        assertEq(uint160(address(market)) & Hooks.ALL_HOOK_MASK, MARKET_FLAGS, "hook flags in the address");
+        assertEq(market.vault(), address(vault));
+        assertEq(market.usdc(), vm.parseJsonAddress(dep, ".usdc"));
+        assertEq(address(market.poolManager()), vm.parseJsonAddress(dep, ".poolManager"));
+        assertEq(address(market.positionManager()), vm.parseJsonAddress(dep, ".positionManager"));
+        assertEq(address(market.permit2()), vm.parseJsonAddress(dep, ".permit2"));
+        assertEq(vm.parseJsonAddress(dep, ".poolManager"), 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543);
+        assertEq(vm.parseJsonAddress(dep, ".positionManager"), 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4);
+        assertEq(vm.parseJsonAddress(dep, ".universalRouter"), 0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b);
+        assertEq(vm.parseJsonAddress(dep, ".stateView"), 0xE1Dd9c3fA50EDB962E442f60DfBc432e24537E4C);
+        assertEq(vm.parseJsonAddress(dep, ".v4Quoter"), 0x61B3f2011A92d183C7dbaDBdA940a7555Ccf9227);
 
         // wiring
         assertEq(names.vault(), address(vault));
