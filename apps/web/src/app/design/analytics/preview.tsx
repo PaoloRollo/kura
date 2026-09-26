@@ -148,7 +148,7 @@ function MultibaasPreview({ state, now, range, onRange }: { state: "multibaas" |
   const names = new Map(input.cards.map((c) => [c.id.toString(), input.attributes[c.scryfallId]?.name || c.label]));
   const { recent, figures } = multibaasFixture(state, now, names);
   const view = withMultibaas(analyticsView(input), figures, range);
-  return <AnalyticsDashboard view={view} isLoading={false} feeBps={250} range={range} onRange={onRange} recent={recent} />;
+  return <AnalyticsDashboard view={view} isLoading={false} feeBps={250} range={range} onRange={onRange} recent={recent} multibaas24h={figures != null} />;
 }
 
 export function AnalyticsPreview({ state, now, initialRange }: { state: AnalyticsPreviewState; now: number; initialRange: AnalyticsRange }) {

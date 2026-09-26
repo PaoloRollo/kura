@@ -107,11 +107,11 @@ script reads the repo root's `.env`, so the dev server needs them in `apps/web/.
 - **Dashboard.** `GET /api/analytics/multibaas?range=24h` (public, no-store) answers raised, fees, mints and volume with
   amounts as decimal strings. `?view=recent` answers the newest vault events MultiBaas holds (at most 10) and since when
   it indexes the vault, for the "Recent vault events · via MultiBaas" panel. Both read one server-side snapshot of the
-  four row queries, memoised for 10 minutes (`FIGURES_TTL_MS`), failures included; a load costs 6 calls, or 2 when the
-  chain or indexing check fails. `range=7d` and `range=all` answer 503 `RANGE_UNSUPPORTED` without calling MultiBaas.
+  four row queries, memoised for 20 minutes (`FIGURES_TTL_MS`), failures included; a load costs 6 calls, or 2 when the
+  chain or indexing check fails: about 430 calls a day per server process (about 145 while a check keeps failing). `range=7d` and `range=all` answer 503 `RANGE_UNSUPPORTED` without calling MultiBaas.
   The 24h figures answer 503 `UNAVAILABLE` (logged with the reason) until MultiBaas has indexed a whole day after the
   link, and whenever MultiBaas is down, slow (4.5 s for the load), on another chain, unlinked, still syncing, missing a
-  query, or returns unexpected values; the tiles then read the indexer. The client polls every 10 minutes, not on
+  query, or returns unexpected values; the tiles then read the indexer. The client polls every 20 minutes, not on
   window focus, and gives up after 6 s. The `add` aggregates `kura_raised_total` and `kura_fees_total` are set up but
   not read, since they would sum only the retained 72 h.
 - **Webhook.** `POST /api/webhooks/multibaas` answers 503 while `MULTIBAAS_WEBHOOK_SECRET` is unset (MultiBaas

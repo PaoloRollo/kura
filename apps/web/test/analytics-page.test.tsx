@@ -106,7 +106,23 @@ describe("Analytics dashboard (Y1eNn)", () => {
     expect(items[2]).toMatch(/^Minted ·\s?Card #9card #9.*2h$/);
     expect(within(region).getByText(/Indexed by MultiBaas since Sep 26, 09:02 UTC · 3 events held/)).toBeTruthy();
     expect(within(region).getAllByRole("link", { name: /0xaba…bab/ })[0]!.getAttribute("href")).toBe(`https://sepolia.etherscan.io/tx/${tx}`);
+    // Recent answers, but the 24h figures don't yet (the first day): no claim that 24h reads MultiBaas, only when it will.
+    expect(screen.queryByText("24h via MultiBaas")).toBeNull();
+    expect(screen.getByText("24h via MultiBaas from Sep 27, 09:00 UTC")).toBeTruthy();
+  });
+
+  it("claims 24h via MultiBaas on 7d and All only while the 24h figures really come from it", () => {
+    const late = { ...panel(), now: Date.UTC(2026, 8, 27, 12, 0) / 1000 }; // past the takeover time
+    const { rerender } = render(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="7d" onRange={() => {}} recent={late} />);
+    expect(screen.queryByText(/24h via MultiBaas/)).toBeNull();
+    rerender(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="all" onRange={() => {}} recent={late} multibaas24h />);
     expect(screen.getByText("24h via MultiBaas")).toBeTruthy();
+    rerender(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="7d" onRange={() => {}} multibaas24h />);
+    expect(screen.getByText("24h via MultiBaas")).toBeTruthy();
+    // 24h past the takeover, MultiBaas reachable but the figures still refused: catching up, not "unavailable".
+    rerender(<AnalyticsDashboard view={view()} isLoading={false} feeBps={250} range="24h" onRange={() => {}} recent={late} />);
+    expect(screen.getByText("Data: indexer").getAttribute("title")).toMatch(/catching up/);
+    expect(screen.queryByText(/MultiBaas from/)).toBeNull();
   });
 
   it("says MultiBaas holds nothing yet, and when it takes over the 24h figures", () => {

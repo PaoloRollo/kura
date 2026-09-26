@@ -70,13 +70,16 @@ describe("useMultibaasFigures", () => {
   it("fetches only 24h (MultiBaas serves nothing longer) and answers no figures for 7d and All at once", async () => {
     answer(async (url) => route(url));
     const { result, rerender } = renderHook(({ range }: { range: "24h" | "7d" | "all" }) => useMultibaasFigures(range), { wrapper: wrapper(), initialProps: { range: "7d" } });
-    expect(result.current).toEqual({ figures: null, pending: false });
+    expect(result.current).toEqual({ figures: null, pending: false, available24h: false });
     await waitFor(() => expect(urls()).toEqual(["/api/analytics/multibaas?range=24h"]));
+    // 7d still reports whether the 24h range reads MultiBaas, for the source label.
+    await waitFor(() => expect(result.current.available24h).toBe(true));
+    expect(result.current.figures).toBeNull();
     rerender({ range: "24h" });
     await waitFor(() => expect(result.current.figures?.range).toBe("24h"));
     expect(result.current.pending).toBe(false);
     rerender({ range: "all" });
-    expect(result.current).toEqual({ figures: null, pending: false });
+    expect(result.current).toEqual({ figures: null, pending: false, available24h: true });
     expect(urls()).toHaveLength(1);
   });
 
@@ -86,14 +89,15 @@ describe("useMultibaasFigures", () => {
     expect(result.current.pending).toBe(true);
     await waitFor(() => expect(result.current.pending).toBe(false));
     expect(result.current.figures).toBeNull();
+    expect(result.current.available24h).toBe(false);
   });
 
-  it("polls no faster than the server's 10 min snapshot and not on window focus", async () => {
+  it("polls no faster than the server's 20 min snapshot and not on window focus", async () => {
     answer(async (url) => route(url));
     const client = new QueryClient();
     renderHook(() => { useMultibaasFigures("24h"); useMultibaasRecent(); }, { wrapper: wrapper(client) });
     await waitFor(() => expect(urls()).toHaveLength(2));
-    expect(MULTIBAAS_REFETCH_MS).toBeGreaterThanOrEqual(600_000);
+    expect(MULTIBAAS_REFETCH_MS).toBe(1_200_000);
     for (const key of [["multibaas-figures", "24h"], ["multibaas-recent"]]) {
       const q = client.getQueryCache().find({ queryKey: key })!;
       const o = q.options as { refetchInterval?: unknown; refetchOnWindowFocus?: unknown; staleTime?: unknown; retry?: unknown };

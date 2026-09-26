@@ -178,8 +178,8 @@ describe("GET /api/analytics/multibaas", () => {
     expect((await call()).status).toBe(503);
   });
 
-  it("reuses a good answer for FIGURES_TTL_MS (10 min), counted from when its load resolved", async () => {
-    expect(FIGURES_TTL_MS).toBe(600_000);
+  it("reuses a good answer for FIGURES_TTL_MS (20 min), counted from when its load resolved", async () => {
+    expect(FIGURES_TTL_MS).toBe(1_200_000);
     mb.tick = 30_000; // six requests: the load resolves 3 min after it started
     const t0 = clock;
     expect((await call()).status).toBe(200);
@@ -199,8 +199,8 @@ describe("GET /api/analytics/multibaas", () => {
     expect(mb.calls).toHaveLength(6);
   });
 
-  it("reuses a failure for FAILURE_TTL_MS (10 min, as long as an answer), still answering 503 and logging its cause", async () => {
-    expect(FAILURE_TTL_MS).toBe(600_000);
+  it("reuses a failure for FAILURE_TTL_MS (20 min, as long as an answer), still answering 503 and logging its cause", async () => {
+    expect(FAILURE_TTL_MS).toBe(1_200_000);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     mb.status = null;
     expect((await call()).status).toBe(503);
@@ -342,6 +342,16 @@ describe("GET /api/analytics/multibaas?view=recent", () => {
     expect(body.coverage).toEqual({ startBlock: HEAD - 10_000, since: Math.floor(clock / 1000) - 10_000 * 12, fromDeploy: false });
     expect(JSON.stringify(body)).not.toContain(KEY);
     expect(mb.calls).toHaveLength(6); // one load for both views
+  });
+
+  it("never dates MultiBaas's copy earlier than its 72 h retention, and then not from the deployment", async () => {
+    mb.status = { ...linked(), startBlockNumber: deployments().deployBlock }; // indexed from deployment, 100,000 blocks ago
+    const body = await (await recent()).json();
+    expect(body.coverage).toEqual({ startBlock: deployments().deployBlock, since: Math.floor(clock / 1000) - 72 * 3600, fromDeploy: false });
+    invalidateMultibaasFigures();
+    mb.head = deployments().deployBlock + 500; // a young vault, indexed from its deployment: that holds
+    const young = await (await recent()).json();
+    expect(young.coverage).toEqual({ startBlock: deployments().deployBlock, since: Math.floor(clock / 1000) - 500 * 12, fromDeploy: true });
   });
 
   it("answers while the link is too new for the 24h figures, and when MultiBaas holds nothing yet", async () => {

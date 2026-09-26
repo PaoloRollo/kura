@@ -8,10 +8,10 @@ import { recentFromWire, type MultibaasRecent } from "@/lib/multibaas/recent";
 /** How long the dashboard waits for MultiBaas before it shows the indexer's figures (or hides the recent panel). */
 export const MULTIBAAS_CLIENT_TIMEOUT_MS = 6_000;
 /**
- * How often the dashboard asks again: the server keeps each MultiBaas snapshot for 10 min (FIGURES_TTL_MS, for the
+ * How often the dashboard asks again: the server keeps each MultiBaas snapshot for 20 min (FIGURES_TTL_MS, for the
  * plan's 30,000 calls a month), so polling faster would only re-read the same answer.
  */
-export const MULTIBAAS_REFETCH_MS = 10 * 60_000;
+export const MULTIBAAS_REFETCH_MS = 20 * 60_000;
 
 /** GET `path` and parse it, or null (unconfigured, unavailable, garbled, slow, unreachable). Never throws. */
 async function getJson<T>(path: string, parse: (json: unknown) => T | null, signal?: AbortSignal): Promise<T | null> {
@@ -46,10 +46,12 @@ const poll = { staleTime: MULTIBAAS_REFETCH_MS, refetchInterval: MULTIBAAS_REFET
  * `pending` is true only while the 24h range is selected and its first answer is out (at most
  * MULTIBAAS_CLIENT_TIMEOUT_MS).
  */
-export function useMultibaasFigures(range: AnalyticsRange): { figures: MultibaasFigures | null; pending: boolean } {
+export function useMultibaasFigures(range: AnalyticsRange): { figures: MultibaasFigures | null; pending: boolean; available24h: boolean } {
   const q = useQuery({ queryKey: ["multibaas-figures", "24h"], queryFn: ({ signal }) => fetchMultibaasFigures("24h", signal), ...poll });
-  if (range !== "24h") return { figures: null, pending: false };
-  return { figures: q.data ?? null, pending: q.isPending };
+  // Whether the 24h range really reads MultiBaas right now, whatever range is selected (for the source label).
+  const available24h = q.data != null;
+  if (range !== "24h") return { figures: null, pending: false, available24h };
+  return { figures: q.data ?? null, pending: q.isPending, available24h };
 }
 
 /** The recent-events panel's data: null while loading or when MultiBaas is unavailable (the panel is then hidden). */

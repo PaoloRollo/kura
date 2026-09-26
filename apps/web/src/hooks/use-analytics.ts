@@ -39,7 +39,14 @@ const feesQuery = (db: Db) =>
   db.select({ amountUsdc: t(schema.feeEvents.amountUsdc), timestamp: t(schema.feeEvents.timestamp) }).from(t(schema.feeEvents)) as Promise<FeeRow[]>;
 const collectorsQuery = (db: Db) => db.select({ n: count() }).from(t(schema.bidderBindings)) as Promise<{ n: number }[]>;
 
-export type AnalyticsData = { view: AnalyticsView | null; isLoading: boolean; feeBps: number | null; recent: RecentPanel | null };
+export type AnalyticsData = {
+  view: AnalyticsView | null;
+  isLoading: boolean;
+  feeBps: number | null;
+  recent: RecentPanel | null;
+  /** The 24h range reads MultiBaas right now (the route answered its figures), whatever range is selected. */
+  multibaas24h: boolean;
+};
 
 /**
  * The Analytics dashboard's live data: cards, shardings, active auctions and their latest checkpoints, settle and redeem
@@ -106,5 +113,5 @@ export function useAnalytics(range: AnalyticsRange): AnalyticsData {
     [cardRows, attributes],
   );
   const recent = mbRecent && { recent: mbRecent, names, now };
-  return { view, isLoading, feeBps, recent };
+  return { view, isLoading, feeBps, recent, multibaas24h: mb.available24h };
 }

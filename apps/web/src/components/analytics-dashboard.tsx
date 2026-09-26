@@ -33,18 +33,32 @@ function NotePanel({ title, subtitle, note, className }: { title: string; subtit
  * Which source the aggregates came from, under the KPI strip. 24h reads MultiBaas once it has indexed a full day; 7d
  * and All always read the indexer (MultiBaas keeps 72 h of events). The title says what each one covers.
  */
-function SourceNote({ view, range, recent }: { view: AnalyticsView; range: AnalyticsRange; recent: RecentPanel | null }) {
+function SourceNote({ view, range, recent, multibaas24h }: { view: AnalyticsView; range: AnalyticsRange; recent: RecentPanel | null; multibaas24h: boolean }) {
   const multibaas = view.source === "multibaas";
   const takeover = recent ? fullDayCoveredAt(recent.recent.coverage) : null;
-  const pending = !multibaas && range === "24h" && takeover != null && takeover > recent!.now;
+  // MultiBaas answers (the recent panel has data) but has not indexed a full day yet: the 24h figures come later.
+  const before = !multibaas24h && takeover != null && takeover > recent!.now;
+  // Past that time, reachable, yet the 24h figures still refused: the next snapshot (≤ 20 min) should have them.
+  const catchingUp = !multibaas24h && recent != null && !before;
   const title = multibaas
     ? "24h raised, fees, mints and volume from MultiBaas Event Queries; live state from the Ponder indexer"
     : range !== "24h"
       ? "MultiBaas keeps 72 h of events, so 7d and All come from the Ponder indexer; 24h reads MultiBaas once it has indexed a full day"
-      : pending
+      : before
         ? `MultiBaas answers the 24h figures once it has indexed a full day (from ${utcTime(takeover!)}); until then every figure comes from the Ponder indexer`
-        : "MultiBaas is unavailable or not configured; every figure comes from the Ponder indexer";
-  const extra = multibaas ? null : pending ? `MultiBaas from ${utcTime(takeover!)}` : range !== "24h" && recent ? "24h via MultiBaas" : null;
+        : catchingUp
+          ? "MultiBaas is catching up on the full 24 h window; until it answers, every figure comes from the Ponder indexer"
+          : "MultiBaas is unavailable or not configured; every figure comes from the Ponder indexer";
+  // Only claim MultiBaas for 24h when the 24h figures really come from it.
+  const extra = multibaas
+    ? null
+    : range === "24h"
+      ? (before ? `MultiBaas from ${utcTime(takeover!)}` : null)
+      : multibaas24h
+        ? "24h via MultiBaas"
+        : before
+          ? `24h via MultiBaas from ${utcTime(takeover!)}`
+          : null;
   return (
     <p className="-mt-3 text-right text-[11px] text-muted-foreground lg:-mt-5">
       <span title={title}>{multibaas ? "Data: MultiBaas" : "Data: indexer"}</span>
@@ -85,7 +99,7 @@ function DashboardSkeleton() {
  * daily volume, richest premiums and cards by language, then MultiBaas's recent vault events when it answers. Phones
  * get four tiles, no market map and no language panel.
  */
-export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange, recent = null }: {
+export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange, recent = null, multibaas24h = false }: {
   view: AnalyticsView | null;
   isLoading: boolean;
   feeBps: number | null;
@@ -93,6 +107,8 @@ export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange, re
   onRange: (r: AnalyticsRange) => void;
   /** MultiBaas's newest vault events; null while unavailable (the panel is left out). */
   recent?: RecentPanel | null;
+  /** The 24h range reads MultiBaas right now (whatever range is selected): the label may then say so on 7d and All. */
+  multibaas24h?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-6 lg:gap-8">
@@ -118,7 +134,7 @@ export function AnalyticsDashboard({ view, isLoading, feeBps, range, onRange, re
       ) : (
         <>
           <KpiStrip items={tiles(view, range, feeBps)} />
-          <SourceNote view={view} range={range} recent={recent} />
+          <SourceNote view={view} range={range} recent={recent} multibaas24h={multibaas24h} />
           <div className="max-md:hidden">
             {view.empty ? (
               <NotePanel title="Market map" subtitle="Size is implied value. Color is premium or discount to the Scryfall price." note={EMPTY} />

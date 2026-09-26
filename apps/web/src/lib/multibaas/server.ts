@@ -107,10 +107,16 @@ export function multibaasFiguresOf(s: MultibaasSnapshot, range: MultibaasRange, 
   return figuresFromRows({ ...s.rows, raisedTotal: [], feesTotal: [] }, range, now);
 }
 
-/** The recent-events panel from a snapshot: whatever MultiBaas holds, newest first, and since when. No coverage check. */
+/**
+ * The recent-events panel from a snapshot: whatever MultiBaas holds, newest first, and since when. No coverage check.
+ * "Since" is the start block's estimated time, but never earlier than MB_RETENTION_HOURS ago: MultiBaas drops older
+ * events, so a vault linked days ago is held only from then (and no longer "from its deployment").
+ */
 export function multibaasRecentOf(s: MultibaasSnapshot): MultibaasRecent {
-  const since = s.loadedAt - Math.max(0, s.head - s.startBlock) * BLOCK_SEC;
-  return recentFromRows(s.rows, { startBlock: s.startBlock, since, fromDeploy: s.startBlock <= deployments().deployBlock });
+  const estimate = s.loadedAt - Math.max(0, s.head - s.startBlock) * BLOCK_SEC;
+  const retained = s.loadedAt - MB_RETENTION_HOURS * 3600;
+  const since = Math.max(estimate, retained);
+  return recentFromRows(s.rows, { startBlock: s.startBlock, since, fromDeploy: s.startBlock <= deployments().deployBlock && estimate >= retained });
 }
 
 /**
@@ -152,14 +158,14 @@ export async function loadMultibaasFigures(
 
 /**
  * How long a good snapshot is reused, counted from when its load resolved. The plan allows 30,000 calls a month (about
- * 1,000 a day) and a load costs 6+: at one load per 10 min that is about 870 a day however many tabs poll, for the
+ * 1,000 a day) and a load costs 6+: at one load per 20 min that is about 430 a day however many tabs poll, for the
  * figures and the recent-events panel together. Vault events reset it sooner through invalidateMultibaasFigures (the
  * MultiBaas webhook).
  */
-export const FIGURES_TTL_MS = 10 * 60_000;
+export const FIGURES_TTL_MS = 20 * 60_000;
 /**
  * How long a failed load is reused (the route still answers 503, logging the same cause): as long as a good one, since
- * a failure (an unlinked vault) can last days. 2 calls per 10 min, about 290 a day. The 24h coverage check is not a
+ * a failure (an unlinked vault) can last days. 2 calls per 20 min, about 145 a day. The 24h coverage check is not a
  * load failure: during the first day after linking the snapshot loads (6 calls) for the recent panel, and only the
  * figures answer 503.
  */

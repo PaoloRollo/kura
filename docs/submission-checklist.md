@@ -60,7 +60,7 @@ Tick each item before submitting. Anything marked *(you)* needs a person: an acc
 - [ ] A second dry run prints "MultiBaas is set up; nothing to do."
 - [ ] `pnpm multibaas:setup --verify`: `catching up: false`, the four row queries answer, amounts are integer strings or numbers (no decimals), and `at` parses as a date
 - [ ] Wait a full 24 h after the link: until then `/app/analytics` on 24h reads "Data: indexer · MultiBaas from <UTC time>", and afterwards "Data: MultiBaas". The recent vault events panel shows from the start
-- [ ] After a settle, `--verify` lists a delivery with 0 failed calls, the card's On-chain profile shows a fresh `appraisal.at`, and the recent panel lists the settle at the next poll (up to 10 minutes)
+- [ ] After a settle, `--verify` lists a delivery with 0 failed calls, the card's On-chain profile shows a fresh `appraisal.at`, and the recent panel lists the settle at the next poll (up to 20 minutes)
 
 ## Rehearsal *(you)*
 
